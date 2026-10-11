@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [Unreleased]
+
+- Fire AutoCalib events with the thermostat climate `entity_id` and move the
+  thermostat name to a `name` field, so the recorder no longer fails with
+  `Invalid entity ID` when an entity filter is configured.
+
 ## [0.4.0]
 
 - Reworked attributes schema and HA database recording rules.

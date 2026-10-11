@@ -51,6 +51,7 @@ from .smartpi.valve_curve import ValveCurveParams
 
 if TYPE_CHECKING:
     from vtherm_api.interfaces import InterfaceThermostatRuntime
+    from .smartpi.autocalib import AutoCalibEvent
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -388,6 +389,10 @@ class SmartPIHandler:
             getattr(t, "last_ext_temperature_measure", None),
         )
 
+    def _autocalib_event_data(self, event: "AutoCalibEvent") -> dict:
+        """Return the bus data of an AutoCalib event, keyed by the climate entity_id."""
+        return {**event.payload, "entity_id": self._thermostat.entity_id}
+
     async def control_heating(self, timestamp=None, force=False):
         """Control heating using SmartPI."""
         t = self._thermostat
@@ -567,7 +572,9 @@ class SmartPIHandler:
                     result=algo.calibration_mgr.calibration_result,
                 )
                 if ac_event is not None:
-                    t.hass.bus.async_fire(ac_event.event_type, ac_event.payload)
+                    t.hass.bus.async_fire(
+                        ac_event.event_type, self._autocalib_event_data(ac_event)
+                    )
                     _LOGGER.info(
                         "%s - AutoCalib event fired: %s", t.name, ac_event.event_type
                     )
@@ -581,7 +588,9 @@ class SmartPIHandler:
                 current_temp=t.current_temperature,
             )
             if ac_event is not None:
-                t.hass.bus.async_fire(ac_event.event_type, ac_event.payload)
+                t.hass.bus.async_fire(
+                    ac_event.event_type, self._autocalib_event_data(ac_event)
+                )
                 _LOGGER.info(
                     "%s - AutoCalib event fired: %s", t.name, ac_event.event_type
                 )
@@ -738,7 +747,7 @@ class SmartPIHandler:
                  "type": "force_calibration"
              })
             if event is not None:
-                t.hass.bus.fire(event.event_type, event.payload)
+                t.hass.bus.fire(event.event_type, self._autocalib_event_data(event))
 
             write_event_log(_LOGGER, t, "SmartPI forced calibration triggered")
             # Force immediate recalculation to update state
