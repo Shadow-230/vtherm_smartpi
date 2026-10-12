@@ -12,6 +12,9 @@ Learning gates, by priority:
   pause while k learns.
 - ``door_settling``: the first minutes after a door opens or closes.
 
+The exchange coefficients k learn only when SmartPI itself could learn, and
+not in the first minutes after a door opens or closes.
+
 An always-connected neighbour does not gate learning: SmartPI's b absorbs its
 exchange as it does today, and the coupling estimator fits b together with k
 until k can be published, after which the learning correction cleans b.
@@ -19,16 +22,18 @@ until k can be published, after which the learning correction cleans b.
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from typing import Any
 
-from ..hvac_mode import VThermHvacMode
+from ..hvac_mode import VThermHvacMode, VThermHvacMode_COOL
 from .const import DOOR_SETTLING_S
 from .coupling_estimator import CouplingEstimator, CouplingTick
-from ..hvac_mode import VThermHvacMode_COOL
 from .dependencies import MODE_ALWAYS, MODE_DOOR, DependencyState
 from .dependency_inputs import DependencyReadings, NeighbourObservation
 from .effective_model import ExchangeInput, KnownInputs
+
+_LOGGER = logging.getLogger(__name__)
 
 GATE_NEIGHBOUR_WINDOW = "neighbour_window"
 GATE_DOOR_OPEN = "door_open"
@@ -45,6 +50,12 @@ _HEAT_PRESETS = {ACTION_FROST: "frost_temp", ACTION_ECO: "eco_temp"}
 _COOL_PRESETS = {ACTION_ECO: "eco_cool_temp"}
 
 
+def _usable_preset(value: float | None, temp_range: tuple[float, float] | None) -> bool:
+    if value is None or value <= 0.0:
+        return False
+    return temp_range is None or temp_range[0] <= value <= temp_range[1]
+
+
 @dataclass(frozen=True)
 class ModelContext:
     """What the dependency layer needs from SmartPI at one calculation."""
@@ -59,6 +70,9 @@ class ModelContext:
     # SmartPI left its learning phase: a and b are learned.
     model_reliable: bool
     hvac_mode: VThermHvacMode | None = None
+    # SmartPI's own learning conditions hold: learning enabled and not paused,
+    # the zone heats or cools, no shedding, guard cut or calibration.
+    learning_allowed: bool = True
 
 
 class DependencyModel:
@@ -72,11 +86,18 @@ class DependencyModel:
         self.load()
 
     def load(self) -> None:
-        """Rebuild the learned coupling from the persisted state."""
+        """Rebuild the learned coupling from the persisted state.
+
+        A state that cannot be read is dropped: the exchanges are learned again.
+        """
         self._coupling.reset()
-        for item_id, item_state in self._state.items.items():
-            self._coupling.load_item(item_id, item_state)
-        self._coupling.load_shared(self._state.shared.get(_SHARED_COUPLING_KEY, {}))
+        try:
+            for item_id, item_state in self._state.items.items():
+                self._coupling.load_item(item_id, item_state)
+            self._coupling.load_shared(self._state.shared.get(_SHARED_COUPLING_KEY, {}))
+        except (TypeError, ValueError, AttributeError) as err:
+            _LOGGER.warning("Ignoring the saved neighbour exchanges, which cannot be read: %s", err)
+            self._coupling.reset()
 
     def reset(self) -> None:
         self._coupling.reset()
@@ -87,11 +108,17 @@ class DependencyModel:
         self._coupling.forget_except(item_ids)
         self._save()
 
+    def record_realized_power(
+        self, start_s: float, end_s: float, power: float, switched: bool = False
+    ) -> None:
+        """Average power a completed cycle delivered, used by the exchange learning."""
+        self._coupling.record_realized_power(start_s, end_s, power, switched)
+
     def _save(self) -> None:
         for item_id in list(self._state.items):
             self._state.items[item_id].update(self._coupling.save_item(item_id))
         shared = self._coupling.save_shared()
-        if shared["ls_rows"]:
+        if any(shared.values()):
             self._state.shared[_SHARED_COUPLING_KEY] = shared
         else:
             self._state.shared.pop(_SHARED_COUPLING_KEY, None)
@@ -119,9 +146,11 @@ class DependencyModel:
                     obs.item.item_id for obs in connected if obs.item.mode == MODE_ALWAYS
                 ),
                 learning_allowed=(
-                    ctx.model_reliable
+                    ctx.learning_allowed
+                    and ctx.model_reliable
                     and ctx.deadtime_s is not None
-                    and gate not in (GATE_NEIGHBOUR_WINDOW, GATE_DOOR_SETTLING)
+                    and gate != GATE_NEIGHBOUR_WINDOW
+                    and not self._settling(ctx.now_s)
                 ),
             )
             if self._coupling.update(tick):
@@ -153,7 +182,8 @@ class DependencyModel:
         """Return the reaction to open windows at connected neighbour thermostats.
 
         "frost" and "eco" impose the zone's own preset temperature for the
-        current HVAC mode; without such a preset the zone is switched off.
+        current HVAC mode; without such a preset (Versatile Thermostat reports 0)
+        or with one outside the thermostat's range, the zone is switched off.
         """
         actions = [
             obs.item.neighbour_window_action
@@ -169,7 +199,7 @@ class DependencyModel:
             return ACTION_TURN_OFF, None
         presets = _COOL_PRESETS if ctx.hvac_mode == VThermHvacMode_COOL else _HEAT_PRESETS
         setpoint = readings.presets.get(presets.get(action, ""))
-        if setpoint is None:
+        if not _usable_preset(setpoint, readings.temp_range):
             return ACTION_TURN_OFF, None
         return action, float(setpoint)
 
@@ -182,12 +212,15 @@ class DependencyModel:
                 self._settling_until_s = now_s + DOOR_SETTLING_S
             self._door_open[obs.item.item_id] = obs.door_open
 
+    def _settling(self, now_s: float) -> bool:
+        return self._settling_until_s is not None and now_s < self._settling_until_s
+
     def _gate(self, connected: list[NeighbourObservation], ctx: ModelContext) -> str | None:
         if any(obs.reading.is_thermostat and obs.reading.window_open for obs in connected):
             return GATE_NEIGHBOUR_WINDOW
         if any(obs.item.mode == MODE_DOOR for obs in connected):
             return GATE_DOOR_OPEN
-        if self._settling_until_s is not None and ctx.now_s < self._settling_until_s:
+        if self._settling(ctx.now_s):
             return GATE_DOOR_SETTLING
         return None
 

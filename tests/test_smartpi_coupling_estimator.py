@@ -11,7 +11,7 @@ import math
 
 import pytest
 
-from custom_components.vtherm_smartpi.smartpi.const import COUPLING_K_MAX
+from custom_components.vtherm_smartpi.smartpi.const import COUPLING_JOINT_MIN_ROWS, COUPLING_K_MAX
 from custom_components.vtherm_smartpi.smartpi.coupling_estimator import (
     CouplingEstimator,
     CouplingTick,
@@ -183,3 +183,98 @@ def test_state_round_trip_and_forgetting() -> None:
 
     restored.forget_except(set())
     assert restored.k("hall") is None
+
+
+def test_always_fit_waits_for_a_day_of_windows() -> None:
+    """A few hours of rows share the same errors of SmartPI's model: no k is published from them."""
+    estimator = CouplingEstimator()
+    _feed(
+        estimator,
+        20.0,
+        {"hall": (0.002, lambda t: 15.0 + 4.0 * math.sin(t / 9000.0), _always_on)},
+        always=frozenset({"hall"}),
+        ext=lambda t: 5.0 + 3.0 * math.cos(t / 43200.0 * math.pi),
+    )
+
+    assert estimator.samples("hall") >= COUPLING_JOINT_MIN_ROWS
+    assert estimator.k("hall") is None
+    assert estimator.loss_coefficient() is None
+
+
+def _feed_switched_cycles(
+    estimator: CouplingEstimator, duties: tuple[float, ...], hours: float = 12.0
+) -> None:
+    """A switched heater with a door neighbour at 15 degC (k = 0.002).
+
+    Each 10-minute cycle heats at full power first, with the duties repeating in
+    turn; the cycles start 4 minutes off the calculations. The commanded power
+    is the duty, and each completed cycle reports what it realized.
+    """
+    cycle_s, offset_s, k, neighbour_c = 600.0, 240.0, 0.002, 15.0
+
+    def duty(t: float) -> float:
+        return duties[int((t + offset_s) // cycle_s) % len(duties)]
+
+    def heat(t: float) -> float:
+        return 1.0 if (t + offset_s) % cycle_s < duty(t) * cycle_s else 0.0
+
+    temp = 20.0
+    for minute in range(int(hours * 60)):
+        t = minute * 60.0
+        if t > 0.0 and (t + offset_s) % cycle_s == 0.0:
+            estimator.record_realized_power(t - cycle_s, t, duty(t - cycle_s), switched=True)
+        estimator.update(
+            CouplingTick(
+                now_s=t,
+                zone_temp=temp,
+                ext_temp=5.0,
+                power=duty(t),
+                a=A,
+                b=B,
+                deadtime_s=L_S,
+                connected={"hall": neighbour_c},
+                learning_allowed=True,
+            )
+        )
+        for step in range(6):
+            ts = t + step * 10.0
+            rate = A * heat(ts - L_S) - B * (temp - 5.0) - k * (temp - neighbour_c)
+            temp += rate * 10.0 / 60.0
+
+
+@pytest.mark.parametrize(
+    "duties",
+    [(0.6,), (0.9, 0.1, 0.5)],
+    ids=["temperature_ripple", "duty_changing_every_cycle"],
+)
+def test_switched_cycles_are_read_exactly(duties) -> None:
+    """The slope and the averages use the same weights, and the power follows each cycle's on-time.
+
+    With the averages taken uniformly under a least-squares slope, the ripple of
+    the first case biases k by about 6 %; with the commanded power instead of
+    the realized one, the second case is about 10 % off.
+    """
+    estimator = CouplingEstimator()
+    _feed_switched_cycles(estimator, duties)
+
+    assert estimator.k("hall") == pytest.approx(0.002, rel=0.01)
+
+
+def test_saved_rows_that_cannot_be_read_are_skipped() -> None:
+    estimator = CouplingEstimator()
+    estimator.load_shared(
+        {
+            "ls_rows": [
+                ["x", {"hall": 1.0}],
+                [0.001, {"hall": "y"}],
+                [float("nan"), {"hall": 1.0}],
+                [0.001, {}],
+                [0.001, {"hall": 1.0, "kitchen": 2.0}],
+            ],
+            "joint_rows": "not a list",
+            "joint_b": [0.001, "z", float("inf")],
+        }
+    )
+
+    assert estimator.samples("hall") == 1
+    assert estimator.save_shared()["joint_b"] == [0.001]

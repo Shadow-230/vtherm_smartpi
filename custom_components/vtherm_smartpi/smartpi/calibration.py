@@ -108,6 +108,12 @@ class CalibrationManager:
         else:
             self._calibration_retry_count += 1
 
+    def cancel(self) -> None:
+        """Stop the calibration in progress; it ends as cancelled."""
+        self._calibration_state = SmartPICalibrationPhase.IDLE
+        self._calibration_start_time = None
+        self._calibration_result = SmartPICalibrationResult.CANCELLED
+
     def handle_timeout(self) -> None:
         """Handle calibration timeout."""
         self._calibration_state = SmartPICalibrationPhase.IDLE

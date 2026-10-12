@@ -453,7 +453,17 @@ COUPLING_LS_WINDOW = 31
 # Always-connected neighbours need longer buffers: b and each k can only be told
 # apart once their temperature differences have varied independently.
 COUPLING_JOINT_WINDOW = 96
-# Above this condition number, simultaneous connections cannot be told apart.
+# A joint fit needs this many windows: a few hours of rows share the same errors
+# of SmartPI's own a and dead time and would agree on a wrong k.
+COUPLING_JOINT_MIN_ROWS = 24
+# New windows between two fits added to the history, so that agreeing fits do
+# not merely repeat the same data.
+COUPLING_JOINT_FIT_SPACING = 4
+# A joint fit separates b from each k when every coefficient's standard error is
+# at most this fraction of its value. Unlike a condition number, the standard
+# error falls as windows accumulate.
+COUPLING_JOINT_MAX_REL_SE = 0.15
+# Above this condition number, door connections open together cannot be told apart.
 COUPLING_LS_COND_MAX = 30.0
 # Measurement windows are longer than SmartPI's own: with 0.1 degC sensors a
 # few minutes hold a single reading step.

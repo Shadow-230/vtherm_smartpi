@@ -666,27 +666,39 @@ class SmartPIOptionsFlow(OptionsFlow):
         )
 
     def _suggested_door_sensors(self) -> list[str]:
-        """Door sensors placed in the area of the zone thermostat."""
+        """Door sensors in the area of the zone or of the neighbour, not used by another neighbour.
+
+        They are only listed in the form: a door sensor in one of the two areas
+        may as well be an exterior door.
+        """
         own = self._target_registry_entry()
-        if own is None:
-            return []
         devices = dr.async_get(self.hass)
 
-        def area_of(entry: er.RegistryEntry) -> str | None:
+        def area_of(entry: er.RegistryEntry | None) -> str | None:
+            if entry is None:
+                return None
             if entry.area_id:
                 return entry.area_id
             device = devices.async_get(entry.device_id) if entry.device_id else None
             return device.area_id if device else None
 
-        area = area_of(own)
-        if area is None:
+        areas = {area_of(own), area_of(self._neighbour_entity)} - {None}
+        if not areas:
             return []
+        editing_id = self._editing.item_id if self._editing is not None else None
+        used = {
+            sensor
+            for item in self._dependency_items()
+            if item.item_id != editing_id
+            for sensor in item.door_sensors
+        }
         return sorted(
             entry.entity_id
             for entry in er.async_get(self.hass).entities.values()
             if entry.domain == "binary_sensor"
             and (entry.device_class or entry.original_device_class) in DOOR_DEVICE_CLASSES
-            and area_of(entry) == area
+            and area_of(entry) in areas
+            and entry.id not in used
         )
 
     def _details_schema(self, defaults: dict[str, Any], is_thermostat: bool) -> vol.Schema:
@@ -745,17 +757,26 @@ class SmartPIOptionsFlow(OptionsFlow):
                 FIELD_WINDOW_ACTION: editing.neighbour_window_action,
             }
         else:
-            suggested = self._suggested_door_sensors()
             defaults = {
-                FIELD_MODE: MODE_DOOR if suggested else MODE_ALWAYS,
-                FIELD_DOOR_SENSORS: suggested,
+                FIELD_MODE: MODE_ALWAYS,
+                FIELD_DOOR_SENSORS: [],
                 FIELD_WINDOW_ACTION: WINDOW_ACTION_NOTHING,
             }
+        suggested = self._suggested_door_sensors()
         return self.async_show_form(
             step_id="neighbour_details",
             data_schema=self._details_schema(defaults, is_thermostat),
             errors=errors,
-            description_placeholders={"neighbour": neighbour.entity_id},
+            description_placeholders={
+                "neighbour": neighbour.entity_id,
+                "suggestions": (
+                    "\n\nDoor sensors in the areas of the two zones: "
+                    + ", ".join(suggested)
+                    + ". Choose only the doors between the zones."
+                    if suggested
+                    else ""
+                ),
+            },
         )
 
     def _build_neighbour(
@@ -770,11 +791,20 @@ class SmartPIOptionsFlow(OptionsFlow):
             if (entry.device_class or entry.original_device_class) == WINDOW_DEVICE_CLASS:
                 return None, {FIELD_DOOR_SENSORS: "window_sensor_rejected"}
             sensor_ids.append(entry.id)
+        editing = self._editing
+        mode = user_input[FIELD_MODE]
+        # What was learned belongs to one connection: a new mode or other doors
+        # start from scratch under a new id.
+        same_connection = (
+            editing is not None
+            and editing.mode == mode
+            and set(editing.door_sensors) == set(sensor_ids)
+        )
         item = DependencyItem(
-            item_id=self._editing.item_id if self._editing is not None else uuid.uuid4().hex,
+            item_id=editing.item_id if same_connection else uuid.uuid4().hex,
             kind=KIND_NEIGHBOUR,
             entity=self._neighbour_entity.id,
-            mode=user_input[FIELD_MODE],
+            mode=mode,
             door_sensors=tuple(sensor_ids),
             neighbour_window_action=(
                 user_input.get(FIELD_WINDOW_ACTION, WINDOW_ACTION_NOTHING)
@@ -782,7 +812,8 @@ class SmartPIOptionsFlow(OptionsFlow):
                 else WINDOW_ACTION_NOTHING
             ),
         )
-        others = [i for i in self._dependency_items() if i.item_id != item.item_id]
+        replaced_id = editing.item_id if editing is not None else item.item_id
+        others = [i for i in self._dependency_items() if i.item_id != replaced_id]
         own = self._target_registry_entry()
         for issue in validate_dependencies([*others, item], own.id if own else None):
             if issue.item_id == item.item_id:
@@ -832,8 +863,9 @@ class SmartPIOptionsFlow(OptionsFlow):
 
     def _store_neighbour(self, item: DependencyItem):
         items = self._dependency_items()
-        replaced = [item if existing.item_id == item.item_id else existing for existing in items]
-        if not any(existing.item_id == item.item_id for existing in items):
+        replaced_id = self._editing.item_id if self._editing is not None else item.item_id
+        replaced = [item if existing.item_id == replaced_id else existing for existing in items]
+        if not any(existing.item_id == replaced_id for existing in items):
             replaced.append(item)
         return self._save_dependencies(replaced)
 

@@ -1006,6 +1006,14 @@ class SmartPI:
             # This is more accurate than measuring time since last calculate(), which can be short
             # when a recalc timer fires mid-cycle.
             self.update_realized_power(u_applied=e_eff, dt_min=cycle_duration_min, forced_by_timing=False, elapsed_ratio=elapsed_ratio)
+            if cycle_duration_min is not None and cycle_duration_min > 0.0:
+                elapsed_s = max(0.0, min(1.0, float(elapsed_ratio))) * float(cycle_duration_min) * 60.0
+                self.dependency_model.record_realized_power(
+                    cycle_end_now - elapsed_s,
+                    cycle_end_now,
+                    self._to_linear_power(clamp(float(e_eff), 0.0, 1.0)),
+                    switched=not self._valve_mode_enabled,
+                )
 
         self._record_completed_fftrim_power(
             cycle_end_now=cycle_end_now,
@@ -1765,7 +1773,9 @@ class SmartPI:
         """Integral time base for the gains, shortened by the active heat exchanges.
 
         The learned time constant 1/b gains the exchange conductances; a direct
-        heat input does not change the zone dynamics.
+        heat input does not change the zone dynamics. With an always-connected
+        neighbour the learned b already holds its exchange, so the base is the
+        loss coefficient fitted without it.
         """
         model = self._effective_model
         if model is None or not model.active or not tau_info.reliable or tau_info.tau_min <= 0.0:
@@ -1773,7 +1783,10 @@ class SmartPI:
         conductance = model.exchange_conductance
         if conductance <= 0.0:
             return tau_info.tau_min
-        return 1.0 / (1.0 / tau_info.tau_min + conductance)
+        inputs = self._known_inputs
+        loss = inputs.loss_coefficient if inputs is not None else None
+        base = loss if loss is not None and loss > 0.0 else 1.0 / tau_info.tau_min
+        return 1.0 / (base + conductance)
 
     def _read_known_inputs(
         self,
@@ -1781,6 +1794,8 @@ class SmartPI:
         zone_temp: float | None,
         ext_current_temp: float | None,
         hvac_mode: VThermHvacMode | None,
+        off_reason: str | None = None,
+        power_shedding: bool = False,
     ) -> None:
         """Read the known model inputs of this calculation.
 
@@ -1806,6 +1821,9 @@ class SmartPI:
                             deadtime_s=deadtime_s if deadtime_reliable else None,
                             model_reliable=self.phase == SmartPIPhase.STABLE,
                             hvac_mode=hvac_mode,
+                            learning_allowed=self._dependency_learning_allowed(
+                                now_monotonic, hvac_mode, off_reason, power_shedding
+                            ),
                         ),
                     )
                 else:
@@ -1824,6 +1842,25 @@ class SmartPI:
             self.dt_est.reset_observation(self._committed_on_percent)
         self._learning_gate = gate
 
+    def _dependency_learning_allowed(
+        self,
+        now_monotonic: float,
+        hvac_mode: VThermHvacMode | None,
+        off_reason: str | None,
+        power_shedding: bool,
+    ) -> bool:
+        """Whether SmartPI's own learning conditions allow the exchanges to learn."""
+        resume_ts = self.learn_win.learning_resume_ts
+        return (
+            self._learning_enabled
+            and hvac_mode in (VThermHvacMode_HEAT, VThermHvacMode_COOL)
+            and off_reason is None
+            and not power_shedding
+            and not self.guards.guard_cut_active
+            and not self.calibration_mgr.is_calibrating
+            and (resume_ts is None or now_monotonic >= resume_ts)
+        )
+
     def _apply_neighbour_window_action(
         self,
         target_temp: float | None,
@@ -1834,15 +1871,26 @@ class SmartPI:
 
         "turn_off" takes the same path as a window detected by the thermostat
         itself, including the protected resume; "frost" and "eco" impose the
-        zone's preset temperature.
+        zone's preset temperature, never one that needs more energy than the
+        current setpoint. A calibration in progress is cancelled: its run is
+        overridden.
         """
         inputs = self._known_inputs
         action = inputs.control_action if inputs is not None else None
         if action is None or hvac_mode not in (VThermHvacMode_HEAT, VThermHvacMode_COOL):
             return target_temp, hvac_mode, off_reason
+        if self.calibration_mgr.is_calibrating:
+            _LOGGER.info("%s - Open window at a neighbour: calibration cancelled", self._name)
+            self.calibration_mgr.cancel()
         if inputs.action_setpoint is None:
             return target_temp, VThermHvacMode_OFF, HVAC_OFF_REASON_WINDOW_DETECTION
-        return inputs.action_setpoint, hvac_mode, off_reason
+        setpoint = inputs.action_setpoint
+        if target_temp is not None:
+            if hvac_mode == VThermHvacMode_COOL:
+                setpoint = max(setpoint, target_temp)
+            else:
+                setpoint = min(setpoint, target_temp)
+        return setpoint, hvac_mode, off_reason
 
     def _compose_effective_model(
         self,
@@ -3386,7 +3434,9 @@ class SmartPI:
         now = time.monotonic()
 
         # --- Known model inputs and the reaction to a neighbour's open window ---
-        self._read_known_inputs(now, current_temp, ext_current_temp, hvac_mode)
+        self._read_known_inputs(
+            now, current_temp, ext_current_temp, hvac_mode, off_reason, power_shedding
+        )
         target_temp, hvac_mode, off_reason = self._apply_neighbour_window_action(
             target_temp, hvac_mode, off_reason
         )

@@ -11,7 +11,11 @@ from dataclasses import replace
 
 import pytest
 
-from custom_components.vtherm_smartpi.hvac_mode import VThermHvacMode_COOL
+from custom_components.vtherm_smartpi.hvac_mode import (
+    VThermHvacMode_COOL,
+    VThermHvacMode_HEAT,
+    VThermHvacMode_OFF,
+)
 
 from sim.metrics import identification
 from sim.runner import SimNeighbour, Simulation, ZoneSpec
@@ -19,6 +23,7 @@ from sim.weather import Weather
 
 K = 0.002
 OUTDOOR = Weather(base_c=3.0, daily_amplitude_c=3.0)
+N3_OUTDOOR = Weather(base_c=5.0, daily_amplitude_c=3.0)
 
 
 def _doors(days: int) -> tuple[tuple[float, float], ...]:
@@ -104,23 +109,45 @@ async def test_n3_always_neighbour_is_separated_and_helps_after_a_step(monkeypat
 
     The feed-forward that uses the effective model is active only once SmartPI's
     time constant is reliable, which needs passive cooling periods: the zone is
-    mild enough for them.
+    mild enough for them. No k is published from the first hours after the
+    step, which share the same errors of SmartPI's own model.
     """
     k = 0.0015
     zone = _zone(SimNeighbour("hall", 20.0, k, mode="always", steps=((30.0, 4.0), (66.0, -4.0))))
     errors = {}
     for layer in (True, False):
         with monkeypatch.context() as patch:
-            sim = Simulation(patch, zone, Weather(base_c=5.0, daily_amplitude_c=3.0), dependency_layer=layer)
-            await sim.run_for(66.0)
+            sim = Simulation(patch, zone, N3_OUTDOOR, dependency_layer=layer)
             if layer:
-                assert _item(sim, "hall")["k"] == pytest.approx(k, rel=0.2)
-                assert sim.algo._known_inputs.loss_coefficient == pytest.approx(0.001, rel=0.2)
-                assert sim.algo.control_b == pytest.approx(0.001 + k, rel=0.2)
+                await sim.run_for(42.0)
+                assert _item(sim, "hall")["k"] is None
+                await sim.run_for(24.0)
+                assert _item(sim, "hall")["k"] == pytest.approx(k, rel=0.1)
+                assert sim.algo._known_inputs.loss_coefficient == pytest.approx(0.001, rel=0.1)
+                assert sim.algo.control_b == pytest.approx(0.001 + k, rel=0.1)
+            else:
+                await sim.run_for(66.0)
             await sim.run_for(12.0)
             errors[layer] = _mean_error(sim, 66.0, 78.0)
 
     assert errors[True] < errors[False]
+
+
+async def test_n3_coarse_sensor_publishes_nothing_doubtful(monkeypatch) -> None:
+    """With a 0.1 degC sensor the same zone cannot separate b from k: nothing is published."""
+    k = 0.0015
+    zone = _zone(
+        SimNeighbour("hall", 20.0, k, mode="always", steps=((30.0, 4.0),)), sensor_resolution_c=0.1
+    )
+    sim = Simulation(monkeypatch, zone, N3_OUTDOOR, dependency_layer=True)
+    await sim.run_for(66.0)
+
+    item = _item(sim, "hall")
+    if item["k"] is None:
+        assert item["indistinguishable"]
+        assert sim.algo.control_b == sim.algo.est.b
+    else:
+        assert item["k"] == pytest.approx(k, rel=0.2)
 
 
 async def test_n5_cooling_with_a_neighbour(monkeypatch) -> None:
@@ -158,6 +185,16 @@ async def test_n6_window_at_a_connected_neighbour(monkeypatch, action) -> None:
 
     monkeypatch.setattr(SimNeighbour, "observation", with_action)
     sim = Simulation(monkeypatch, _zone(neighbour, sensor_resolution_c=0.1), OUTDOOR, dependency_layer=True)
+    applied: list[tuple] = []
+    react = sim.algo._apply_neighbour_window_action
+
+    def recording(target_temp, hvac_mode, off_reason):
+        result = react(target_temp, hvac_mode, off_reason)
+        if 31.6 <= sim.clock.elapsed_s / 3600.0 < 32.4:
+            applied.append(result[:2])
+        return result
+
+    monkeypatch.setattr(sim.algo, "_apply_neighbour_window_action", recording)
     await sim.run_for(31.5)
     samples_before = _item(sim, "hall")["k_samples"]
     await sim.run_for(1.0)
@@ -165,6 +202,13 @@ async def test_n6_window_at_a_connected_neighbour(monkeypatch, action) -> None:
     assert _item(sim, "hall")["k_samples"] == samples_before
     await sim.run_for(4.0)
 
+    expected = {
+        "nothing": (sim.zone.setpoint_c, VThermHvacMode_HEAT),
+        "turn_off": (sim.zone.setpoint_c, VThermHvacMode_OFF),
+        "frost": (sim.zone.presets["frost_temp"], VThermHvacMode_HEAT),
+        "eco": (sim.zone.presets["eco_temp"], VThermHvacMode_HEAT),
+    }[action]
+    assert applied and all(result == expected for result in applied)
     if action == "nothing":
         assert heating_s > 1200.0
     else:

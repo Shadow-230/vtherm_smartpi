@@ -135,7 +135,13 @@ async def test_zone_presets_are_read_from_the_thermostat_state(hass) -> None:
     hass.states.async_set(
         thermostat.entity_id,
         "heat",
-        {"preset_temperatures": {"frost_temp": 7.0, "eco_temp": 17.5, "boost_temp": "n/a"}},
+        {
+            "preset_temperatures": {"frost_temp": 7.0, "eco_temp": 17.5, "boost_temp": "n/a"},
+            "min_temp": 7.0,
+            "max_temp": 30.0,
+        },
     )
 
-    assert _readings(thermostat).presets == {"frost_temp": 7.0, "eco_temp": 17.5}
+    readings = _readings(thermostat)
+    assert readings.presets == {"frost_temp": 7.0, "eco_temp": 17.5}
+    assert readings.temp_range == (7.0, 30.0)

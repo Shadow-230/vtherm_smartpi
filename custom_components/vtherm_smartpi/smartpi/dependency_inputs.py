@@ -133,3 +133,5 @@ class DependencyReadings:
     neighbours: tuple[NeighbourObservation, ...] = ()
     # Preset temperatures of the zone thermostat, e.g. {"frost_temp": 7.0, "eco_temp": 17.0}.
     presets: Mapping[str, float] = field(default_factory=dict)
+    # Minimum and maximum temperature of the zone thermostat, when known.
+    temp_range: tuple[float, float] | None = None

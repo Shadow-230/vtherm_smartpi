@@ -7,10 +7,18 @@ layer is replaced by a provider handing the exchange to SmartPI directly.
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import pytest
 
 from custom_components.vtherm_smartpi import algo as algo_module
-from custom_components.vtherm_smartpi.smartpi.const import clamp
+from custom_components.vtherm_smartpi.const import HVAC_OFF_REASON_WINDOW_DETECTION
+from custom_components.vtherm_smartpi.hvac_mode import (
+    VThermHvacMode_COOL,
+    VThermHvacMode_HEAT,
+    VThermHvacMode_OFF,
+)
+from custom_components.vtherm_smartpi.smartpi.const import SmartPICalibrationResult, clamp
 from custom_components.vtherm_smartpi.smartpi.diagnostics import build_published_diagnostics
 from custom_components.vtherm_smartpi.smartpi.effective_model import (
     ExchangeInput,
@@ -266,3 +274,89 @@ async def test_a_failing_provider_does_not_stop_regulation(monkeypatch) -> None:
     assert sim.actuator.turn_on_count > 0
     assert sim.algo.control_b == sim.algo.est.b
     assert "dependencies" not in build_published_diagnostics(sim.algo)
+
+
+@pytest.mark.parametrize(
+    ("hvac_mode", "target", "preset", "expected"),
+    [
+        (VThermHvacMode_HEAT, 20.0, 17.0, 17.0),
+        (VThermHvacMode_HEAT, 16.0, 17.0, 16.0),
+        (VThermHvacMode_COOL, 24.0, 27.0, 27.0),
+        (VThermHvacMode_COOL, 28.0, 27.0, 28.0),
+    ],
+    ids=["heat_lowers", "heat_never_raises", "cool_raises", "cool_never_lowers"],
+)
+async def test_neighbour_window_preset_never_asks_for_more_energy(
+    monkeypatch, hvac_mode, target, preset, expected
+) -> None:
+    algo = Simulation(monkeypatch, _zone(neighbours=())).algo
+    algo._known_inputs = KnownInputs(control_action="eco", action_setpoint=preset, status=STATUS)
+
+    assert algo._apply_neighbour_window_action(target, hvac_mode, None) == (expected, hvac_mode, None)
+
+
+async def test_neighbour_window_reaction_cancels_a_calibration(monkeypatch) -> None:
+    """The reaction overrides the calibration run: it ends as cancelled instead of stalling."""
+    algo = Simulation(monkeypatch, _zone(neighbours=())).algo
+    algo.calibration_mgr.start_calibration(now=0.0, is_manual=True)
+    algo._known_inputs = KnownInputs(control_action="turn_off", status=STATUS)
+
+    target, hvac_mode, off_reason = algo._apply_neighbour_window_action(20.0, VThermHvacMode_HEAT, None)
+
+    assert (target, hvac_mode, off_reason) == (20.0, VThermHvacMode_OFF, HVAC_OFF_REASON_WINDOW_DETECTION)
+    assert not algo.calibration_mgr.is_calibrating
+    assert algo.calibration_mgr.calibration_result == SmartPICalibrationResult.CANCELLED
+
+
+async def test_exchange_learning_follows_smartpi_learning_conditions(monkeypatch) -> None:
+    algo = Simulation(monkeypatch, _zone(neighbours=())).algo
+
+    def allowed(hvac_mode=VThermHvacMode_HEAT, off_reason=None, power_shedding=False):
+        return algo._dependency_learning_allowed(1000.0, hvac_mode, off_reason, power_shedding)
+
+    assert allowed()
+    assert allowed(VThermHvacMode_COOL)
+    assert not allowed(VThermHvacMode_OFF)
+    assert not allowed(off_reason=HVAC_OFF_REASON_WINDOW_DETECTION)
+    assert not allowed(power_shedding=True)
+
+    algo.learn_win.set_learning_resume_ts(2000.0)
+    assert not allowed()
+    algo.learn_win.set_learning_resume_ts(None)
+
+    monkeypatch.setattr(algo.guards, "_guard_cut_active", True)
+    assert not allowed()
+    monkeypatch.setattr(algo.guards, "_guard_cut_active", False)
+
+    algo.calibration_mgr.start_calibration(now=0.0, is_manual=True)
+    assert not allowed()
+    algo.calibration_mgr.reset()
+
+    algo.set_learning_enabled(False)
+    assert not allowed()
+
+
+async def test_gains_use_the_fitted_loss_with_always_neighbours(monkeypatch) -> None:
+    """SmartPI's b already holds an always-connected exchange: Ti starts from the loss fitted without it."""
+    algo = Simulation(monkeypatch, _zone(neighbours=())).algo
+    k, loss, learned_b = 0.0015, 0.001, 0.0024
+    inputs = KnownInputs(exchanges=(ExchangeInput("n1", k, 20.0),), loss_coefficient=loss, status=STATUS)
+    algo._known_inputs = inputs
+    algo._effective_model = compose(learned_b, 5.0, inputs)
+    tau = SimpleNamespace(reliable=True, tau_min=1.0 / learned_b)
+
+    assert algo._control_tau_min(tau) == pytest.approx(1.0 / (loss + k))
+
+
+async def test_completed_cycles_report_their_realized_power(monkeypatch) -> None:
+    """A switched cycle delivers its energy at full power from its start."""
+    sim = Simulation(monkeypatch, _zone(neighbours=()))
+    algo = sim.algo
+    end = algo_module.time.monotonic()
+
+    await algo.on_cycle_completed(e_eff=0.5, elapsed_ratio=0.5, cycle_duration_min=10.0)
+
+    assert list(algo.dependency_model._coupling._realized) == [
+        (end - 300.0, end - 150.0, 1.0),
+        (end - 150.0, end, 0.0),
+    ]

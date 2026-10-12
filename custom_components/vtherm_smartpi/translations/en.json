@@ -133,7 +133,7 @@
       },
       "neighbour_details": {
         "title": "Neighbouring zone",
-        "description": "Connection with {neighbour}.",
+        "description": "Connection with {neighbour}.{suggestions}",
         "data": {
           "mode": "Connection",
           "door_sensors": "Door sensors",

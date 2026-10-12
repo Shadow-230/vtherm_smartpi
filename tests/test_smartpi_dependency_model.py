@@ -23,7 +23,7 @@ from custom_components.vtherm_smartpi.smartpi.dependency_model import (
 PRESETS = {"frost_temp": 7.0, "eco_temp": 17.0, "eco_cool_temp": 27.0}
 
 
-def _ctx(now_s: float = 0.0, hvac_mode=VThermHvacMode_HEAT) -> ModelContext:
+def _ctx(now_s: float = 0.0, hvac_mode=VThermHvacMode_HEAT, learning_allowed=True) -> ModelContext:
     return ModelContext(
         now_s=now_s,
         zone_temp=20.0,
@@ -34,6 +34,7 @@ def _ctx(now_s: float = 0.0, hvac_mode=VThermHvacMode_HEAT) -> ModelContext:
         deadtime_s=600.0,
         model_reliable=True,
         hvac_mode=hvac_mode,
+        learning_allowed=learning_allowed,
     )
 
 
@@ -150,6 +151,62 @@ def test_missing_preset_falls_back_to_turning_off() -> None:
     assert (inputs.control_action, inputs.action_setpoint) == ("turn_off", None)
 
 
+@pytest.mark.parametrize(
+    ("eco_temp", "expected"),
+    [
+        (0.0, ("turn_off", None)),
+        (35.0, ("turn_off", None)),
+        (5.0, ("turn_off", None)),
+        (17.0, ("eco", 17.0)),
+    ],
+    ids=["not_configured", "above_the_range", "below_the_range", "usable"],
+)
+def test_preset_outside_the_thermostat_range_falls_back_to_turning_off(eco_temp, expected) -> None:
+    """Versatile Thermostat reports 0 for a preset that is not configured."""
+    model = DependencyModel(DependencyState())
+    inputs = model.update(
+        DependencyReadings(
+            neighbours=(_neighbour(mode="always", window_open=True, action="eco"),),
+            presets={"eco_temp": eco_temp},
+            temp_range=(7.0, 30.0),
+        ),
+        _ctx(),
+    )
+
+    assert (inputs.control_action, inputs.action_setpoint) == expected
+
+
+def _steady(model, minutes, door_open=True, start_min=0, learning_allowed=True):
+    """A steady zone at 20 degC held by a warmer door neighbour, one calculation a minute."""
+    for minute in range(start_min, start_min + minutes):
+        model.update(
+            DependencyReadings(neighbours=(_neighbour(door_open=door_open, temperature=24.0),), presets=PRESETS),
+            _ctx(minute * 60.0, learning_allowed=learning_allowed),
+        )
+
+
+def test_k_learns_only_when_smartpi_could_learn() -> None:
+    allowed, paused = DependencyModel(DependencyState()), DependencyModel(DependencyState())
+
+    _steady(allowed, 120)
+    _steady(paused, 120, learning_allowed=False)
+
+    assert allowed._coupling.samples("hall") > 0
+    assert paused._coupling.samples("hall") == 0
+
+
+def test_k_waits_for_the_door_to_settle() -> None:
+    """The first window after a door opens starts once the air has settled."""
+    model = DependencyModel(DependencyState())
+    _steady(model, 10, door_open=False)
+    _steady(model, 35, door_open=True, start_min=10)
+
+    assert model._coupling.samples("hall") == 0
+
+    _steady(model, 10, door_open=True, start_min=45)
+    assert model._coupling.samples("hall") == 1
+
+
 def test_exchange_inputs_and_status_use_learned_k_only() -> None:
     state = DependencyState()
     model = DependencyModel(state)
@@ -179,3 +236,35 @@ def test_state_survives_a_restart() -> None:
     inputs = _update(restarted, _neighbour(mode="always"))
 
     assert inputs.exchanges[0].conductance == pytest.approx(0.002)
+
+
+def test_always_connection_state_survives_a_restart() -> None:
+    """The joint buffer and fits of always-connected neighbours are saved without any door rows."""
+    state = DependencyState()
+    model = DependencyModel(state)
+    joint = {
+        "joint_rows": [[-0.016, {"hall": 1.0, "_ext": -15.0}]] * 3,
+        "joint_k": {"hall": [0.0015] * 8},
+        "joint_b": [0.001] * 8,
+    }
+    model._coupling.load_shared(joint)
+    state.for_item("hall")
+    model.forget_except({"hall"})
+
+    restarted = DependencyModel(state)
+    inputs = _update(restarted, _neighbour(mode="always"))
+
+    assert inputs.exchanges[0].conductance == pytest.approx(0.0015)
+    assert inputs.loss_coefficient == pytest.approx(0.001)
+    assert inputs.status[0]["k_samples"] == 3
+
+
+def test_unreadable_saved_state_is_dropped() -> None:
+    state = DependencyState()
+    state.for_item("hall")["k_history"] = [0.002] * 8
+    state.shared["coupling"] = {"joint_k": ["not", "a", "mapping"], "joint_b": "nope"}
+    state.items["hall"] = ["not", "a", "mapping"]
+
+    model = DependencyModel(state)
+
+    assert _update(model, _neighbour(mode="always")).exchanges == ()

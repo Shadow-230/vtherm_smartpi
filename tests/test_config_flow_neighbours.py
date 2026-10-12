@@ -70,6 +70,7 @@ async def _add(hass, entry, neighbour_entity_id):
 
 
 async def test_thermostat_neighbour_with_suggested_door(hass) -> None:
+    """Door sensors of the area are listed, not preselected: one may be an exterior door."""
     _living, hall, _sensor, door, _window = _setup(hass)
     entry = _entry(hass)
 
@@ -78,8 +79,9 @@ async def test_thermostat_neighbour_with_suggested_door(hass) -> None:
     assert result["type"] == FlowResultType.FORM
     assert result["step_id"] == "neighbour_details"
     assert _schema_keys(result["data_schema"]) == {"mode", "door_sensors", "neighbour_window_action"}
-    assert _default(result["data_schema"], "door_sensors") == [door.entity_id]
-    assert _default(result["data_schema"], "mode") == "door"
+    assert _default(result["data_schema"], "door_sensors") == []
+    assert _default(result["data_schema"], "mode") == "always"
+    assert door.entity_id in result["description_placeholders"]["suggestions"]
 
     result = await hass.config_entries.options.async_configure(
         result["flow_id"],
@@ -94,6 +96,40 @@ async def test_thermostat_neighbour_with_suggested_door(hass) -> None:
     assert stored["mode"] == "door"
     assert stored["neighbour_window_action"] == "frost"
     assert stored["id"]
+
+
+async def test_suggestions_cover_both_areas_without_used_sensors(hass) -> None:
+    """Sensors of the neighbour's area are suggested; a sensor of another neighbour is not."""
+    _living, hall, sensor, door, _window = _setup(hass)
+    registry = er.async_get(hass)
+    hall_area = ar.async_get(hass).async_create("Hall")
+    registry.async_update_entity(hall.entity_id, area_id=hall_area.id)
+    hall_door = registry.async_get_or_create(
+        "binary_sensor", "test", "hall-door", suggested_object_id="hall_door", original_device_class="door"
+    )
+    registry.async_update_entity(hall_door.entity_id, area_id=hall_area.id)
+    entry = _entry(
+        hass,
+        [{"id": "n1", "kind": "neighbour", "entity": sensor.id, "mode": "door", "door_sensors": [door.id], "neighbour_window_action": "nothing"}],
+    )
+
+    result = await _add(hass, entry, hall.entity_id)
+
+    suggestions = result["description_placeholders"]["suggestions"]
+    assert hall_door.entity_id in suggestions
+    assert door.entity_id not in suggestions
+
+
+async def test_no_suggestion_without_area(hass) -> None:
+    _living, hall, _sensor, _door, _window = _setup(hass)
+    entry = _entry(hass, target="vt-hall")
+
+    result = await _add(hass, entry, "climate.living")
+
+    assert result["description_placeholders"]["suggestions"] != ""
+    entry_without_area = _entry(hass, target="vt-office")
+    result = await _add(hass, entry_without_area, hall.entity_id)
+    assert result["description_placeholders"]["suggestions"] == ""
 
 
 async def test_sensor_neighbour_has_no_window_reaction(hass) -> None:
@@ -158,26 +194,46 @@ async def test_warnings_ask_for_confirmation(hass) -> None:
     assert len(entry.options[CONF_SMART_PI_DEPENDENCIES]) == 1
 
 
-async def test_edit_keeps_the_item_id(hass) -> None:
+async def _edit(hass, entry, item_id, user_input):
+    result = await hass.config_entries.options.async_init(entry.entry_id)
+    result = await hass.config_entries.options.async_configure(result["flow_id"], {"next_step_id": "dependencies"})
+    result = await hass.config_entries.options.async_configure(result["flow_id"], {"next_step_id": "dependency_edit"})
+    result = await hass.config_entries.options.async_configure(result["flow_id"], {"dependency": item_id})
+    assert result["step_id"] == "neighbour_details"
+    return result, await hass.config_entries.options.async_configure(result["flow_id"], user_input)
+
+
+async def test_edit_keeps_the_item_id_for_the_same_connection(hass) -> None:
     _living, hall, _sensor, door, _window = _setup(hass)
     entry = _entry(
         hass,
         [{"id": "n1", "kind": "neighbour", "entity": hall.id, "mode": "door", "door_sensors": [door.id], "neighbour_window_action": "eco"}],
     )
 
-    result = await hass.config_entries.options.async_init(entry.entry_id)
-    result = await hass.config_entries.options.async_configure(result["flow_id"], {"next_step_id": "dependencies"})
-    result = await hass.config_entries.options.async_configure(result["flow_id"], {"next_step_id": "dependency_edit"})
-    result = await hass.config_entries.options.async_configure(result["flow_id"], {"dependency": "n1"})
+    form, result = await _edit(
+        hass, entry, "n1", {"mode": "door", "door_sensors": [door.entity_id], "neighbour_window_action": "turn_off"}
+    )
 
-    assert result["step_id"] == "neighbour_details"
-    assert _default(result["data_schema"], "door_sensors") == [door.entity_id]
-    assert _default(result["data_schema"], "neighbour_window_action") == "eco"
+    assert _default(form["data_schema"], "door_sensors") == [door.entity_id]
+    assert _default(form["data_schema"], "neighbour_window_action") == "eco"
+    assert result["type"] == FlowResultType.CREATE_ENTRY
+    (stored,) = entry.options[CONF_SMART_PI_DEPENDENCIES]
+    assert (stored["id"], stored["mode"], stored["neighbour_window_action"]) == ("n1", "door", "turn_off")
 
-    result = await hass.config_entries.options.async_configure(
-        result["flow_id"], {"mode": "always", "door_sensors": [], "neighbour_window_action": "turn_off"}
+
+async def test_edit_of_the_connection_starts_learning_again(hass) -> None:
+    """A new mode or other door sensors replace the item under a new id: its learned k is dropped."""
+    _living, hall, _sensor, door, _window = _setup(hass)
+    entry = _entry(
+        hass,
+        [{"id": "n1", "kind": "neighbour", "entity": hall.id, "mode": "door", "door_sensors": [door.id], "neighbour_window_action": "eco"}],
+    )
+
+    _form, result = await _edit(
+        hass, entry, "n1", {"mode": "always", "door_sensors": [], "neighbour_window_action": "eco"}
     )
 
     assert result["type"] == FlowResultType.CREATE_ENTRY
     (stored,) = entry.options[CONF_SMART_PI_DEPENDENCIES]
-    assert (stored["id"], stored["mode"], stored["neighbour_window_action"]) == ("n1", "always", "turn_off")
+    assert stored["id"] != "n1"
+    assert (stored["mode"], stored["door_sensors"]) == ("always", [])

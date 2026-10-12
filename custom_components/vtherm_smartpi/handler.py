@@ -440,6 +440,7 @@ class SmartPIHandler:
                 )
             )
         presets = {}
+        temp_range = None
         own_state = hass.states.get(self._thermostat.entity_id) if self._thermostat.entity_id else None
         if own_state is not None:
             raw_presets = own_state.attributes.get("preset_temperatures")
@@ -449,7 +450,11 @@ class SmartPIHandler:
                     for name, value in raw_presets.items()
                     if isinstance(value, (int, float))
                 }
-        return DependencyReadings(neighbours=tuple(neighbours), presets=presets)
+            low = own_state.attributes.get("min_temp")
+            high = own_state.attributes.get("max_temp")
+            if isinstance(low, (int, float)) and isinstance(high, (int, float)) and low < high:
+                temp_range = (float(low), float(high))
+        return DependencyReadings(neighbours=tuple(neighbours), presets=presets, temp_range=temp_range)
 
     async def control_heating(self, timestamp=None, force=False):
         """Control heating using SmartPI."""
