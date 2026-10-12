@@ -21,6 +21,7 @@ from custom_components.vtherm_smartpi.const import (
     CONF_MINIMAL_DEACTIVATION_DELAY,
 )
 from custom_components.vtherm_smartpi.handler import SmartPIHandler
+from custom_components.vtherm_smartpi.smartpi.effective_model import KnownInputs
 from custom_components.vtherm_smartpi.hvac_mode import (
     VThermHvacMode,
     VThermHvacMode_HEAT,
@@ -38,6 +39,17 @@ from .weather import Weather
 SENSOR_STEP_S = 10.0
 TRACE_STEP_S = 60.0
 ZONE_NODE = "zone"
+# A neighbour held at a fixed temperature is a node with an overwhelming capacity.
+FIXED_NODE_CAPACITY = 1e12
+
+
+@dataclass(frozen=True)
+class FixedNeighbour:
+    """Neighbouring space at a constant temperature, coupled to the zone."""
+
+    key: str
+    temperature_c: float
+    conductance: float
 
 
 @dataclass
@@ -61,6 +73,7 @@ class ZoneSpec:
     min_activation_delay_s: int = 0
     min_deactivation_delay_s: int = 0
     sensor_resolution_c: float = 0.1
+    neighbours: tuple[FixedNeighbour, ...] = ()
     options: dict = field(default_factory=dict)
 
 
@@ -189,7 +202,13 @@ class SimThermostat(FakeThermostatRuntime):
 class Simulation:
     """One zone with the real SmartPI handler, run in virtual time."""
 
-    def __init__(self, monkeypatch, zone: ZoneSpec | None = None, weather: Weather | None = None) -> None:
+    def __init__(
+        self,
+        monkeypatch,
+        zone: ZoneSpec | None = None,
+        weather: Weather | None = None,
+        known_inputs: Callable[[Simulation], KnownInputs | None] | None = None,
+    ) -> None:
         self.zone = zone or ZoneSpec()
         self.weather = weather or Weather()
         self.clock = VirtualClock()
@@ -210,6 +229,9 @@ class Simulation:
             self.zone.a,
             DelayedPower(self.actuator.history, self.zone.deadtime_min * 60.0),
         )
+        for neighbour in self.zone.neighbours:
+            self.network.add_node(neighbour.key, neighbour.temperature_c, FIXED_NODE_CAPACITY)
+            self.network.link(ZONE_NODE, neighbour.key, neighbour.conductance)
 
         self.thermostat = SimThermostat(self.zone, self.clock, self.actuator)
         self.scheduler = SimCycleScheduler(
@@ -229,6 +251,8 @@ class Simulation:
         self.handler._store = None
         self.handler._legacy_store = None
         self.handler.on_scheduler_ready(self.scheduler)
+        if known_inputs is not None:
+            self.algo.set_known_inputs_provider(lambda: known_inputs(self))
 
         self.indoor_sensor = QuantizedSensor(self.zone.sensor_resolution_c)
         self.outdoor_sensor = QuantizedSensor(0.1)

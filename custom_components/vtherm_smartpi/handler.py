@@ -39,6 +39,7 @@ from .const import (
     CONF_SMART_PI_KNEE_DEMAND,
     CONF_SMART_PI_KNEE_VALVE,
     CONF_SMART_PI_MAX_VALVE,
+    CONF_SMART_PI_DEPENDENCIES,
     DEFAULT_OPTIONS,
     DIAGNOSTIC_SENSOR_UNIQUE_ID_PREFIX,
     DOMAIN,
@@ -48,6 +49,14 @@ from .const import (
 from .hvac_mode import VThermHvacMode_OFF, VThermHvacMode_HEAT, VThermHvacMode_COOL
 from .commons import write_event_log
 from .smartpi.valve_curve import ValveCurveParams
+from .smartpi.dependencies import DependencyItem, parse_dependencies
+from .smartpi.dependency_inputs import (
+    EntitySnapshot,
+    connection_active,
+    doors_open,
+    read_neighbour,
+)
+from .smartpi.effective_model import KnownInputs
 
 if TYPE_CHECKING:
     from vtherm_api.interfaces import InterfaceThermostatRuntime
@@ -81,6 +90,7 @@ class SmartPIHandler:
         self._allow_pwm_cycle_force: bool = False
         self._valve_linearization_configured: bool = False
         self._valve_curve_params: ValveCurveParams | None = None
+        self._dependency_items: list[DependencyItem] = []
 
     def init_algorithm(self):
         """Initialize SmartPI algorithm."""
@@ -191,6 +201,10 @@ class SmartPIHandler:
             self._valve_curve_params,
             valve_mode=valve_mode_enabled,
         )
+        self._dependency_items = parse_dependencies(entry.get(CONF_SMART_PI_DEPENDENCIES))
+        t.prop_algorithm.set_known_inputs_provider(
+            self._read_known_inputs if self._dependency_items else None
+        )
 
         _LOGGER.info("%s - SmartPI Algorithm initialized", t)
         async_dispatcher_send(t.hass, SIGNAL_SMARTPI_TARGET_UPDATED, t.unique_id)
@@ -239,6 +253,10 @@ class SmartPIHandler:
                 if data and t.prop_algorithm:
                     t.prop_algorithm.load_state(data)
                     _LOGGER.debug("%s - SmartPI state loaded", t)
+                if t.prop_algorithm:
+                    t.prop_algorithm.dependency_state.prune(
+                        item.item_id for item in self._dependency_items
+                    )
             except Exception as e:
                 _LOGGER.error("%s - Failed to load SmartPI state: %s", t, e)
 
@@ -392,6 +410,48 @@ class SmartPIHandler:
     def _autocalib_event_data(self, event: "AutoCalibEvent") -> dict:
         """Return the bus data of an AutoCalib event, keyed by the climate entity_id."""
         return {**event.payload, "entity_id": self._thermostat.entity_id}
+
+    def _entity_snapshot(self, registry, registry_id: str) -> EntitySnapshot | None:
+        """Return the state of an entity referenced by its entity registry id."""
+        entity_id = er.async_resolve_entity_id(registry, registry_id)
+        if entity_id is None:
+            return EntitySnapshot(None)
+        state = self._thermostat.hass.states.get(entity_id)
+        if state is None:
+            return EntitySnapshot(entity_id)
+        return EntitySnapshot(entity_id, state.state, state.attributes)
+
+    def _read_known_inputs(self) -> KnownInputs:
+        """Read the configured dependencies for one calculation.
+
+        Neighbour readings are reported for diagnostics. They become model
+        inputs once the exchange with each neighbour has been learned.
+        """
+        registry = er.async_get(self._thermostat.hass)
+        status = []
+        for item in self._dependency_items:
+            snapshot = self._entity_snapshot(registry, item.entity)
+            entry = {
+                "id": item.item_id,
+                "kind": item.kind,
+                "entity": snapshot.entity_id if snapshot is not None else None,
+            }
+            if item.is_neighbour:
+                reading = read_neighbour(item, snapshot)
+                door_open = doors_open(
+                    self._entity_snapshot(registry, sensor) for sensor in item.door_sensors
+                )
+                entry.update(
+                    mode=item.mode,
+                    available=reading.usable,
+                    active=connection_active(item, reading, door_open),
+                    t_neighbour=reading.temperature,
+                    neighbour_window=reading.window_open,
+                    k=None,
+                    k_reliable=False,
+                )
+            status.append(entry)
+        return KnownInputs(status=tuple(status))
 
     async def control_heating(self, timestamp=None, force=False):
         """Control heating using SmartPI."""
