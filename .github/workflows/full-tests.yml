@@ -1,0 +1,45 @@
+name: Full tests
+
+# The whole test suite including the long simulation scenarios and the
+# comparisons with Versatile Thermostat's own classes (SMARTPI_SIM_LOCAL=1).
+# Pull requests run the short suite in "Tests"; this one runs on the qas branch
+# and on demand.
+
+on:
+  push:
+    branches:
+      - qas
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  pytest:
+    name: Run full Pytest
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Checkout Versatile Thermostat dependency
+        uses: actions/checkout@v6
+        with:
+          repository: jmcollin78/versatile_thermostat
+          path: versatile_thermostat
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install pytest pytest-asyncio pytest-homeassistant-custom-component coverage homeassistant vtherm-api
+
+      - name: Run Pytest
+        env:
+          PYTHONPATH: ${{ github.workspace }}/versatile_thermostat:${{ github.workspace }}
+          SMARTPI_SIM_LOCAL: "1"
+        run: pytest tests/ --durations=20

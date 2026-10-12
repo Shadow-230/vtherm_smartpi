@@ -90,6 +90,14 @@ complete attribute envelope are identical to the preceding publication.
 This limits state-machine and Recorder churn without changing SmartPI control
 timing.
 
+## Zone dependencies
+
+When a thermostat entry has zone dependencies (neighbouring zones), `live` gains a
+`dependencies` block: the composed model (`b_eff`, `t_ref`), the learning gate, the
+window reaction applied, and one entry per neighbour with its learned exchange. The
+block is absent without dependencies. Its fields are listed in
+[Zone dependencies, §9](zone_dependencies.md#9-diagnostics).
+
 ## Consumer paths
 
 Live consumers must read from `attributes.live`. Historical graph consumers

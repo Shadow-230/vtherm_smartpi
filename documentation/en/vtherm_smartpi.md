@@ -102,6 +102,8 @@ To add SmartPI to an additional thermostat, open the SmartPI integration configu
 
 The parameters available are the same as for global defaults. Any parameter set here overrides the corresponding global default for the selected thermostat only.
 
+The options of a per-thermostat entry open a menu: the regulator settings, the zone dependencies (neighbouring zones that exchange heat with this one, through a door or permanently) and, for a linearized valve, the valve curve. How SmartPI learns and uses a neighbour is described in [Zone dependencies and a second heat source](zone_dependencies.md).
+
 ## Radiator valves and curve linearization
 
 This section only applies to thermostats that directly drive a valve, for example a radiator TRV.

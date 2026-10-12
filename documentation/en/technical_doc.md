@@ -12,6 +12,10 @@ The current codebase is built around three guiding ideas:
 
 This document describes the behavior that is actually implemented in the current SmartPI code.
 
+Zone dependencies (heat exchanged with neighbouring zones, a second heat source in the zone)
+extend the model with known inputs at a single substitution point; they are described in
+[Zone dependencies and a second heat source](zone_dependencies.md).
+
 ---
 
 ## 2. Thermal model and control law
@@ -544,6 +548,10 @@ retention only and does not add a second diagnostic block.
 relative to the current Home Assistant process. Persisted model counters remain
 internal and are used for model quality and warm-up decisions. When the thermal
 twin is usable, its public diagnostic fields are exposed under `analysis.twin`.
+
+With zone dependencies configured, `live` also carries a `dependencies` block
+(composed model, learning gate, one entry per neighbour); see
+[Zone dependencies, §9](zone_dependencies.md#9-diagnostics).
 
 `feedforward.fftrim.command_ownership` exposes the latest binding status,
 rejection reason, request sequence, requested/projected/realized powers and

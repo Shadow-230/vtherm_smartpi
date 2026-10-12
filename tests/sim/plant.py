@@ -4,11 +4,16 @@ Temperatures are in degC and rates in degC/min. With a node capacity of 1, a hea
 gain reads directly as SmartPI's ``a`` (degC/min at full power) and a link to the
 outdoors reads as SmartPI's ``b`` (1/min), so a single-node zone is the exact 1R1C
 model that SmartPI identifies.
+
+A lagged heater passes its delayed power through a first-order lag before it
+reaches the node, like an emitter with thermal mass (a heated floor): its
+output follows ``x(t+h) = u + (x(t) - u)*exp(-h/tau)``.
 """
 
 from __future__ import annotations
 
 import bisect
+import math
 from dataclasses import dataclass, field
 from typing import Callable
 
@@ -97,6 +102,26 @@ class _Heater:
 
 
 @dataclass
+class _LaggedHeater:
+    node: int
+    gain: float
+    power: DelayedPower
+    tau_min: float
+    # Output of the lag, 0..1 of the heater's full power.
+    output: float = 0.0
+
+    def step(self, power: float, step_min: float) -> float:
+        """Advance the lag over a step of constant input; return the step's mean output."""
+        if self.tau_min <= 0.0:
+            self.output = power
+            return power
+        decay = math.exp(-step_min / self.tau_min)
+        mean = power + (self.output - power) * self.tau_min / step_min * (1.0 - decay)
+        self.output = power + (self.output - power) * decay
+        return mean
+
+
+@dataclass
 class ThermalNetwork:
     """Nodes linked by conductances, to the outdoors and to delayed heaters."""
 
@@ -107,6 +132,7 @@ class ThermalNetwork:
     outdoor_links: list[tuple[int, float]] = field(default_factory=list)
     boundary_links: list[_BoundaryLink] = field(default_factory=list)
     heaters: list[_Heater] = field(default_factory=list)
+    lagged_heaters: list[_LaggedHeater] = field(default_factory=list)
 
     def add_node(self, name: str, temperature: float, capacity: float = 1.0) -> int:
         self.names.append(name)
@@ -138,6 +164,11 @@ class ThermalNetwork:
 
     def add_heater(self, name: str, gain: float, power: DelayedPower) -> None:
         self.heaters.append(_Heater(self.index(name), float(gain), power))
+
+    def add_lagged_heater(self, name: str, gain: float, power: DelayedPower, tau_min: float) -> _LaggedHeater:
+        heater = _LaggedHeater(self.index(name), float(gain), power, float(tau_min))
+        self.lagged_heaters.append(heater)
+        return heater
 
     def _derivative(
         self,
@@ -177,7 +208,7 @@ class ThermalNetwork:
         if end_s <= start_s:
             return
         cuts = {start_s, end_s}
-        for heater in self.heaters:
+        for heater in (*self.heaters, *self.lagged_heaters):
             cuts.update(heater.power.breakpoints(start_s, end_s))
         for link in self.boundary_links:
             if link.schedule is not None:
@@ -192,10 +223,14 @@ class ThermalNetwork:
                 for link in self.boundary_links
                 if link.schedule is None or link.schedule.is_open(seg_start)
             ]
+            lagged_power = [heater.power.value_at(seg_start) for heater in self.lagged_heaters]
             t_s = seg_start
             while t_s < seg_end - 1e-9:
                 step_s = min(MAX_STEP_S, seg_end - t_s)
                 mid_s = t_s + 0.5 * step_s
                 boundaries = [(link.node, link.conductance, link.temperature(mid_s)) for link in open_links]
-                self._rk4(step_s / 60.0, outdoor(mid_s), heat, boundaries)
+                step_heat = list(heat)
+                for heater, power in zip(self.lagged_heaters, lagged_power):
+                    step_heat[heater.node] += heater.gain * heater.step(power, step_s / 60.0)
+                self._rk4(step_s / 60.0, outdoor(mid_s), step_heat, boundaries)
                 t_s += step_s
