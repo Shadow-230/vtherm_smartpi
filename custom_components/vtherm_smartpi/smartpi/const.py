@@ -439,3 +439,24 @@ KNOWN_INPUTS_B_EFF_MIN = 1e-5
 # A known direct heat input shifts the reference temperature by q / b_eff;
 # the shift is bounded so that a weak loss estimate cannot amplify it unbounded.
 KNOWN_HEAT_MAX_SHIFT_C = 15.0
+
+# --- Neighbour coupling (zone dependencies) ---
+# Smallest zone-to-neighbour temperature difference that carries information on k.
+COUPLING_K_MIN_DT = 0.5
+# Upper bound of a credible exchange coefficient (1/min).
+COUPLING_K_MAX = 0.02
+COUPLING_MIN_SAMPLES = 8
+# A coefficient is published only when its accepted values agree: MAD / median.
+COUPLING_MAX_DISPERSION = 0.35
+COUPLING_HISTORY_SIZE = 31
+COUPLING_LS_WINDOW = 31
+# Always-connected neighbours need longer buffers: b and each k can only be told
+# apart once their temperature differences have varied independently.
+COUPLING_JOINT_WINDOW = 96
+# Above this condition number, simultaneous connections cannot be told apart.
+COUPLING_LS_COND_MAX = 30.0
+# Measurement windows are longer than SmartPI's own: with 0.1 degC sensors a
+# few minutes hold a single reading step.
+COUPLING_WINDOW_S = 30 * 60.0
+# Learning is skipped for this long after a door opens or closes.
+DOOR_SETTLING_S = 10 * 60.0

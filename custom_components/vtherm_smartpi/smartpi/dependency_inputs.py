@@ -111,3 +111,25 @@ def connection_active(item: DependencyItem, reading: NeighbourReading, door_open
     if item.mode == MODE_DOOR:
         return door_open
     return False
+
+
+@dataclass(frozen=True)
+class NeighbourObservation:
+    """One neighbour item with its reading and the state of its doors."""
+
+    item: DependencyItem
+    reading: NeighbourReading
+    door_open: bool = False
+
+    @property
+    def connected(self) -> bool:
+        return connection_active(self.item, self.reading, self.door_open)
+
+
+@dataclass(frozen=True)
+class DependencyReadings:
+    """Everything the dependency layer read for one calculation."""
+
+    neighbours: tuple[NeighbourObservation, ...] = ()
+    # Preset temperatures of the zone thermostat, e.g. {"frost_temp": 7.0, "eco_temp": 17.0}.
+    presets: Mapping[str, float] = field(default_factory=dict)

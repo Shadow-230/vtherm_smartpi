@@ -191,9 +191,11 @@ class DependencyState:
 
     def __init__(self) -> None:
         self.items: dict[str, dict[str, Any]] = {}
+        # State learned across items (e.g. simultaneous connections).
+        self.shared: dict[str, Any] = {}
 
     def __bool__(self) -> bool:
-        return any(self.items.values())
+        return any(self.items.values()) or bool(self.shared)
 
     def for_item(self, item_id: str) -> dict[str, Any]:
         """Return the mutable state of one item, creating it on first use."""
@@ -209,15 +211,24 @@ class DependencyState:
 
     def reset(self) -> None:
         self.items.clear()
+        self.shared.clear()
 
     def save_state(self) -> dict[str, Any]:
-        return {"version": DEPENDENCY_STATE_VERSION, "items": {k: dict(v) for k, v in self.items.items()}}
+        return {
+            "version": DEPENDENCY_STATE_VERSION,
+            "items": {k: dict(v) for k, v in self.items.items()},
+            "shared": dict(self.shared),
+        }
 
     def load_state(self, state: Any) -> None:
         """Restore a saved state; an unknown format is ignored rather than guessed."""
         self.items = {}
+        self.shared = {}
         if not isinstance(state, dict) or state.get("version") != DEPENDENCY_STATE_VERSION:
             return
         items = state.get("items")
         if isinstance(items, dict):
             self.items = {str(k): dict(v) for k, v in items.items() if isinstance(v, dict)}
+        shared = state.get("shared")
+        if isinstance(shared, dict):
+            self.shared = dict(shared)

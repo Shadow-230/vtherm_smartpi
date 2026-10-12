@@ -29,8 +29,13 @@ def _handler(hass, dependencies) -> tuple[SmartPIHandler, FakeThermostatRuntime]
     return handler, thermostat
 
 
-def _status(thermostat):
-    return thermostat.prop_algorithm._known_inputs_provider().status
+def _readings(thermostat):
+    return thermostat.prop_algorithm._known_inputs_provider()
+
+
+def _neighbour(thermostat):
+    (observation,) = _readings(thermostat).neighbours
+    return observation
 
 
 async def test_without_dependencies_no_provider_is_registered(hass) -> None:
@@ -60,29 +65,23 @@ async def test_neighbour_is_read_through_its_registry_id(hass) -> None:
         ],
     )
 
-    assert _status(thermostat) == (
-        {
-            "id": "n1",
-            "kind": "neighbour",
-            "entity": "climate.hall",
-            "mode": "door",
-            "available": True,
-            "active": False,
-            "t_neighbour": 21.5,
-            "neighbour_window": True,
-            "k": None,
-            "k_reliable": False,
-        },
-    )
+    observation = _neighbour(thermostat)
+    assert observation.item.item_id == "n1"
+    assert observation.reading.entity_id == "climate.hall"
+    assert observation.reading.temperature == 21.5
+    assert observation.reading.window_open
+    assert observation.reading.usable
+    assert not observation.door_open
+    assert not observation.connected
 
     hass.states.async_set("binary_sensor.hall_door", "on")
-    assert _status(thermostat)[0]["active"] is True
+    assert _neighbour(thermostat).connected
 
     registry.async_update_entity("climate.hall", new_entity_id="climate.stair_hall")
     hass.states.async_set("climate.stair_hall", "heat", _hall_attributes(temperature=19.0))
-    status = _status(thermostat)[0]
-    assert status["entity"] == "climate.stair_hall"
-    assert status["t_neighbour"] == 19.0
+    observation = _neighbour(thermostat)
+    assert observation.reading.entity_id == "climate.stair_hall"
+    assert observation.reading.temperature == 19.0
 
 
 async def test_neighbour_appearing_later_becomes_available(hass) -> None:
@@ -93,13 +92,13 @@ async def test_neighbour_appearing_later_becomes_available(hass) -> None:
         hass,
         [{"id": "n1", "kind": "neighbour", "entity": sensor.id, "mode": "always"}],
     )
-    assert _status(thermostat)[0]["available"] is False
+    assert not _neighbour(thermostat).reading.usable
 
     hass.states.async_set("sensor.hall_temperature", "18.2")
-    status = _status(thermostat)[0]
-    assert status["available"] is True
-    assert status["active"] is True
-    assert status["t_neighbour"] == 18.2
+    observation = _neighbour(thermostat)
+    assert observation.reading.usable
+    assert observation.connected
+    assert observation.reading.temperature == 18.2
 
 
 async def test_unknown_registry_id_has_no_influence(hass) -> None:
@@ -107,11 +106,11 @@ async def test_unknown_registry_id_has_no_influence(hass) -> None:
         hass,
         [{"id": "n1", "kind": "neighbour", "entity": "0123456789abcdef", "mode": "always"}],
     )
-    status = _status(thermostat)[0]
+    observation = _neighbour(thermostat)
 
-    assert status["entity"] is None
-    assert status["available"] is False
-    assert status["active"] is False
+    assert observation.reading.entity_id is None
+    assert not observation.reading.usable
+    assert not observation.connected
 
 
 async def test_state_of_removed_items_is_dropped_at_startup(hass) -> None:
@@ -126,3 +125,17 @@ async def test_state_of_removed_items_is_dropped_at_startup(hass) -> None:
     await handler.async_added_to_hass()
 
     assert set(state.items) == {"n1"}
+
+
+async def test_zone_presets_are_read_from_the_thermostat_state(hass) -> None:
+    _, thermostat = _handler(
+        hass,
+        [{"id": "n1", "kind": "neighbour", "entity": "0123456789abcdef", "mode": "none"}],
+    )
+    hass.states.async_set(
+        thermostat.entity_id,
+        "heat",
+        {"preset_temperatures": {"frost_temp": 7.0, "eco_temp": 17.5, "boost_temp": "n/a"}},
+    )
+
+    assert _readings(thermostat).presets == {"frost_temp": 7.0, "eco_temp": 17.5}
