@@ -96,6 +96,8 @@ def parse_dependencies(raw: Any) -> list[DependencyItem]:
         sensors = entry.get(KEY_DOOR_SENSORS) or ()
         if isinstance(sensors, str):
             sensors = (sensors,)
+        elif not isinstance(sensors, (list, tuple)):
+            sensors = ()
         items.append(
             DependencyItem(
                 item_id=str(entry.get(KEY_ID) or ""),
@@ -191,7 +193,7 @@ class DependencyState:
         self.items: dict[str, dict[str, Any]] = {}
 
     def __bool__(self) -> bool:
-        return bool(self.items)
+        return any(self.items.values())
 
     def for_item(self, item_id: str) -> dict[str, Any]:
         """Return the mutable state of one item, creating it on first use."""

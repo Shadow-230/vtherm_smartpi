@@ -277,7 +277,8 @@ async def test_options_flow_shows_valve_linearization_from_dedicated_target_conf
 
     # A thermostat entry opens a menu; the regulator settings are one of its steps.
     assert result["type"] == FlowResultType.MENU
-    assert result["menu_options"] == ["settings", "dependencies", "valve_curve"]
+    # The valve curve entry appears only once linearization is enabled.
+    assert result["menu_options"] == ["settings", "dependencies"]
     result = await hass.config_entries.options.async_configure(
         result["flow_id"], {"next_step_id": "settings"}
     )

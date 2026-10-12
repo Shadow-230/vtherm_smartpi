@@ -97,6 +97,11 @@ class EffectiveModel:
     heat_rate: float = 0.0
     signature: tuple[str, ...] = ()
 
+    @property
+    def exchange_conductance(self) -> float:
+        """Sum of the active exchange conductances (1/min)."""
+        return sum(conductance for conductance, _t in self.exchanges_now)
+
     def known_rate(self, temperature: float | None) -> float:
         """Rate added by the known inputs at ``temperature`` (degC/min)."""
         if not self.active or temperature is None:

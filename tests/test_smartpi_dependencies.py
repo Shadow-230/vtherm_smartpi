@@ -61,6 +61,20 @@ def test_parse_ignores_a_malformed_option(raw) -> None:
     assert parse_dependencies(raw) == []
 
 
+@pytest.mark.parametrize("sensors", [5, {"a": 1}, None])
+def test_parse_ignores_malformed_door_sensors(sensors) -> None:
+    (item,) = parse_dependencies([dict(_neighbour(), door_sensors=sensors)])
+
+    assert item.door_sensors == ()
+
+
+def test_state_without_content_is_empty() -> None:
+    state = DependencyState()
+    state.for_item("n1")
+
+    assert not state
+
+
 def test_empty_list_is_valid() -> None:
     assert _codes([]) == []
 

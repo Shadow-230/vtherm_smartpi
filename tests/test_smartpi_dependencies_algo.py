@@ -10,6 +10,7 @@ from __future__ import annotations
 import pytest
 
 from custom_components.vtherm_smartpi import algo as algo_module
+from custom_components.vtherm_smartpi.smartpi.const import clamp
 from custom_components.vtherm_smartpi.smartpi.diagnostics import build_published_diagnostics
 from custom_components.vtherm_smartpi.smartpi.effective_model import (
     ExchangeInput,
@@ -89,31 +90,38 @@ async def test_substitution_reaches_every_control_component(monkeypatch) -> None
 
     def spy(name, original, extract):
         def wrapper(*args, **kwargs):
-            seen.setdefault(name, []).append((extract(*args, **kwargs), expected()))
+            tau_min = algo.est.tau_reliability().tau_min
+            seen.setdefault(name, []).append((extract(*args, **kwargs), expected(), tau_min))
             return original(*args, **kwargs)
 
         return wrapper
 
-    monkeypatch.setattr(algo_module, "compute_ff", spy("ff1", algo_module.compute_ff, lambda **kw: (None, kw["ext_temp"])))
+    monkeypatch.setattr(algo_module, "compute_ff", spy("ff1", algo_module.compute_ff, lambda **kw: (kw["k_ff"], kw["ext_temp"])))
     monkeypatch.setattr(algo_module, "compute_ff3", spy("ff3", algo_module.compute_ff3, lambda **kw: (kw["b"], kw["ext_temp"])))
     monkeypatch.setattr(algo.sp_mgr, "filter_setpoint", spy("setpoint", algo.sp_mgr.filter_setpoint, lambda **kw: (kw["b"], kw["ext_current_temp"])))
     monkeypatch.setattr(algo.twin, "update_with_eta", spy("twin", algo.twin.update_with_eta, lambda **kw: (kw["b"], kw["text"])))
     monkeypatch.setattr(algo.deadband_mgr, "update", spy("near_band", algo.deadband_mgr.update, lambda **kw: (kw["estimator"].b, kw["ext_temp"])))
     monkeypatch.setattr(algo.gain_scheduler, "calculate", spy("gains", algo.gain_scheduler.calculate, lambda **kw: (kw["tau_min"], None)))
     monkeypatch.setattr(algo, "update_learning", spy("learning", algo.update_learning, lambda **kw: (kw["known_rate"], kw["ext_temp"])))
+    trim = algo._fftrim_observer
+    monkeypatch.setattr(trim, "try_complete_window", spy("fftrim", trim.try_complete_window, lambda **kw: (kw["b"], None)))
 
     await sim.run_for(2.0)
 
-    assert {"ff1", "ff3", "setpoint", "twin", "near_band", "gains", "learning"} <= set(seen)
+    assert {"ff1", "ff3", "setpoint", "twin", "near_band", "gains", "learning", "fftrim"} <= set(seen)
     for name in ("ff3", "setpoint", "twin", "near_band"):
-        for (b, ext), model in seen[name]:
+        for (b, ext), model, _tau in seen[name]:
             assert b == pytest.approx(model.b)
             assert ext == pytest.approx(model.ext_temp)
-    for (_none, ext), model in seen["ff1"]:
+    for (k_ff, ext), model, _tau in seen["ff1"]:
+        assert k_ff == pytest.approx(clamp(model.b / algo.est.a, -3.0, 3.0))
         assert ext == pytest.approx(model.ext_temp)
-    for (tau_min, _none), model in seen["gains"]:
-        assert tau_min == pytest.approx(1.0 / model.b)
-    for (known_rate, ext), _model in seen["learning"]:
+    for (b, _none), model, _tau in seen["fftrim"]:
+        assert b == pytest.approx(model.b)
+    for (tau_min, _none), _model, tau_base in seen["gains"]:
+        # The learned time constant gains the exchange conductance.
+        assert tau_min == pytest.approx(1.0 / (1.0 / tau_base + K))
+    for (known_rate, ext), _model, _tau in seen["learning"]:
         assert ext == sim.thermostat.current_outdoor_temperature
         assert known_rate > 0.0
 
@@ -208,3 +216,53 @@ async def test_diagnostics_show_dependencies_only_when_configured(monkeypatch) -
     assert block["b_eff"] == pytest.approx(informed.algo.est.b + K, rel=1e-3)
     assert block["learning_gate"] is None
     assert block["items"] == [dict(STATUS[0])]
+
+
+async def test_learning_gate_leaves_the_control_episode_untouched(monkeypatch) -> None:
+    """Opening a gate pauses learning only; the dead-time hold of the control law is not re-armed."""
+    provider = _Switchable()
+    sim = await _learned(monkeypatch, _zone(neighbours=()), provider)
+    algo = sim.algo
+    await sim.run_for(12.0, stop=lambda s: s.algo._t_heat_episode_start is not None)
+    episode_start = algo._t_heat_episode_start
+    assert episode_start is not None
+
+    provider.inputs = KnownInputs(learning_gate="door_open", status=STATUS)
+    await sim.run_for(0.05)
+
+    assert algo._t_heat_episode_start == episode_start
+
+
+async def test_closing_the_gate_does_not_invent_a_dead_time(monkeypatch) -> None:
+    """Heating that starts during a gate is not read as a fresh response when the gate closes."""
+    provider = _Switchable()
+    provider.inputs = KnownInputs(status=STATUS)
+    sim = Simulation(monkeypatch, _zone(neighbours=()), OUTDOOR, known_inputs=provider)
+    algo = sim.algo
+    await sim.run_for(
+        24.0,
+        stop=lambda s: len(s.algo.dt_est._history_heat) >= 1 and not s.actuator.is_device_active,
+    )
+    assert algo.dt_est._history_heat
+
+    provider.inputs = KnownInputs(learning_gate="door_open", status=STATUS)
+    await sim.run_for(12.0, stop=lambda s: s.actuator.is_device_active)
+    assert sim.actuator.is_device_active
+    await sim.run_for(20.0 / 60.0)
+    provider.inputs = KnownInputs(status=STATUS)
+    await sim.run_for(1.0)
+
+    true_deadtime_s = sim.zone.deadtime_min * 60.0
+    assert all(value >= 0.5 * true_deadtime_s for value in algo.dt_est._history_heat)
+
+
+async def test_a_failing_provider_does_not_stop_regulation(monkeypatch) -> None:
+    def failing(_sim):
+        raise RuntimeError("registry unavailable")
+
+    sim = Simulation(monkeypatch, _zone(neighbours=()), OUTDOOR, known_inputs=failing)
+    await sim.run_for(2.0)
+
+    assert sim.actuator.turn_on_count > 0
+    assert sim.algo.control_b == sim.algo.est.b
+    assert "dependencies" not in build_published_diagnostics(sim.algo)

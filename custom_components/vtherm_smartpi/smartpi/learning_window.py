@@ -537,8 +537,10 @@ class LearningWindowManager:
 
             # --- Sliding start: discard data while slope direction is wrong ---
             # Work in an oriented temperature space where positive means that
-            # active HVAC power moves the room in the requested direction.
-            oriented_dT = -dT if hvac_mode == VThermHvacMode_COOL else dT
+            # active HVAC power moves the room in the requested direction. The
+            # change caused by known model inputs is removed first.
+            response_dT = dT - self._known_int / 60.0
+            oriented_dT = -response_dT if hvac_mode == VThermHvacMode_COOL else response_dT
 
             # B (OFF): temperature still follows the previous active response.
             # A (ON): temperature still follows the passive response after start.

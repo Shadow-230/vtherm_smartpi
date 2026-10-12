@@ -76,7 +76,10 @@
           "smart_pi_allow_pwm_cycle_force": "Allow PWM cycle restart on band transitions",
           "smart_pi_debug": "Record full diagnostics (debug)",
           "smart_pi_enable_valve_linearization": "Enable valve curve linearization"
-        },
+        }
+      },
+      "thermostat_menu": {
+        "title": "SmartPI thermostat options",
         "menu_options": {
           "settings": "Regulator settings",
           "dependencies": "Zone dependencies",

@@ -691,14 +691,6 @@ class SmartPI:
         """Return whether thermal model learning is enabled."""
         return self._learning_enabled
 
-    def _discard_in_flight_observations(self) -> None:
-        """Drop the open learning window and dead-time episode, keeping learned values."""
-        self._reset_learning_window()
-        self.dt_est.reset_observation(self._committed_on_percent)
-        self._heat_request_prev = False
-        self._t_heat_episode_start = None
-        self._t_cool_episode_start = None
-
     def set_learning_enabled(self, enabled: bool) -> None:
         """Enable or pause learning and invalidate in-flight observations."""
         enabled = bool(enabled)
@@ -706,7 +698,11 @@ class SmartPI:
             return
 
         self._learning_enabled = enabled
-        self._discard_in_flight_observations()
+        self._reset_learning_window()
+        self.dt_est.reset_observation(self._committed_on_percent)
+        self._heat_request_prev = False
+        self._t_heat_episode_start = None
+        self._t_cool_episode_start = None
         _LOGGER.info(
             "%s - SmartPI learning %s",
             self._name,
@@ -1750,11 +1746,18 @@ class SmartPI:
         return _EffectiveEstimatorView(self.est, model.b)
 
     def _control_tau_min(self, tau_info) -> float:
-        """Integral time base for the gains: 1/b_eff while known inputs are active."""
+        """Integral time base for the gains, shortened by the active heat exchanges.
+
+        The learned time constant 1/b gains the exchange conductances; a direct
+        heat input does not change the zone dynamics.
+        """
         model = self._effective_model
-        if model is None or not model.active or not tau_info.reliable or model.b <= 0.0:
+        if model is None or not model.active or not tau_info.reliable or tau_info.tau_min <= 0.0:
             return tau_info.tau_min
-        return 1.0 / model.b
+        conductance = model.exchange_conductance
+        if conductance <= 0.0:
+            return tau_info.tau_min
+        return 1.0 / (1.0 / tau_info.tau_min + conductance)
 
     def _compose_effective_model(
         self,
@@ -1764,22 +1767,30 @@ class SmartPI:
     ) -> EffectiveModel:
         """Single substitution point: fold the known inputs into (b_eff, T_ref).
 
-        The learning gate starts by discarding the open learning window and the
-        dead-time episode in progress, and a change of the active inputs
+        Each edge of the learning gate discards the open learning window and the
+        dead-time observation in progress, and a change of the active inputs
         invalidates the open FF trim windows, whose evidence assumed the
-        previous model.
+        previous model. A failing provider leaves the learned model unchanged.
         """
         inputs = None
         if self._known_inputs_enabled and self._known_inputs_provider is not None:
-            inputs = self._known_inputs_provider()
+            try:
+                inputs = self._known_inputs_provider()
+            except Exception:  # pylint: disable=broad-except
+                # Safety first: a dependency problem must never stop regulation.
+                _LOGGER.exception("%s - Reading the known model inputs failed", self._name)
+                inputs = None
         previous = self._effective_model
         model = compose(self.est.b, ext_current_temp, inputs)
         self._known_inputs = inputs
         self._effective_model = model
 
         gate = inputs.learning_gate if inputs is not None else None
-        if gate is not None and self._learning_gate is None:
-            self._discard_in_flight_observations()
+        if (gate is None) != (self._learning_gate is None):
+            # Observations spanning a gate edge mix two regimes. Only learning is
+            # reset: the control law's dead-time episode markers stay untouched.
+            self.learn_win.reset()
+            self.dt_est.reset_observation(self._committed_on_percent)
         self._learning_gate = gate
 
         previous_signature = previous.signature if previous is not None else ()

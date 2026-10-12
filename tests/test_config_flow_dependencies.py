@@ -8,6 +8,7 @@ from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.vtherm_smartpi.const import (
     CONF_SMART_PI_DEADBAND,
+    CONF_SMART_PI_ENABLE_VALVE_LINEARIZATION,
     CONF_SMART_PI_DEPENDENCIES,
     CONF_TARGET_VTHERM,
     DEFAULT_OPTIONS,
@@ -28,8 +29,8 @@ def _neighbour(item_id: str, entity: str) -> dict:
     }
 
 
-def _thermostat_entry(hass, dependencies=None) -> MockConfigEntry:
-    options = {CONF_TARGET_VTHERM: "vt-living", **DEFAULT_OPTIONS}
+def _thermostat_entry(hass, dependencies=None, **overrides) -> MockConfigEntry:
+    options = {CONF_TARGET_VTHERM: "vt-living", **DEFAULT_OPTIONS, **overrides}
     if dependencies is not None:
         options[CONF_SMART_PI_DEPENDENCIES] = dependencies
     entry = MockConfigEntry(
@@ -125,7 +126,7 @@ async def test_empty_dependency_list_has_nothing_to_remove(hass) -> None:
     assert not result["data_schema"].schema
 
 
-async def test_valve_thermostat_menu_opens_the_valve_curve(hass, monkeypatch) -> None:
+def _valve_target(hass, monkeypatch) -> None:
     vt_entry = MockConfigEntry(
         domain=VT_DOMAIN,
         unique_id="vt-living",
@@ -140,9 +141,23 @@ async def test_valve_thermostat_menu_opens_the_valve_curve(hass, monkeypatch) ->
     er.async_get(hass).async_get_or_create(
         "climate", VT_DOMAIN, "vt-living", suggested_object_id="living", config_entry=vt_entry
     )
-    entry = _thermostat_entry(hass)
+
+
+async def test_valve_thermostat_menu_opens_the_valve_curve(hass, monkeypatch) -> None:
+    _valve_target(hass, monkeypatch)
+    entry = _thermostat_entry(hass, **{CONF_SMART_PI_ENABLE_VALVE_LINEARIZATION: True})
 
     result = await _open(hass, entry, "valve_curve")
 
     assert result["type"] == FlowResultType.FORM
     assert result["step_id"] == "valve_curve"
+
+
+async def test_valve_curve_is_offered_only_with_linearization(hass, monkeypatch) -> None:
+    _valve_target(hass, monkeypatch)
+    entry = _thermostat_entry(hass)
+
+    result = await hass.config_entries.options.async_init(entry.entry_id)
+
+    assert result["type"] == FlowResultType.MENU
+    assert result["menu_options"] == ["settings", "dependencies"]

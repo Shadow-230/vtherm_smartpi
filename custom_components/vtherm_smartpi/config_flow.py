@@ -472,11 +472,17 @@ class SmartPIOptionsFlow(OptionsFlow):
         """Open the options: a menu for a thermostat entry, the settings form for the defaults."""
         if self._config_entry.data.get(CONF_TARGET_VTHERM) is None:
             return await self._async_settings_form("init", user_input)
+        return await self.async_step_thermostat_menu()
 
+    async def async_step_thermostat_menu(self, user_input: dict[str, Any] | None = None):
+        """Offer the option groups of a thermostat entry."""
+        del user_input
         menu_options = ["settings", "dependencies"]
-        if self._is_valve_target_entry():
+        if self._is_valve_target_entry() and self._current_options().get(
+            CONF_SMART_PI_ENABLE_VALVE_LINEARIZATION
+        ):
             menu_options.append("valve_curve")
-        return self.async_show_menu(step_id="init", menu_options=menu_options)
+        return self.async_show_menu(step_id="thermostat_menu", menu_options=menu_options)
 
     async def async_step_settings(self, user_input: dict[str, Any] | None = None):
         """Edit the regulator settings of a thermostat entry."""
