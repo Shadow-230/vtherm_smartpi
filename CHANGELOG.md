@@ -4,6 +4,14 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+- Add zone dependencies to a thermostat entry: neighbouring zones that exchange
+  heat with the zone through a door or permanently. SmartPI learns the exchange
+  and folds it into its model at a single substitution point, and a neighbour's
+  open window can pause learning or switch the zone off, to frost or to eco.
+  The options of a per-thermostat entry now open a menu: regulator settings,
+  dependencies and valve curve. Without dependencies nothing changes.
+- Document zone dependencies and the design of a second heat source in the
+  zone in `documentation/en/zone_dependencies.md`.
 - Fire AutoCalib events with the thermostat climate `entity_id` and move the
   thermostat name to a `name` field, so the recorder no longer fails with
   `Invalid entity ID` when an entity filter is configured.

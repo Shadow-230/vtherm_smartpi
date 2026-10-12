@@ -7,12 +7,17 @@ sources run as timers of the virtual clock: VTherm's own control call every
 ``cycle_min``, the handler's 60 s recalculation timer and the cycle scheduler.
 A valve thermostat retains integer-percent commands like VTherm's
 ``apply_valve_command_percent``.
+
+A zone may have a second thermostat (``SourceSpec``), for example a heated
+floor: it has its own actuator, cycle scheduler, sensor and SmartPI handler,
+shares Home Assistant with the zone thermostat, and heats the zone through a
+transport delay and a first-order lag.
 """
 
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime
 from typing import Callable
 
@@ -121,6 +126,28 @@ def FixedNeighbour(key: str, temperature_c: float, conductance: float) -> SimNei
     return SimNeighbour(key=key, temperature_c=temperature_c, conductance=conductance)
 
 
+@dataclass(frozen=True)
+class SourceSpec:
+    """A second thermostat heating the same zone, in SmartPI's units.
+
+    ``a_f`` is the zone's rate of rise at full power once the emitter has
+    settled; ``tau_min`` is the emitter's first-order lag (0 for a fast one).
+    """
+
+    a_f: float = 0.03
+    deadtime_min: float = 30.0
+    tau_min: float = 180.0
+    cycle_min: float = 10.0
+    valve: bool = False
+    min_activation_delay_s: int = 0
+    min_deactivation_delay_s: int = 0
+    # VTherm's periodic control call of the second thermostat is out of phase.
+    control_phase_s: float = 150.0
+    # Setpoint when the second thermostat regulates on its own (None: the zone's).
+    setpoint_c: float | None = None
+    options: dict = field(default_factory=dict)
+
+
 @dataclass
 class ZoneSpec:
     """One zone heated by one actuator, described in SmartPI's own units."""
@@ -145,6 +172,7 @@ class ZoneSpec:
     neighbours: tuple[SimNeighbour, ...] = ()
     presets: dict = field(default_factory=lambda: {"frost_temp": 7.0, "eco_temp": 17.0})
     options: dict = field(default_factory=dict)
+    source: SourceSpec | None = None
 
 
 @dataclass
@@ -156,19 +184,28 @@ class TracePoint:
     command: float
     power: float
     phase: str
+    source_command: float = 0.0
+    source_power: float = 0.0
 
 
 class SimThermostat(FakeThermostatRuntime):
     """Thermostat runtime whose signals come from the simulation."""
 
-    def __init__(self, spec: ZoneSpec, clock: VirtualClock, actuator: SimActuator) -> None:
+    def __init__(
+        self,
+        spec: ZoneSpec,
+        clock: VirtualClock,
+        actuator: SimActuator,
+        unique_id: str = "sim-zone",
+        entity_id: str = "climate.sim_zone",
+    ) -> None:
         super().__init__()
         self._clock = clock
         self._actuator = actuator
         self.handler: SmartPIHandler | None = None
         self.name = spec.name
-        self.unique_id = "sim-zone"
-        self.entity_id = "climate.sim_zone"
+        self.unique_id = unique_id
+        self.entity_id = entity_id
         self.cycle_min = spec.cycle_min
         self.target_temperature = spec.setpoint_c
         self.vtherm_hvac_mode = VThermHvacMode_HEAT
@@ -306,33 +343,92 @@ class Simulation:
             )
 
         self.thermostat = SimThermostat(self.zone, self.clock, self.actuator)
-        self.scheduler = SimCycleScheduler(
-            self.clock,
-            self.queue,
-            self.thermostat,
-            self.actuator,
-            self.zone.cycle_min,
-            self.zone.min_activation_delay_s,
-            self.zone.min_deactivation_delay_s,
-        )
-        self.thermostat.cycle_scheduler = self.scheduler
-        self.handler = SmartPIHandler(self.thermostat)
-        self.thermostat.handler = self.handler
-        self.handler.init_algorithm()
-        # Persistence is not simulated: Store writes would need a running hass.
-        self.handler._store = None
-        self.handler._legacy_store = None
-        self.handler.on_scheduler_ready(self.scheduler)
+        self.scheduler, self.handler = self._attach_handler(self.thermostat, self.actuator, self.zone)
         if known_inputs is not None:
             self.algo.set_known_inputs_provider(lambda: known_inputs(self))
         elif dependency_layer:
             self.algo.set_known_inputs_provider(self.dependency_readings)
+
+        self.source_actuator: SimActuator | None = None
+        self.source_thermostat: SimThermostat | None = None
+        self.source_scheduler: SimCycleScheduler | None = None
+        self.source_handler: SmartPIHandler | None = None
+        self.source_heater = None
+        self.source_indoor_sensor: QuantizedSensor | None = None
+        if self.zone.source is not None:
+            self._add_source(self.zone.source)
 
         self.indoor_sensor = QuantizedSensor(self.zone.sensor_resolution_c)
         self.outdoor_sensor = QuantizedSensor(0.1)
         self.trace: list[TracePoint] = []
         self._next_trace_s = 0.0
         self._started = False
+
+    def _attach_handler(
+        self, thermostat: SimThermostat, actuator: SimActuator, spec: ZoneSpec
+    ) -> tuple[SimCycleScheduler, SmartPIHandler]:
+        scheduler = SimCycleScheduler(
+            self.clock,
+            self.queue,
+            thermostat,
+            actuator,
+            spec.cycle_min,
+            spec.min_activation_delay_s,
+            spec.min_deactivation_delay_s,
+        )
+        thermostat.cycle_scheduler = scheduler
+        handler = SmartPIHandler(thermostat)
+        thermostat.handler = handler
+        handler.init_algorithm()
+        # Persistence is not simulated: Store writes would need a running hass.
+        handler._store = None
+        handler._legacy_store = None
+        handler.on_scheduler_ready(scheduler)
+        return scheduler, handler
+
+    def _add_source(self, source: SourceSpec) -> None:
+        """Second thermostat of the zone, heating through its delay and lag."""
+        self.source_actuator = SimActuator(self.clock, valve=source.valve)
+        self.source_heater = self.network.add_lagged_heater(
+            ZONE_NODE,
+            source.a_f,
+            DelayedPower(self.source_actuator.history, source.deadtime_min * 60.0),
+            source.tau_min,
+        )
+        spec = replace(
+            self.zone,
+            name="Sim source",
+            cycle_min=source.cycle_min,
+            valve=source.valve,
+            valve_dpercent=0,
+            valve_period_min=0.0,
+            control_phase_s=source.control_phase_s,
+            min_activation_delay_s=source.min_activation_delay_s,
+            min_deactivation_delay_s=source.min_deactivation_delay_s,
+            setpoint_c=source.setpoint_c if source.setpoint_c is not None else self.zone.setpoint_c,
+            neighbours=(),
+            options=dict(source.options),
+            source=None,
+        )
+        self.source_thermostat = SimThermostat(
+            spec, self.clock, self.source_actuator, unique_id="sim-source", entity_id="climate.sim_source"
+        )
+        # Both thermostats live in the same Home Assistant.
+        self.source_thermostat.hass = self.thermostat.hass
+        self.source_scheduler, self.source_handler = self._attach_handler(
+            self.source_thermostat, self.source_actuator, spec
+        )
+        self.source_indoor_sensor = QuantizedSensor(self.zone.sensor_resolution_c)
+
+    def _thermostats(self) -> list[tuple[SimThermostat, QuantizedSensor]]:
+        units = [(self.thermostat, self.indoor_sensor)]
+        if self.source_thermostat is not None:
+            units.append((self.source_thermostat, self.source_indoor_sensor))
+        return units
+
+    @property
+    def source_algo(self):
+        return self.source_thermostat.prop_algorithm if self.source_thermostat is not None else None
 
     def dependency_readings(self) -> DependencyReadings:
         """Readings of the configured neighbours, as the handler would provide them."""
@@ -351,27 +447,33 @@ class Simulation:
         return self.network.temperature(ZONE_NODE)
 
     async def start(self) -> None:
-        """Publish the first readings and start the thermostat like VTherm at startup."""
+        """Publish the first readings and start the thermostats like VTherm at startup."""
         outdoor = self.outdoor_sensor.sample(self.weather.outdoor_c(0.0))
-        indoor = self.indoor_sensor.sample(self.zone_c)
-        self.thermostat.current_outdoor_temperature = outdoor
-        self.thermostat.current_temperature = indoor
-        self.thermostat.last_temperature_measure = self.clock.now()
-        self.thermostat.slope.measure(indoor, 0.0)
-        await self.handler.async_startup()
-        await self.thermostat.async_control_heating(force=False)
-        self._start_vtherm_control_timer()
+        for thermostat, sensor in self._thermostats():
+            indoor = sensor.sample(self.zone_c)
+            thermostat.current_outdoor_temperature = outdoor
+            thermostat.current_temperature = indoor
+            thermostat.last_temperature_measure = self.clock.now()
+            thermostat.slope.measure(indoor, 0.0)
+            await thermostat.handler.async_startup()
+            await thermostat.async_control_heating(force=False)
+            self._start_vtherm_control_timer(thermostat, thermostat.cycle_min, self._control_phase(thermostat))
         self._record()
         self._started = True
 
-    def _start_vtherm_control_timer(self) -> None:
+    def _control_phase(self, thermostat: SimThermostat) -> float:
+        if thermostat is self.source_thermostat:
+            return self.zone.source.control_phase_s
+        return self.zone.control_phase_s
+
+    def _start_vtherm_control_timer(self, thermostat: SimThermostat, cycle_min: float, phase_s: float) -> None:
         """VTherm calls its control cycle every cycle_min, with the time as timestamp."""
-        interval_s = self.zone.cycle_min * 60.0
+        interval_s = cycle_min * 60.0
 
         async def control(now) -> None:
-            await self.thermostat.async_control_heating(timestamp=now)
+            await thermostat.async_control_heating(timestamp=now)
 
-        if self.zone.control_phase_s <= 0.0:
+        if phase_s <= 0.0:
             self.queue.track_interval(interval_s, control)
             return
 
@@ -379,7 +481,7 @@ class Simulation:
             self.queue.track_interval(interval_s, control)
             await control(now)
 
-        self.queue.call_later(self.zone.control_phase_s, first)
+        self.queue.call_later(phase_s, first)
 
     async def set_hvac_mode(self, mode: VThermHvacMode) -> None:
         """Change the HVAC mode the way VTherm propagates it to the algorithm handler."""
@@ -407,11 +509,12 @@ class Simulation:
 
     async def _publish_sensors(self) -> None:
         outdoor = self.outdoor_sensor.sample(self.weather.outdoor_c(self.clock.elapsed_s))
-        if outdoor is not None:
-            await self.thermostat.outdoor_published(outdoor)
-        indoor = self.indoor_sensor.sample(self.zone_c)
-        if indoor is not None:
-            await self.thermostat.temperature_published(indoor)
+        for thermostat, sensor in self._thermostats():
+            if outdoor is not None:
+                await thermostat.outdoor_published(outdoor)
+            indoor = sensor.sample(self.zone_c)
+            if indoor is not None:
+                await thermostat.temperature_published(indoor)
 
     def _record(self) -> None:
         if self.clock.elapsed_s + 1e-9 < self._next_trace_s:
@@ -426,6 +529,8 @@ class Simulation:
                 command=float(self.algo.on_percent),
                 power=self.actuator.power,
                 phase=str(getattr(self.algo.phase, "value", self.algo.phase)),
+                source_command=float(self.source_algo.on_percent) if self.source_algo is not None else 0.0,
+                source_power=self.source_actuator.power if self.source_actuator is not None else 0.0,
             )
         )
 

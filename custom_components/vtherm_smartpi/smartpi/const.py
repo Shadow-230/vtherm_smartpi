@@ -470,3 +470,27 @@ COUPLING_LS_COND_MAX = 30.0
 COUPLING_WINDOW_S = 30 * 60.0
 # Learning is skipped for this long after a door opens or closes.
 DOOR_SETTLING_S = 10 * 60.0
+
+# --- Second heat source: split between the lead and the source ---
+# Default parameters of the rules (fractions of full power).
+SPLIT_DEFAULT_RATIO = 1.0
+SPLIT_DEFAULT_ALONE = 0.5
+SPLIT_DEFAULT_BAND = 0.2
+# Allocation loop: an error held for SPLIT_SETTLE_FACTOR source settle times
+# (delay plus lag), and never less than SPLIT_MIN_TIME_S, moves the source by
+# 100 %. The lead's demand is averaged over SPLIT_AVERAGE_FRACTION of that time,
+# never less than SPLIT_AVERAGE_MIN_S. Chosen on an ideal lead with fast and
+# slow, weak and strong sources: overshoot within 3 %, no swinging.
+SPLIT_SETTLE_FACTOR = 4.0
+SPLIT_MIN_TIME_S = 60 * 60.0
+SPLIT_AVERAGE_FRACTION = 0.1
+SPLIT_AVERAGE_MIN_S = 15 * 60.0
+# The source never covers its full range faster than it settles, nor than this.
+SPLIT_MIN_FULL_RANGE_S = 10 * 60.0
+# Range of the lead's demand fed to the loop (before its 0..1 limits).
+SPLIT_DEMAND_MIN = -1.0
+SPLIT_DEMAND_MAX = 2.0
+# Recommendation: a source settling in an hour or more is slow; a lead slower
+# than its source by this factor has its role reversed.
+SPLIT_SLOW_SOURCE_S = 60 * 60.0
+SPLIT_ROLES_REVERSED_FACTOR = 1.5
