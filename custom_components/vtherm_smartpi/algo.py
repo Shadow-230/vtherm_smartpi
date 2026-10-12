@@ -691,6 +691,14 @@ class SmartPI:
         """Return whether thermal model learning is enabled."""
         return self._learning_enabled
 
+    def _discard_in_flight_observations(self) -> None:
+        """Drop the open learning window and dead-time episode, keeping learned values."""
+        self._reset_learning_window()
+        self.dt_est.reset_observation(self._committed_on_percent)
+        self._heat_request_prev = False
+        self._t_heat_episode_start = None
+        self._t_cool_episode_start = None
+
     def set_learning_enabled(self, enabled: bool) -> None:
         """Enable or pause learning and invalidate in-flight observations."""
         enabled = bool(enabled)
@@ -698,11 +706,7 @@ class SmartPI:
             return
 
         self._learning_enabled = enabled
-        self._reset_learning_window()
-        self.dt_est.reset_observation(self._committed_on_percent)
-        self._heat_request_prev = False
-        self._t_heat_episode_start = None
-        self._t_cool_episode_start = None
+        self._discard_in_flight_observations()
         _LOGGER.info(
             "%s - SmartPI learning %s",
             self._name,
@@ -1760,9 +1764,10 @@ class SmartPI:
     ) -> EffectiveModel:
         """Single substitution point: fold the known inputs into (b_eff, T_ref).
 
-        The learning gate starts by discarding the open learning window, and a
-        change of the active inputs invalidates the open FF trim windows, whose
-        evidence assumed the previous model.
+        The learning gate starts by discarding the open learning window and the
+        dead-time episode in progress, and a change of the active inputs
+        invalidates the open FF trim windows, whose evidence assumed the
+        previous model.
         """
         inputs = None
         if self._known_inputs_enabled and self._known_inputs_provider is not None:
@@ -1774,7 +1779,7 @@ class SmartPI:
 
         gate = inputs.learning_gate if inputs is not None else None
         if gate is not None and self._learning_gate is None:
-            self.learn_win.reset()
+            self._discard_in_flight_observations()
         self._learning_gate = gate
 
         previous_signature = previous.signature if previous is not None else ()

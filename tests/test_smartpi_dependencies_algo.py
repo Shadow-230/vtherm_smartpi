@@ -140,6 +140,8 @@ async def test_learning_gate_pauses_learning_and_dead_times(monkeypatch) -> None
     await sim.run_for(1.0)
     assert calls == {"learning": 0, "deadtime": 0}
     assert not algo.learn_win.active
+    assert algo.dt_est.state == "OFF"
+    assert not algo.dt_est.tin_history
     assert build_published_diagnostics(algo)["dependencies"]["learning_gate"] == "door_open"
 
     provider.inputs = KnownInputs(status=STATUS)
