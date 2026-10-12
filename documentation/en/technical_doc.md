@@ -392,6 +392,16 @@ The forced cycle is managed by `CalibrationManager`:
 - `HEAT_UP`,
 - `COOL_DOWN_FINAL` back to `sp`.
 
+Supervisor decisions are published on the Home Assistant event bus. Every event carries `entity_id`, the climate entity of the thermostat, and `name`, the thermostat name:
+
+| Event                              | Fired when                                                                    | Other fields                                                          |
+| ---------------------------------- | ----------------------------------------------------------------------------- | --------------------------------------------------------------------- |
+| `smartpi_autocalib_snapshot_taken` | a snapshot is taken                                                           | `reason` (`initial`, `fallback_7d`, `rolling`), `dt_cool_unavailable` |
+| `smartpi_autocalib_triggered`      | a calibration is triggered by stagnation or by `force_smartpi_calibration`    | `triggered_params`, `retry_count`                                     |
+| `smartpi_autocalib_success`        | a supervised calibration exits with all criteria met                          | `improved_params`, `retry_count`                                      |
+| `smartpi_autocalib_retry`          | a supervised calibration exits with missing criteria and a retry is scheduled | `retry_count`, `missing_criteria`                                     |
+| `smartpi_autocalib_degraded`       | the last retry fails and the model is marked degraded                         | `retry_count`                                                         |
+
 ---
 
 ## 5. Software architecture

@@ -42,7 +42,10 @@ _HOURLY_CHECK_INTERVAL_S = 3600.0
 
 @dataclass
 class AutoCalibEvent:
-    """Event produced by AutoCalibTrigger to be handled by the HA layer."""
+    """Event produced by AutoCalibTrigger to be handled by the HA layer.
+
+    The payload names the thermostat; the HA layer adds its climate entity_id.
+    """
     event_type: str
     payload: Dict[str, Any] = field(default_factory=dict)
     should_trigger_calibration: bool = False
@@ -304,7 +307,7 @@ class AutoCalibTrigger:
             return AutoCalibEvent(
                 event_type="smartpi_autocalib_snapshot_taken",
                 payload={
-                    "entity_id": self._name,
+                    "name": self._name,
                     "reason": "initial",
                     "dt_cool_unavailable": False,
                 },
@@ -333,7 +336,7 @@ class AutoCalibTrigger:
                 return AutoCalibEvent(
                     event_type="smartpi_autocalib_snapshot_taken",
                     payload={
-                        "entity_id": self._name,
+                        "name": self._name,
                         "reason": "fallback_7d",
                         "dt_cool_unavailable": True,
                     },
@@ -408,7 +411,7 @@ class AutoCalibTrigger:
         return AutoCalibEvent(
             event_type="smartpi_autocalib_snapshot_taken",
             payload={
-                "entity_id": self._name,
+                "name": self._name,
                 "reason": "rolling",
                 "dt_cool_unavailable": self._snap_dt_cool_unavailable,
             },
@@ -553,7 +556,7 @@ class AutoCalibTrigger:
         return AutoCalibEvent(
             event_type="smartpi_autocalib_triggered",
             payload={
-                "entity_id": self._name,
+                "name": self._name,
                 "triggered_params": triggered_params,
                 "retry_count": self._retry_count,
             },
@@ -662,7 +665,7 @@ class AutoCalibTrigger:
             return AutoCalibEvent(
                 event_type="smartpi_autocalib_success",
                 payload={
-                    "entity_id": self._name,
+                    "name": self._name,
                     "improved_params": improved,
                     "retry_count": self._retry_count,
                 },
@@ -688,7 +691,7 @@ class AutoCalibTrigger:
             return AutoCalibEvent(
                 event_type="smartpi_autocalib_retry",
                 payload={
-                    "entity_id": self._name,
+                    "name": self._name,
                     "retry_count": self._retry_count,
                     "missing_criteria": missing,
                 },
@@ -709,7 +712,7 @@ class AutoCalibTrigger:
         return AutoCalibEvent(
             event_type="smartpi_autocalib_degraded",
             payload={
-                "entity_id": self._name,
+                "name": self._name,
                 "retry_count": AUTOCALIB_MAX_RETRIES,
             },
         )
