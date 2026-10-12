@@ -51,12 +51,12 @@ from .commons import write_event_log
 from .smartpi.valve_curve import ValveCurveParams
 from .smartpi.dependencies import DependencyItem, parse_dependencies
 from .smartpi.dependency_inputs import (
+    DependencyReadings,
     EntitySnapshot,
-    connection_active,
+    NeighbourObservation,
     doors_open,
     read_neighbour,
 )
-from .smartpi.effective_model import KnownInputs
 
 if TYPE_CHECKING:
     from vtherm_api.interfaces import InterfaceThermostatRuntime
@@ -203,7 +203,7 @@ class SmartPIHandler:
         )
         self._dependency_items = parse_dependencies(entry.get(CONF_SMART_PI_DEPENDENCIES))
         t.prop_algorithm.set_known_inputs_provider(
-            self._read_known_inputs if self._dependency_items else None
+            self._read_dependencies if self._dependency_items else None
         )
 
         _LOGGER.info("%s - SmartPI Algorithm initialized", t)
@@ -254,7 +254,7 @@ class SmartPIHandler:
                     t.prop_algorithm.load_state(data)
                     _LOGGER.debug("%s - SmartPI state loaded", t)
                 if t.prop_algorithm:
-                    t.prop_algorithm.dependency_state.prune(
+                    t.prop_algorithm.forget_dependencies_except(
                         item.item_id for item in self._dependency_items
                     )
             except Exception as e:
@@ -421,37 +421,40 @@ class SmartPIHandler:
             return EntitySnapshot(entity_id)
         return EntitySnapshot(entity_id, state.state, state.attributes)
 
-    def _read_known_inputs(self) -> KnownInputs:
-        """Read the configured dependencies for one calculation.
-
-        Neighbour readings are reported for diagnostics. They become model
-        inputs once the exchange with each neighbour has been learned.
-        """
-        registry = er.async_get(self._thermostat.hass)
-        status = []
+    def _read_dependencies(self) -> DependencyReadings:
+        """Read the configured dependencies and the zone presets for one calculation."""
+        hass = self._thermostat.hass
+        registry = er.async_get(hass)
+        neighbours = []
         for item in self._dependency_items:
-            snapshot = self._entity_snapshot(registry, item.entity)
-            entry = {
-                "id": item.item_id,
-                "kind": item.kind,
-                "entity": snapshot.entity_id if snapshot is not None else None,
-            }
-            if item.is_neighbour:
-                reading = read_neighbour(item, snapshot)
-                door_open = doors_open(
-                    self._entity_snapshot(registry, sensor) for sensor in item.door_sensors
+            if not item.is_neighbour:
+                continue
+            door_open = doors_open(
+                self._entity_snapshot(registry, sensor) for sensor in item.door_sensors
+            )
+            neighbours.append(
+                NeighbourObservation(
+                    item=item,
+                    reading=read_neighbour(item, self._entity_snapshot(registry, item.entity)),
+                    door_open=door_open,
                 )
-                entry.update(
-                    mode=item.mode,
-                    available=reading.usable,
-                    active=connection_active(item, reading, door_open),
-                    t_neighbour=reading.temperature,
-                    neighbour_window=reading.window_open,
-                    k=None,
-                    k_reliable=False,
-                )
-            status.append(entry)
-        return KnownInputs(status=tuple(status))
+            )
+        presets = {}
+        temp_range = None
+        own_state = hass.states.get(self._thermostat.entity_id) if self._thermostat.entity_id else None
+        if own_state is not None:
+            raw_presets = own_state.attributes.get("preset_temperatures")
+            if isinstance(raw_presets, dict):
+                presets = {
+                    str(name): float(value)
+                    for name, value in raw_presets.items()
+                    if isinstance(value, (int, float))
+                }
+            low = own_state.attributes.get("min_temp")
+            high = own_state.attributes.get("max_temp")
+            if isinstance(low, (int, float)) and isinstance(high, (int, float)) and low < high:
+                temp_range = (float(low), float(high))
+        return DependencyReadings(neighbours=tuple(neighbours), presets=presets, temp_range=temp_range)
 
     async def control_heating(self, timestamp=None, force=False):
         """Control heating using SmartPI."""

@@ -99,6 +99,8 @@ from .smartpi.guards import SmartPIGuards
 from .smartpi.controller import SmartPIController
 from .smartpi.learning_window import LearningWindowManager
 from .smartpi.dependencies import DependencyState
+from .smartpi.dependency_inputs import DependencyReadings
+from .smartpi.dependency_model import DependencyModel, ModelContext
 from .smartpi.effective_model import EffectiveModel, KnownInputs, compose
 from .smartpi.deadband import DeadbandManager
 from .smartpi.calibration import CalibrationManager
@@ -391,12 +393,15 @@ class SmartPI:
         # --- Known model inputs (zone dependencies) ---
         # The handler registers a provider; without one the control law sees the
         # learned model unchanged. The switch exists for differential tests.
-        self._known_inputs_provider: Callable[[], KnownInputs | None] | None = None
+        self._known_inputs_provider: (
+            Callable[[], DependencyReadings | KnownInputs | None] | None
+        ) = None
         self._known_inputs_enabled: bool = True
         self._known_inputs: KnownInputs | None = None
         self._effective_model: EffectiveModel | None = None
         self._learning_gate: str | None = None
         self.dependency_state = DependencyState()
+        self.dependency_model = DependencyModel(self.dependency_state)
 
         # --- FFv2: trim bias + AB confidence ---
         self._ff_trim: FFTrim = FFTrim()
@@ -444,6 +449,7 @@ class SmartPI:
         """Reset all learned parameters to defaults."""
         self.est.reset()
         self.dependency_state.reset()
+        self.dependency_model.reset()
         self._session_learn_ok_count_base = self.est.learn_ok_count
         self._session_learn_skip_count_base = self.est.learn_skip_count
         if self.ctl:
@@ -1000,6 +1006,14 @@ class SmartPI:
             # This is more accurate than measuring time since last calculate(), which can be short
             # when a recalc timer fires mid-cycle.
             self.update_realized_power(u_applied=e_eff, dt_min=cycle_duration_min, forced_by_timing=False, elapsed_ratio=elapsed_ratio)
+            if cycle_duration_min is not None and cycle_duration_min > 0.0:
+                elapsed_s = max(0.0, min(1.0, float(elapsed_ratio))) * float(cycle_duration_min) * 60.0
+                self.dependency_model.record_realized_power(
+                    cycle_end_now - elapsed_s,
+                    cycle_end_now,
+                    self._to_linear_power(clamp(float(e_eff), 0.0, 1.0)),
+                    switched=not self._valve_mode_enabled,
+                )
 
         self._record_completed_fftrim_power(
             cycle_end_now=cycle_end_now,
@@ -1727,10 +1741,20 @@ class SmartPI:
     # ------------------------------
 
     def set_known_inputs_provider(
-        self, provider: Callable[[], KnownInputs | None] | None
+        self, provider: Callable[[], DependencyReadings | KnownInputs | None] | None
     ) -> None:
-        """Register the callable that returns the known model inputs of each calculation."""
+        """Register the callable read at each calculation.
+
+        It returns the dependency readings, which the dependency model turns into
+        known inputs and learning gates, or known inputs ready to compose.
+        """
         self._known_inputs_provider = provider
+
+    def forget_dependencies_except(self, item_ids) -> None:
+        """Drop the learned state of dependencies that are no longer configured."""
+        keep = set(item_ids)
+        self.dependency_state.prune(keep)
+        self.dependency_model.forget_except(keep)
 
     @property
     def control_b(self) -> float:
@@ -1749,7 +1773,9 @@ class SmartPI:
         """Integral time base for the gains, shortened by the active heat exchanges.
 
         The learned time constant 1/b gains the exchange conductances; a direct
-        heat input does not change the zone dynamics.
+        heat input does not change the zone dynamics. With an always-connected
+        neighbour the learned b already holds its exchange, so the base is the
+        loss coefficient fitted without it.
         """
         model = self._effective_model
         if model is None or not model.active or not tau_info.reliable or tau_info.tau_min <= 0.0:
@@ -1757,7 +1783,114 @@ class SmartPI:
         conductance = model.exchange_conductance
         if conductance <= 0.0:
             return tau_info.tau_min
-        return 1.0 / (1.0 / tau_info.tau_min + conductance)
+        inputs = self._known_inputs
+        loss = inputs.loss_coefficient if inputs is not None else None
+        base = loss if loss is not None and loss > 0.0 else 1.0 / tau_info.tau_min
+        return 1.0 / (base + conductance)
+
+    def _read_known_inputs(
+        self,
+        now_monotonic: float,
+        zone_temp: float | None,
+        ext_current_temp: float | None,
+        hvac_mode: VThermHvacMode | None,
+        off_reason: str | None = None,
+        power_shedding: bool = False,
+    ) -> None:
+        """Read the known model inputs of this calculation.
+
+        Each edge of the learning gate discards the open learning window and the
+        dead-time observation in progress. A failing provider leaves the learned
+        model unchanged.
+        """
+        inputs = None
+        if self._known_inputs_enabled and self._known_inputs_provider is not None:
+            try:
+                provided = self._known_inputs_provider()
+                if isinstance(provided, DependencyReadings):
+                    deadtime_s, deadtime_reliable = self.dt_est.active_deadtime(hvac_mode)
+                    inputs = self.dependency_model.update(
+                        provided,
+                        ModelContext(
+                            now_s=now_monotonic,
+                            zone_temp=zone_temp,
+                            ext_temp=ext_current_temp,
+                            power=self._committed_on_percent,
+                            a=self.est.a,
+                            b=self.est.b,
+                            deadtime_s=deadtime_s if deadtime_reliable else None,
+                            model_reliable=self.phase == SmartPIPhase.STABLE,
+                            hvac_mode=hvac_mode,
+                            learning_allowed=self._dependency_learning_allowed(
+                                now_monotonic, hvac_mode, off_reason, power_shedding
+                            ),
+                        ),
+                    )
+                else:
+                    inputs = provided
+            except Exception:  # pylint: disable=broad-except
+                # Safety first: a dependency problem must never stop regulation.
+                _LOGGER.exception("%s - Reading the known model inputs failed", self._name)
+                inputs = None
+        self._known_inputs = inputs
+
+        gate = inputs.learning_gate if inputs is not None else None
+        if (gate is None) != (self._learning_gate is None):
+            # Observations spanning a gate edge mix two regimes. Only learning is
+            # reset: the control law's dead-time episode markers stay untouched.
+            self.learn_win.reset()
+            self.dt_est.reset_observation(self._committed_on_percent)
+        self._learning_gate = gate
+
+    def _dependency_learning_allowed(
+        self,
+        now_monotonic: float,
+        hvac_mode: VThermHvacMode | None,
+        off_reason: str | None,
+        power_shedding: bool,
+    ) -> bool:
+        """Whether SmartPI's own learning conditions allow the exchanges to learn."""
+        resume_ts = self.learn_win.learning_resume_ts
+        return (
+            self._learning_enabled
+            and hvac_mode in (VThermHvacMode_HEAT, VThermHvacMode_COOL)
+            and off_reason is None
+            and not power_shedding
+            and not self.guards.guard_cut_active
+            and not self.calibration_mgr.is_calibrating
+            and (resume_ts is None or now_monotonic >= resume_ts)
+        )
+
+    def _apply_neighbour_window_action(
+        self,
+        target_temp: float | None,
+        hvac_mode: VThermHvacMode | None,
+        off_reason: str | None,
+    ) -> tuple[float | None, VThermHvacMode | None, str | None]:
+        """React to an open window at a connected neighbour.
+
+        "turn_off" takes the same path as a window detected by the thermostat
+        itself, including the protected resume; "frost" and "eco" impose the
+        zone's preset temperature, never one that needs more energy than the
+        current setpoint. A calibration in progress is cancelled: its run is
+        overridden.
+        """
+        inputs = self._known_inputs
+        action = inputs.control_action if inputs is not None else None
+        if action is None or hvac_mode not in (VThermHvacMode_HEAT, VThermHvacMode_COOL):
+            return target_temp, hvac_mode, off_reason
+        if self.calibration_mgr.is_calibrating:
+            _LOGGER.info("%s - Open window at a neighbour: calibration cancelled", self._name)
+            self.calibration_mgr.cancel()
+        if inputs.action_setpoint is None:
+            return target_temp, VThermHvacMode_OFF, HVAC_OFF_REASON_WINDOW_DETECTION
+        setpoint = inputs.action_setpoint
+        if target_temp is not None:
+            if hvac_mode == VThermHvacMode_COOL:
+                setpoint = max(setpoint, target_temp)
+            else:
+                setpoint = min(setpoint, target_temp)
+        return setpoint, hvac_mode, off_reason
 
     def _compose_effective_model(
         self,
@@ -1767,31 +1900,12 @@ class SmartPI:
     ) -> EffectiveModel:
         """Single substitution point: fold the known inputs into (b_eff, T_ref).
 
-        Each edge of the learning gate discards the open learning window and the
-        dead-time observation in progress, and a change of the active inputs
-        invalidates the open FF trim windows, whose evidence assumed the
-        previous model. A failing provider leaves the learned model unchanged.
+        A change of the active inputs invalidates the open FF trim windows,
+        whose evidence assumed the previous model.
         """
-        inputs = None
-        if self._known_inputs_enabled and self._known_inputs_provider is not None:
-            try:
-                inputs = self._known_inputs_provider()
-            except Exception:  # pylint: disable=broad-except
-                # Safety first: a dependency problem must never stop regulation.
-                _LOGGER.exception("%s - Reading the known model inputs failed", self._name)
-                inputs = None
         previous = self._effective_model
-        model = compose(self.est.b, ext_current_temp, inputs)
-        self._known_inputs = inputs
+        model = compose(self.est.b, ext_current_temp, self._known_inputs)
         self._effective_model = model
-
-        gate = inputs.learning_gate if inputs is not None else None
-        if (gate is None) != (self._learning_gate is None):
-            # Observations spanning a gate edge mix two regimes. Only learning is
-            # reset: the control law's dead-time episode markers stay untouched.
-            self.learn_win.reset()
-            self.dt_est.reset_observation(self._committed_on_percent)
-        self._learning_gate = gate
 
         previous_signature = previous.signature if previous is not None else ()
         if model.signature != previous_signature:
@@ -1822,6 +1936,7 @@ class SmartPI:
             ),
             "inputs_active": bool(model is not None and model.active),
             "learning_gate": self._learning_gate,
+            "neighbour_window_action": inputs.control_action,
             "items": [dict(status) for status in inputs.status],
         }
 
@@ -2578,6 +2693,7 @@ class SmartPI:
         self.calibration_mgr.load_state(state.get("cal_state", {}))
         self.gain_scheduler.load_state(state.get("gs_state", {}))
         self.dependency_state.load_state(state.get("dependencies"))
+        self.dependency_model.load()
         self.integral_guard.load_state(state.get("integral_guard_state", {}))
         self.integral_guard.reset()
         self.sp_mgr.clear_runtime_transients()
@@ -3316,6 +3432,14 @@ class SmartPI:
         self._last_temperature_slope_h = float(slope) if isinstance(slope, (int, float)) else None
 
         now = time.monotonic()
+
+        # --- Known model inputs and the reaction to a neighbour's open window ---
+        self._read_known_inputs(
+            now, current_temp, ext_current_temp, hvac_mode, off_reason, power_shedding
+        )
+        target_temp, hvac_mode, off_reason = self._apply_neighbour_window_action(
+            target_temp, hvac_mode, off_reason
+        )
 
         # --- 0. HVAC mode transition (HEAT↔COOL) → reset integral ---
         # Track active modes BEFORE validation so that missing presets in COOL

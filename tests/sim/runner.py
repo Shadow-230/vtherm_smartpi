@@ -11,6 +11,7 @@ A valve thermostat retains integer-percent commands like VTherm's
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Callable
@@ -21,6 +22,16 @@ from custom_components.vtherm_smartpi.const import (
     CONF_MINIMAL_DEACTIVATION_DELAY,
 )
 from custom_components.vtherm_smartpi.handler import SmartPIHandler
+from custom_components.vtherm_smartpi.smartpi.dependencies import (
+    KIND_NEIGHBOUR,
+    MODE_DOOR,
+    DependencyItem,
+)
+from custom_components.vtherm_smartpi.smartpi.dependency_inputs import (
+    DependencyReadings,
+    NeighbourObservation,
+    NeighbourReading,
+)
 from custom_components.vtherm_smartpi.smartpi.effective_model import KnownInputs
 from custom_components.vtherm_smartpi.hvac_mode import (
     VThermHvacMode,
@@ -31,7 +42,7 @@ from custom_components.vtherm_smartpi.hvac_mode import (
 from fakes.fake_thermostat_runtime import FakeThermostatRuntime
 
 from .clock import EventQueue, VirtualClock
-from .plant import DelayedPower, ThermalNetwork
+from .plant import DelayedPower, Schedule, ThermalNetwork
 from .scheduler import SimActuator, SimCycleScheduler
 from .sensors import QuantizedSensor, VThermSlope
 from .weather import Weather
@@ -39,17 +50,75 @@ from .weather import Weather
 SENSOR_STEP_S = 10.0
 TRACE_STEP_S = 60.0
 ZONE_NODE = "zone"
-# A neighbour held at a fixed temperature is a node with an overwhelming capacity.
-FIXED_NODE_CAPACITY = 1e12
+NEIGHBOUR_SENSOR_C = 0.1
+
+
+def _in_intervals(t_s: float, intervals_h: tuple[tuple[float, float], ...]) -> bool:
+    return any(start * 3600.0 <= t_s < end * 3600.0 for start, end in intervals_h)
 
 
 @dataclass(frozen=True)
-class FixedNeighbour:
-    """Neighbouring space at a constant temperature, coupled to the zone."""
+class SimNeighbour:
+    """Neighbouring space at a prescribed temperature, coupled to the zone.
+
+    ``mode`` is what SmartPI is told (``always``, ``door`` or ``none``). The
+    physical exchange follows the doors in ``door`` mode and is permanent
+    otherwise, so ``none`` models a neighbour the user chose to ignore.
+    """
 
     key: str
     temperature_c: float
     conductance: float
+    mode: str = "always"
+    # Temperature steps as (hour, change in degC).
+    steps: tuple[tuple[float, float], ...] = ()
+    daily_amplitude_c: float = 0.0
+    doors_open_h: tuple[tuple[float, float], ...] = ()
+    windows_open_h: tuple[tuple[float, float], ...] = ()
+    is_thermostat: bool = True
+    available: bool = True
+
+    def temperature(self, t_s: float) -> float:
+        hours = t_s / 3600.0
+        value = self.temperature_c
+        if self.daily_amplitude_c:
+            value -= self.daily_amplitude_c * math.cos(2.0 * math.pi * (hours - 5.0) / 24.0)
+        value += sum(change for at_h, change in self.steps if hours >= at_h)
+        return value
+
+    def schedule(self) -> Schedule | None:
+        if self.mode != MODE_DOOR:
+            return None
+        return Schedule(tuple((start * 3600.0, end * 3600.0) for start, end in self.doors_open_h))
+
+    def observation(self, t_s: float) -> NeighbourObservation:
+        """What the dependency layer reads for this neighbour, as the handler would."""
+        item = DependencyItem(
+            item_id=self.key,
+            kind=KIND_NEIGHBOUR,
+            entity=f"reg-{self.key}",
+            mode=self.mode,
+            door_sensors=(f"reg-door-{self.key}",) if self.mode == MODE_DOOR else (),
+        )
+        domain = "climate" if self.is_thermostat else "sensor"
+        reading = NeighbourReading(
+            item_id=self.key,
+            entity_id=f"{domain}.{self.key}",
+            temperature=(
+                round(round(self.temperature(t_s) / NEIGHBOUR_SENSOR_C) * NEIGHBOUR_SENSOR_C, 6)
+                if self.available
+                else None
+            ),
+            available=self.available,
+            is_thermostat=self.is_thermostat,
+            window_open=self.is_thermostat and _in_intervals(t_s, self.windows_open_h),
+        )
+        return NeighbourObservation(item, reading, door_open=_in_intervals(t_s, self.doors_open_h))
+
+
+def FixedNeighbour(key: str, temperature_c: float, conductance: float) -> SimNeighbour:  # noqa: N802
+    """Neighbour at a constant temperature, always connected."""
+    return SimNeighbour(key=key, temperature_c=temperature_c, conductance=conductance)
 
 
 @dataclass
@@ -73,7 +142,8 @@ class ZoneSpec:
     min_activation_delay_s: int = 0
     min_deactivation_delay_s: int = 0
     sensor_resolution_c: float = 0.1
-    neighbours: tuple[FixedNeighbour, ...] = ()
+    neighbours: tuple[SimNeighbour, ...] = ()
+    presets: dict = field(default_factory=lambda: {"frost_temp": 7.0, "eco_temp": 17.0})
     options: dict = field(default_factory=dict)
 
 
@@ -208,6 +278,7 @@ class Simulation:
         zone: ZoneSpec | None = None,
         weather: Weather | None = None,
         known_inputs: Callable[[Simulation], KnownInputs | None] | None = None,
+        dependency_layer: bool = False,
     ) -> None:
         self.zone = zone or ZoneSpec()
         self.weather = weather or Weather()
@@ -230,8 +301,9 @@ class Simulation:
             DelayedPower(self.actuator.history, self.zone.deadtime_min * 60.0),
         )
         for neighbour in self.zone.neighbours:
-            self.network.add_node(neighbour.key, neighbour.temperature_c, FIXED_NODE_CAPACITY)
-            self.network.link(ZONE_NODE, neighbour.key, neighbour.conductance)
+            self.network.link_boundary(
+                ZONE_NODE, neighbour.conductance, neighbour.temperature, neighbour.schedule()
+            )
 
         self.thermostat = SimThermostat(self.zone, self.clock, self.actuator)
         self.scheduler = SimCycleScheduler(
@@ -253,12 +325,22 @@ class Simulation:
         self.handler.on_scheduler_ready(self.scheduler)
         if known_inputs is not None:
             self.algo.set_known_inputs_provider(lambda: known_inputs(self))
+        elif dependency_layer:
+            self.algo.set_known_inputs_provider(self.dependency_readings)
 
         self.indoor_sensor = QuantizedSensor(self.zone.sensor_resolution_c)
         self.outdoor_sensor = QuantizedSensor(0.1)
         self.trace: list[TracePoint] = []
         self._next_trace_s = 0.0
         self._started = False
+
+    def dependency_readings(self) -> DependencyReadings:
+        """Readings of the configured neighbours, as the handler would provide them."""
+        t_s = self.clock.elapsed_s
+        return DependencyReadings(
+            neighbours=tuple(n.observation(t_s) for n in self.zone.neighbours),
+            presets=dict(self.zone.presets),
+        )
 
     @property
     def algo(self):

@@ -67,6 +67,28 @@ class DelayedPower:
         return [t + self.deadtime_s for t in shifted]
 
 
+@dataclass(frozen=True)
+class Schedule:
+    """Open intervals of a connection, as (start_s, end_s) pairs."""
+
+    intervals: tuple[tuple[float, float], ...] = ()
+
+    def is_open(self, t_s: float) -> bool:
+        return any(start <= t_s < end for start, end in self.intervals)
+
+    def changes(self, start_s: float, end_s: float) -> list[float]:
+        """Return the opening and closing instants strictly inside (start_s, end_s)."""
+        return [t for interval in self.intervals for t in interval if start_s < t < end_s]
+
+
+@dataclass
+class _BoundaryLink:
+    node: int
+    conductance: float
+    temperature: Callable[[float], float]
+    schedule: Schedule | None
+
+
 @dataclass
 class _Heater:
     node: int
@@ -83,6 +105,7 @@ class ThermalNetwork:
     temperatures: list[float] = field(default_factory=list)
     links: list[tuple[int, int, float]] = field(default_factory=list)
     outdoor_links: list[tuple[int, float]] = field(default_factory=list)
+    boundary_links: list[_BoundaryLink] = field(default_factory=list)
     heaters: list[_Heater] = field(default_factory=list)
 
     def add_node(self, name: str, temperature: float, capacity: float = 1.0) -> int:
@@ -103,13 +126,29 @@ class ThermalNetwork:
     def link_outdoor(self, name: str, conductance: float) -> None:
         self.outdoor_links.append((self.index(name), float(conductance)))
 
+    def link_boundary(
+        self,
+        name: str,
+        conductance: float,
+        temperature: Callable[[float], float],
+        schedule: Schedule | None = None,
+    ) -> None:
+        """Couple a node to a prescribed temperature, open always or by schedule."""
+        self.boundary_links.append(_BoundaryLink(self.index(name), float(conductance), temperature, schedule))
+
     def add_heater(self, name: str, gain: float, power: DelayedPower) -> None:
         self.heaters.append(_Heater(self.index(name), float(gain), power))
 
     def _derivative(
-        self, temps: list[float], outdoor_c: float, heat: list[float]
+        self,
+        temps: list[float],
+        outdoor_c: float,
+        heat: list[float],
+        boundaries: list[tuple[int, float, float]] = (),
     ) -> list[float]:
         flows = list(heat)
+        for node, conductance, temperature in boundaries:
+            flows[node] += conductance * (temperature - temps[node])
         for first, second, conductance in self.links:
             flow = conductance * (temps[second] - temps[first])
             flows[first] += flow
@@ -118,12 +157,12 @@ class ThermalNetwork:
             flows[node] += conductance * (outdoor_c - temps[node])
         return [flow / capacity for flow, capacity in zip(flows, self.capacities)]
 
-    def _rk4(self, step_min: float, outdoor_c: float, heat: list[float]) -> None:
+    def _rk4(self, step_min: float, outdoor_c: float, heat: list[float], boundaries=()) -> None:
         temps = self.temperatures
-        k1 = self._derivative(temps, outdoor_c, heat)
-        k2 = self._derivative([t + 0.5 * step_min * k for t, k in zip(temps, k1)], outdoor_c, heat)
-        k3 = self._derivative([t + 0.5 * step_min * k for t, k in zip(temps, k2)], outdoor_c, heat)
-        k4 = self._derivative([t + step_min * k for t, k in zip(temps, k3)], outdoor_c, heat)
+        k1 = self._derivative(temps, outdoor_c, heat, boundaries)
+        k2 = self._derivative([t + 0.5 * step_min * k for t, k in zip(temps, k1)], outdoor_c, heat, boundaries)
+        k3 = self._derivative([t + 0.5 * step_min * k for t, k in zip(temps, k2)], outdoor_c, heat, boundaries)
+        k4 = self._derivative([t + step_min * k for t, k in zip(temps, k3)], outdoor_c, heat, boundaries)
         self.temperatures = [
             t + step_min / 6.0 * (a + 2.0 * b + 2.0 * c + d)
             for t, a, b, c, d in zip(temps, k1, k2, k3, k4)
@@ -140,13 +179,23 @@ class ThermalNetwork:
         cuts = {start_s, end_s}
         for heater in self.heaters:
             cuts.update(heater.power.breakpoints(start_s, end_s))
+        for link in self.boundary_links:
+            if link.schedule is not None:
+                cuts.update(link.schedule.changes(start_s, end_s))
         points = sorted(cuts)
         for seg_start, seg_end in zip(points, points[1:]):
             heat = [0.0] * len(self.names)
             for heater in self.heaters:
                 heat[heater.node] += heater.gain * heater.power.value_at(seg_start)
+            open_links = [
+                link
+                for link in self.boundary_links
+                if link.schedule is None or link.schedule.is_open(seg_start)
+            ]
             t_s = seg_start
             while t_s < seg_end - 1e-9:
                 step_s = min(MAX_STEP_S, seg_end - t_s)
-                self._rk4(step_s / 60.0, outdoor(t_s + 0.5 * step_s), heat)
+                mid_s = t_s + 0.5 * step_s
+                boundaries = [(link.node, link.conductance, link.temperature(mid_s)) for link in open_links]
+                self._rk4(step_s / 60.0, outdoor(mid_s), heat, boundaries)
                 t_s += step_s

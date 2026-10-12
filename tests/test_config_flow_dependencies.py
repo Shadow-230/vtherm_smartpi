@@ -47,6 +47,10 @@ def _thermostat_entry(hass, dependencies=None, **overrides) -> MockConfigEntry:
 async def _open(hass, entry, step: str):
     result = await hass.config_entries.options.async_init(entry.entry_id)
     assert result["type"] == FlowResultType.MENU
+    return await _next(hass, result, step)
+
+
+async def _next(hass, result, step: str):
     return await hass.config_entries.options.async_configure(result["flow_id"], {"next_step_id": step})
 
 
@@ -83,6 +87,15 @@ async def test_settings_keep_the_dependency_list(hass) -> None:
     assert entry.options[CONF_SMART_PI_DEPENDENCIES] == dependencies
 
 
+async def test_dependency_menu_offers_what_applies(hass) -> None:
+    empty = _thermostat_entry(hass)
+    result = await _open(hass, empty, "dependencies")
+
+    assert result["type"] == FlowResultType.MENU
+    assert result["menu_options"] == ["neighbour_add"]
+    assert result["description_placeholders"]["count"] == "0"
+
+
 async def test_dependency_list_shows_items_and_removes_the_selected_ones(hass) -> None:
     registry = er.async_get(hass)
     hall = registry.async_get_or_create("climate", VT_DOMAIN, "vt-hall", suggested_object_id="hall")
@@ -90,10 +103,13 @@ async def test_dependency_list_shows_items_and_removes_the_selected_ones(hass) -
     entry = _thermostat_entry(hass, [_neighbour("n1", hall.id), _neighbour("n2", kitchen.id)])
 
     result = await _open(hass, entry, "dependencies")
+    assert result["menu_options"] == ["neighbour_add", "dependency_edit", "dependency_remove"]
+    assert result["description_placeholders"] == {
+        "count": "2",
+        "items": "- neighbour: climate.hall\n- neighbour: climate.kitchen",
+    }
 
-    assert result["type"] == FlowResultType.FORM
-    assert result["step_id"] == "dependencies"
-    assert result["description_placeholders"] == {"count": "2"}
+    result = await _next(hass, result, "dependency_remove")
     remove_selector = result["data_schema"].schema[next(iter(result["data_schema"].schema))]
     labels = {option["value"]: option["label"] for option in remove_selector.config["options"]}
     assert labels == {"n1": "neighbour: climate.hall", "n2": "neighbour: climate.kitchen"}
@@ -108,22 +124,12 @@ async def test_dependency_list_without_selection_changes_nothing(hass) -> None:
     dependencies = [_neighbour("n1", "0123456789abcdef")]
     entry = _thermostat_entry(hass, dependencies)
 
-    result = await _open(hass, entry, "dependencies")
+    result = await _next(hass, await _open(hass, entry, "dependencies"), "dependency_remove")
     result = await hass.config_entries.options.async_configure(result["flow_id"], {"remove": []})
 
     assert result["type"] == FlowResultType.ABORT
     assert result["reason"] == "dependencies_unchanged"
     assert entry.options[CONF_SMART_PI_DEPENDENCIES] == dependencies
-
-
-async def test_empty_dependency_list_has_nothing_to_remove(hass) -> None:
-    entry = _thermostat_entry(hass)
-
-    result = await _open(hass, entry, "dependencies")
-
-    assert result["type"] == FlowResultType.FORM
-    assert result["description_placeholders"] == {"count": "0"}
-    assert not result["data_schema"].schema
 
 
 def _valve_target(hass, monkeypatch) -> None:

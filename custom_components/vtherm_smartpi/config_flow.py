@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import uuid
 from typing import Any
 
 import voluptuous as vol
 from homeassistant.config_entries import ConfigFlow, OptionsFlow
 from homeassistant.helpers import selector
+from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
 from homeassistant.components.climate import DOMAIN as CLIMATE_DOMAIN
 
@@ -32,11 +34,30 @@ from .const import (
     DEFAULT_OPTIONS,
     DOMAIN,
 )
-from .smartpi.dependencies import DependencyItem, dump_dependencies, parse_dependencies
+from .smartpi.dependencies import (
+    KIND_NEIGHBOUR,
+    MODE_ALWAYS,
+    MODE_DOOR,
+    NEIGHBOUR_MODES,
+    WINDOW_ACTION_NOTHING,
+    WINDOW_ACTIONS,
+    DependencyItem,
+    dump_dependencies,
+    parse_dependencies,
+    validate_dependencies,
+)
 
 ERROR_INVALID_VALVE_CURVE = "invalid_valve_curve"
 ABORT_DEPENDENCIES_UNCHANGED = "dependencies_unchanged"
 FIELD_REMOVE_DEPENDENCIES = "remove"
+FIELD_EDIT_DEPENDENCY = "dependency"
+FIELD_NEIGHBOUR = "entity"
+FIELD_MODE = "mode"
+FIELD_DOOR_SENSORS = "door_sensors"
+FIELD_WINDOW_ACTION = "neighbour_window_action"
+VT_DOMAIN = "versatile_thermostat"
+DOOR_DEVICE_CLASSES = ["door", "opening", "garage_door"]
+WINDOW_DEVICE_CLASS = "window"
 THERMOSTAT_TYPE_VALVE = "thermostat_over_valve"
 THERMOSTAT_TYPE_CLIMATE = "thermostat_over_climate"
 AUTO_REGULATION_VALVE = "auto_regulation_valve"
@@ -444,6 +465,10 @@ class SmartPIOptionsFlow(OptionsFlow):
         """Store the config entry being edited."""
         self._config_entry = config_entry
         self._pending_options_data: dict[str, Any] | None = None
+        self._editing: DependencyItem | None = None
+        self._neighbour_entity: er.RegistryEntry | None = None
+        self._pending_item: DependencyItem | None = None
+        self._pending_warnings: list[str] = []
 
     def _is_valve_target_entry(self) -> bool:
         """Return whether the edited entry targets a valve thermostat."""
@@ -520,38 +545,329 @@ class SmartPIOptionsFlow(OptionsFlow):
         entity_id = er.async_resolve_entity_id(er.async_get(self.hass), item.entity)
         return f"{item.kind}: {entity_id or item.entity}"
 
-    async def async_step_dependencies(self, user_input: dict[str, Any] | None = None):
-        """List the zone dependencies of the thermostat and remove the selected ones."""
-        options = self._current_options()
-        items = parse_dependencies(options.get(CONF_SMART_PI_DEPENDENCIES))
+    def _dependency_items(self) -> list[DependencyItem]:
+        return parse_dependencies(self._current_options().get(CONF_SMART_PI_DEPENDENCIES))
 
+    def _save_dependencies(self, items: list[DependencyItem]):
+        data = self._current_options()
+        data[CONF_SMART_PI_DEPENDENCIES] = dump_dependencies(items)
+        return self.async_create_entry(title="", data=data)
+
+    def _target_registry_entry(self) -> er.RegistryEntry | None:
+        """Registry entry of the thermostat this options entry belongs to."""
+        target = self._config_entry.data.get(CONF_TARGET_VTHERM)
+        registry = er.async_get(self.hass)
+        entity_id = registry.async_get_entity_id(CLIMATE_DOMAIN, VT_DOMAIN, target) if target else None
+        return registry.async_get(entity_id) if entity_id else None
+
+    def _entity_id(self, registry_id: str) -> str | None:
+        return er.async_resolve_entity_id(er.async_get(self.hass), registry_id)
+
+    async def async_step_dependencies(self, user_input: dict[str, Any] | None = None):
+        """Offer to add a neighbouring zone, or to edit or remove a dependency."""
+        del user_input
+        items = self._dependency_items()
+        menu_options = ["neighbour_add"]
+        if any(item.is_neighbour for item in items):
+            menu_options.append("dependency_edit")
+        if items:
+            menu_options.append("dependency_remove")
+        listing = "\n".join(f"- {self._dependency_label(item)}" for item in items) or "-"
+        return self.async_show_menu(
+            step_id="dependencies",
+            menu_options=menu_options,
+            description_placeholders={"count": str(len(items)), "items": listing},
+        )
+
+    async def async_step_dependency_remove(self, user_input: dict[str, Any] | None = None):
+        """Remove the selected dependencies."""
+        items = self._dependency_items()
         if user_input is not None:
             removed = set(user_input.get(FIELD_REMOVE_DEPENDENCIES, []))
             if not removed:
                 return self.async_abort(reason=ABORT_DEPENDENCIES_UNCHANGED)
-            data = dict(options)
-            data[CONF_SMART_PI_DEPENDENCIES] = dump_dependencies(
-                item for item in items if item.item_id not in removed
-            )
-            return self.async_create_entry(title="", data=data)
+            return self._save_dependencies([item for item in items if item.item_id not in removed])
+        return self.async_show_form(
+            step_id="dependency_remove",
+            data_schema=vol.Schema(
+                {
+                    vol.Optional(FIELD_REMOVE_DEPENDENCIES, default=[]): self._item_selector(
+                        items, multiple=True
+                    )
+                }
+            ),
+        )
 
-        schema: dict[Any, Any] = {}
-        if items:
-            schema[vol.Optional(FIELD_REMOVE_DEPENDENCIES, default=[])] = selector.SelectSelector(
+    async def async_step_dependency_edit(self, user_input: dict[str, Any] | None = None):
+        """Choose the neighbour to edit."""
+        neighbours = [item for item in self._dependency_items() if item.is_neighbour]
+        if user_input is not None:
+            item = next(i for i in neighbours if i.item_id == user_input[FIELD_EDIT_DEPENDENCY])
+            self._editing = item
+            self._neighbour_entity = er.async_get(self.hass).async_get(item.entity)
+            if self._neighbour_entity is None:
+                return self.async_abort(reason="neighbour_missing")
+            return await self.async_step_neighbour_details()
+        return self.async_show_form(
+            step_id="dependency_edit",
+            data_schema=vol.Schema(
+                {vol.Required(FIELD_EDIT_DEPENDENCY): self._item_selector(neighbours, multiple=False)}
+            ),
+        )
+
+    def _item_selector(self, items: list[DependencyItem], multiple: bool) -> selector.SelectSelector:
+        return selector.SelectSelector(
+            selector.SelectSelectorConfig(
+                options=[
+                    selector.SelectOptionDict(value=item.item_id, label=self._dependency_label(item))
+                    for item in items
+                ],
+                multiple=multiple,
+                mode=selector.SelectSelectorMode.LIST,
+            )
+        )
+
+    async def async_step_neighbour_add(self, user_input: dict[str, Any] | None = None):
+        """Choose the neighbouring zone: a Versatile Thermostat or a temperature sensor."""
+        errors: dict[str, str] = {}
+        if user_input is not None:
+            registry = er.async_get(self.hass)
+            entry = registry.async_get(user_input[FIELD_NEIGHBOUR])
+            own = self._target_registry_entry()
+            if entry is None:
+                errors[FIELD_NEIGHBOUR] = "entity_without_unique_id"
+            elif own is not None and entry.id == own.id:
+                errors[FIELD_NEIGHBOUR] = "self_reference"
+            elif any(i.is_neighbour and i.entity == entry.id for i in self._dependency_items()):
+                errors[FIELD_NEIGHBOUR] = "duplicate_neighbour"
+            else:
+                self._editing = None
+                self._neighbour_entity = entry
+                return await self.async_step_neighbour_details()
+        return self.async_show_form(
+            step_id="neighbour_add",
+            data_schema=vol.Schema(
+                {
+                    vol.Required(FIELD_NEIGHBOUR): selector.EntitySelector(
+                        selector.EntitySelectorConfig(
+                            filter=[
+                                selector.EntityFilterSelectorConfig(
+                                    integration=VT_DOMAIN, domain=CLIMATE_DOMAIN
+                                ),
+                                selector.EntityFilterSelectorConfig(
+                                    domain="sensor", device_class="temperature"
+                                ),
+                            ]
+                        )
+                    )
+                }
+            ),
+            errors=errors,
+        )
+
+    def _suggested_door_sensors(self) -> list[str]:
+        """Door sensors in the area of the zone or of the neighbour, not used by another neighbour.
+
+        They are only listed in the form: a door sensor in one of the two areas
+        may as well be an exterior door.
+        """
+        own = self._target_registry_entry()
+        devices = dr.async_get(self.hass)
+
+        def area_of(entry: er.RegistryEntry | None) -> str | None:
+            if entry is None:
+                return None
+            if entry.area_id:
+                return entry.area_id
+            device = devices.async_get(entry.device_id) if entry.device_id else None
+            return device.area_id if device else None
+
+        areas = {area_of(own), area_of(self._neighbour_entity)} - {None}
+        if not areas:
+            return []
+        editing_id = self._editing.item_id if self._editing is not None else None
+        used = {
+            sensor
+            for item in self._dependency_items()
+            if item.item_id != editing_id
+            for sensor in item.door_sensors
+        }
+        return sorted(
+            entry.entity_id
+            for entry in er.async_get(self.hass).entities.values()
+            if entry.domain == "binary_sensor"
+            and (entry.device_class or entry.original_device_class) in DOOR_DEVICE_CLASSES
+            and area_of(entry) in areas
+            and entry.id not in used
+        )
+
+    def _details_schema(self, defaults: dict[str, Any], is_thermostat: bool) -> vol.Schema:
+        schema: dict[Any, Any] = {
+            vol.Required(FIELD_MODE, default=defaults[FIELD_MODE]): selector.SelectSelector(
                 selector.SelectSelectorConfig(
-                    options=[
-                        selector.SelectOptionDict(value=item.item_id, label=self._dependency_label(item))
-                        for item in items
-                    ],
+                    options=list(NEIGHBOUR_MODES), translation_key="dependency_mode"
+                )
+            ),
+            vol.Optional(FIELD_DOOR_SENSORS, default=defaults[FIELD_DOOR_SENSORS]): selector.EntitySelector(
+                selector.EntitySelectorConfig(
                     multiple=True,
-                    mode=selector.SelectSelectorMode.LIST,
+                    filter=[
+                        selector.EntityFilterSelectorConfig(
+                            domain="binary_sensor",
+                            device_class=DOOR_DEVICE_CLASSES + [WINDOW_DEVICE_CLASS],
+                        )
+                    ],
+                )
+            ),
+        }
+        if is_thermostat:
+            schema[
+                vol.Required(FIELD_WINDOW_ACTION, default=defaults[FIELD_WINDOW_ACTION])
+            ] = selector.SelectSelector(
+                selector.SelectSelectorConfig(
+                    options=list(WINDOW_ACTIONS), translation_key="neighbour_window_action"
                 )
             )
+        return vol.Schema(schema)
+
+    async def async_step_neighbour_details(self, user_input: dict[str, Any] | None = None):
+        """Connection mode, door sensors and, for a thermostat, the reaction to its open window."""
+        neighbour = self._neighbour_entity
+        is_thermostat = neighbour.domain == CLIMATE_DOMAIN
+        editing = self._editing
+        errors: dict[str, str] = {}
+        if user_input is not None:
+            item, errors = self._build_neighbour(user_input, is_thermostat)
+            if not errors:
+                self._pending_item = item
+                warnings = self._neighbour_warnings(item)
+                if warnings:
+                    self._pending_warnings = warnings
+                    return await self.async_step_neighbour_confirm()
+                return self._store_neighbour(item)
+            defaults = {
+                FIELD_MODE: user_input.get(FIELD_MODE, MODE_ALWAYS),
+                FIELD_DOOR_SENSORS: user_input.get(FIELD_DOOR_SENSORS, []),
+                FIELD_WINDOW_ACTION: user_input.get(FIELD_WINDOW_ACTION, WINDOW_ACTION_NOTHING),
+            }
+        elif editing is not None:
+            defaults = {
+                FIELD_MODE: editing.mode,
+                FIELD_DOOR_SENSORS: [e for e in map(self._entity_id, editing.door_sensors) if e],
+                FIELD_WINDOW_ACTION: editing.neighbour_window_action,
+            }
+        else:
+            defaults = {
+                FIELD_MODE: MODE_ALWAYS,
+                FIELD_DOOR_SENSORS: [],
+                FIELD_WINDOW_ACTION: WINDOW_ACTION_NOTHING,
+            }
+        suggested = self._suggested_door_sensors()
         return self.async_show_form(
-            step_id="dependencies",
-            data_schema=vol.Schema(schema),
-            description_placeholders={"count": str(len(items))},
+            step_id="neighbour_details",
+            data_schema=self._details_schema(defaults, is_thermostat),
+            errors=errors,
+            description_placeholders={
+                "neighbour": neighbour.entity_id,
+                "suggestions": (
+                    "\n\nDoor sensors in the areas of the two zones: "
+                    + ", ".join(suggested)
+                    + ". Choose only the doors between the zones."
+                    if suggested
+                    else ""
+                ),
+            },
         )
+
+    def _build_neighbour(
+        self, user_input: dict[str, Any], is_thermostat: bool
+    ) -> tuple[DependencyItem | None, dict[str, str]]:
+        registry = er.async_get(self.hass)
+        sensor_ids: list[str] = []
+        for entity_id in user_input.get(FIELD_DOOR_SENSORS, []):
+            entry = registry.async_get(entity_id)
+            if entry is None:
+                return None, {FIELD_DOOR_SENSORS: "entity_without_unique_id"}
+            if (entry.device_class or entry.original_device_class) == WINDOW_DEVICE_CLASS:
+                return None, {FIELD_DOOR_SENSORS: "window_sensor_rejected"}
+            sensor_ids.append(entry.id)
+        editing = self._editing
+        mode = user_input[FIELD_MODE]
+        # What was learned belongs to one connection: a new mode or other doors
+        # start from scratch under a new id.
+        same_connection = (
+            editing is not None
+            and editing.mode == mode
+            and set(editing.door_sensors) == set(sensor_ids)
+        )
+        item = DependencyItem(
+            item_id=editing.item_id if same_connection else uuid.uuid4().hex,
+            kind=KIND_NEIGHBOUR,
+            entity=self._neighbour_entity.id,
+            mode=mode,
+            door_sensors=tuple(sensor_ids),
+            neighbour_window_action=(
+                user_input.get(FIELD_WINDOW_ACTION, WINDOW_ACTION_NOTHING)
+                if is_thermostat
+                else WINDOW_ACTION_NOTHING
+            ),
+        )
+        replaced_id = editing.item_id if editing is not None else item.item_id
+        others = [i for i in self._dependency_items() if i.item_id != replaced_id]
+        own = self._target_registry_entry()
+        for issue in validate_dependencies([*others, item], own.id if own else None):
+            if issue.item_id == item.item_id:
+                field = "base" if issue.code in ("self_reference", "duplicate_neighbour") else FIELD_DOOR_SENSORS
+                return None, {field: issue.code}
+        return item, {}
+
+    def _neighbour_warnings(self, item: DependencyItem) -> list[str]:
+        """Consistency checks that do not block saving."""
+        warnings = []
+        own = self._target_registry_entry()
+        neighbour = self._neighbour_entity
+        if neighbour.domain == CLIMATE_DOMAIN and own is not None:
+            for entry in self.hass.config_entries.async_entries(DOMAIN):
+                if entry.data.get(CONF_TARGET_VTHERM) != neighbour.unique_id:
+                    continue
+                options = entry.options or entry.data
+                back = parse_dependencies(options.get(CONF_SMART_PI_DEPENDENCIES))
+                if not any(i.is_neighbour and i.entity == own.id for i in back):
+                    warnings.append(
+                        f"{neighbour.entity_id} has its own SmartPI entry that does not list this zone as a neighbour."
+                    )
+        state = self.hass.states.get(own.entity_id) if own is not None else None
+        attributes = state.attributes if state is not None else {}
+        window_manager = attributes.get("window_manager") or {}
+        window_sensor = window_manager.get("window_sensor_entity_id")
+        door_entities = [self._entity_id(sensor) for sensor in item.door_sensors]
+        if window_sensor and window_sensor in door_entities:
+            warnings.append(f"{window_sensor} is also the window sensor of this thermostat.")
+        if item.mode == MODE_DOOR and attributes.get("is_window_auto_configured"):
+            warnings.append(
+                "Automatic window detection of this thermostat may react to the open door."
+            )
+        return warnings
+
+    async def async_step_neighbour_confirm(self, user_input: dict[str, Any] | None = None):
+        """Show the warnings and save on confirmation."""
+        if user_input is not None:
+            return self._store_neighbour(self._pending_item)
+        return self.async_show_form(
+            step_id="neighbour_confirm",
+            data_schema=vol.Schema({}),
+            description_placeholders={
+                "warnings": "\n".join(f"- {warning}" for warning in self._pending_warnings)
+            },
+        )
+
+    def _store_neighbour(self, item: DependencyItem):
+        items = self._dependency_items()
+        replaced_id = self._editing.item_id if self._editing is not None else item.item_id
+        replaced = [item if existing.item_id == replaced_id else existing for existing in items]
+        if not any(existing.item_id == replaced_id for existing in items):
+            replaced.append(item)
+        return self._save_dependencies(replaced)
 
     async def async_step_valve_curve(self, user_input: dict[str, Any] | None = None):
         """Handle the options valve curve flow."""

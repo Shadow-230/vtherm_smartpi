@@ -105,10 +105,49 @@
       },
       "dependencies": {
         "title": "Zone dependencies",
-        "description": "Neighbouring zones and second heat sources linked to this thermostat: {count} configured. Select the ones to remove.",
+        "description": "{count} configured:\n{items}",
+        "menu_options": {
+          "neighbour_add": "Add a neighbouring zone",
+          "dependency_edit": "Edit a neighbouring zone",
+          "dependency_remove": "Remove dependencies"
+        }
+      },
+      "dependency_remove": {
+        "title": "Remove dependencies",
         "data": {
           "remove": "Remove"
         }
+      },
+      "dependency_edit": {
+        "title": "Edit a neighbouring zone",
+        "data": {
+          "dependency": "Neighbour"
+        }
+      },
+      "neighbour_add": {
+        "title": "Add a neighbouring zone",
+        "description": "Choose the Versatile Thermostat or the temperature sensor of the neighbouring zone.",
+        "data": {
+          "entity": "Neighbour"
+        }
+      },
+      "neighbour_details": {
+        "title": "Neighbouring zone",
+        "description": "Connection with {neighbour}.{suggestions}",
+        "data": {
+          "mode": "Connection",
+          "door_sensors": "Door sensors",
+          "neighbour_window_action": "When the neighbour's window is open"
+        },
+        "data_description": {
+          "mode": "Always: the zones share their air. When a door is open: the exchange follows the door sensors. None: keep the neighbour on the list but ignore it.",
+          "door_sensors": "Doors between the two zones; the connection is open while any of them is open. Window sensors stay in the window detection of Versatile Thermostat.",
+          "neighbour_window_action": "Applied while the connection is open and the neighbour thermostat reports an open window."
+        }
+      },
+      "neighbour_confirm": {
+        "title": "Check the neighbour",
+        "description": "{warnings}\n\nSave anyway?"
       },
       "valve_curve": {
         "title": "Valve curve",
@@ -121,10 +160,17 @@
       }
     },
     "error": {
-      "invalid_valve_curve": "The valve curve must satisfy minimum opening < knee opening < maximum opening."
+      "invalid_valve_curve": "The valve curve must satisfy minimum opening < knee opening < maximum opening.",
+      "entity_without_unique_id": "This entity has no unique ID, so it cannot be referenced reliably.",
+      "self_reference": "A thermostat cannot be its own neighbour.",
+      "duplicate_neighbour": "This neighbour is already on the list.",
+      "door_mode_without_sensor": "The door connection needs at least one door sensor.",
+      "shared_door_sensor": "This door sensor already belongs to another neighbour of this zone.",
+      "window_sensor_rejected": "Window sensors stay in the window detection of Versatile Thermostat; choose door sensors."
     },
     "abort": {
-      "dependencies_unchanged": "No dependency was selected, nothing changed."
+      "dependencies_unchanged": "No dependency was selected, nothing changed.",
+      "neighbour_missing": "The neighbour entity no longer exists; remove it from the list."
     }
   },
   "services": {
@@ -140,6 +186,23 @@
           "name": "Learning enabled",
           "description": "Whether SmartPI may update its thermal model and dead-time estimates."
         }
+      }
+    }
+  },
+  "selector": {
+    "dependency_mode": {
+      "options": {
+        "none": "None (ignored)",
+        "door": "When a door is open",
+        "always": "Always"
+      }
+    },
+    "neighbour_window_action": {
+      "options": {
+        "nothing": "Nothing",
+        "turn_off": "Turn off",
+        "frost": "Frost temperature",
+        "eco": "Eco temperature"
       }
     }
   }

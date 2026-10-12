@@ -82,6 +82,13 @@ class KnownInputs:
     heats: tuple[HeatInput, ...] = ()
     # Reason to pause the learning of a, b and dead times, or None.
     learning_gate: str | None = None
+    # Loss coefficient fitted together with the exchanges, used by the control
+    # law instead of the learned b when the learned b has absorbed them.
+    loss_coefficient: float | None = None
+    # Reaction to an open window at a connected neighbour ("turn_off", "frost",
+    # "eco"), and the setpoint it imposes for "frost" and "eco".
+    control_action: str | None = None
+    action_setpoint: float | None = None
     # Per-item diagnostics prepared by the dependency layer.
     status: tuple[Mapping[str, Any], ...] = ()
 
@@ -120,6 +127,7 @@ def compose(
     identity = EffectiveModel(b=b, ext_temp=ext_temp)
     if inputs is None or ext_temp is None or not math.isfinite(b):
         return identity
+    loss = b
 
     exchanges = []
     for item in inputs.exchanges:
@@ -133,11 +141,13 @@ def compose(
             heats.append((item.key, rate))
     if not exchanges and not heats:
         return identity
+    if exchanges and inputs.loss_coefficient is not None and inputs.loss_coefficient > 0.0:
+        loss = inputs.loss_coefficient
 
-    b_eff = b + sum(conductance for _key, conductance, _t in exchanges)
+    b_eff = loss + sum(conductance for _key, conductance, _t in exchanges)
     if b_eff < KNOWN_INPUTS_B_EFF_MIN:
         return identity
-    t_ref = (b * ext_temp + sum(g * t for _key, g, t in exchanges)) / b_eff
+    t_ref = (loss * ext_temp + sum(g * t for _key, g, t in exchanges)) / b_eff
     heat_rate = sum(rate for _key, rate in heats)
     shift = clamp(heat_rate / b_eff, -KNOWN_HEAT_MAX_SHIFT_C, KNOWN_HEAT_MAX_SHIFT_C)
     return EffectiveModel(
