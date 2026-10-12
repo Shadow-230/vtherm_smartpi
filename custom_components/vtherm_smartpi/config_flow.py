@@ -24,6 +24,7 @@ from .const import (
     CONF_SMART_PI_KNEE_VALVE,
     CONF_SMART_PI_MAX_VALVE,
     CONF_SMART_PI_MIN_VALVE,
+    CONF_SMART_PI_DEPENDENCIES,
     CONF_SMART_PI_RELEASE_TAU_FACTOR,
     CONF_SMART_PI_USE_FF3,
     CONF_SMART_PI_USE_SETPOINT_FILTER,
@@ -31,8 +32,11 @@ from .const import (
     DEFAULT_OPTIONS,
     DOMAIN,
 )
+from .smartpi.dependencies import DependencyItem, dump_dependencies, parse_dependencies
 
 ERROR_INVALID_VALVE_CURVE = "invalid_valve_curve"
+ABORT_DEPENDENCIES_UNCHANGED = "dependencies_unchanged"
+FIELD_REMOVE_DEPENDENCIES = "remove"
 THERMOSTAT_TYPE_VALVE = "thermostat_over_valve"
 THERMOSTAT_TYPE_CLIMATE = "thermostat_over_climate"
 AUTO_REGULATION_VALVE = "auto_regulation_valve"
@@ -458,10 +462,29 @@ class SmartPIOptionsFlow(OptionsFlow):
             )
         return False
 
+    def _current_options(self) -> dict[str, Any]:
+        """Return the stored options merged over the defaults."""
+        options = dict(DEFAULT_OPTIONS)
+        options.update(self._config_entry.options or self._config_entry.data)
+        return options
+
     async def async_step_init(self, user_input: dict[str, Any] | None = None):
-        """Handle the options flow."""
-        defaults = dict(DEFAULT_OPTIONS)
-        defaults.update(self._config_entry.options or self._config_entry.data)
+        """Open the options: a menu for a thermostat entry, the settings form for the defaults."""
+        if self._config_entry.data.get(CONF_TARGET_VTHERM) is None:
+            return await self._async_settings_form("init", user_input)
+
+        menu_options = ["settings", "dependencies"]
+        if self._is_valve_target_entry():
+            menu_options.append("valve_curve")
+        return self.async_show_menu(step_id="init", menu_options=menu_options)
+
+    async def async_step_settings(self, user_input: dict[str, Any] | None = None):
+        """Edit the regulator settings of a thermostat entry."""
+        return await self._async_settings_form("settings", user_input)
+
+    async def _async_settings_form(self, step_id: str, user_input: dict[str, Any] | None):
+        """Show or save the regulator settings form."""
+        defaults = self._current_options()
         is_valve_target = self._is_valve_target_entry()
 
         if user_input is not None:
@@ -479,11 +502,49 @@ class SmartPIOptionsFlow(OptionsFlow):
             return self.async_create_entry(title="", data=data)
 
         return self.async_show_form(
-            step_id="init",
+            step_id=step_id,
             data_schema=build_main_options_schema(
                 defaults,
                 include_valve_linearization=is_valve_target,
             ),
+        )
+
+    def _dependency_label(self, item: DependencyItem) -> str:
+        """Return a readable label: the kind and the current entity id of the item."""
+        entity_id = er.async_resolve_entity_id(er.async_get(self.hass), item.entity)
+        return f"{item.kind}: {entity_id or item.entity}"
+
+    async def async_step_dependencies(self, user_input: dict[str, Any] | None = None):
+        """List the zone dependencies of the thermostat and remove the selected ones."""
+        options = self._current_options()
+        items = parse_dependencies(options.get(CONF_SMART_PI_DEPENDENCIES))
+
+        if user_input is not None:
+            removed = set(user_input.get(FIELD_REMOVE_DEPENDENCIES, []))
+            if not removed:
+                return self.async_abort(reason=ABORT_DEPENDENCIES_UNCHANGED)
+            data = dict(options)
+            data[CONF_SMART_PI_DEPENDENCIES] = dump_dependencies(
+                item for item in items if item.item_id not in removed
+            )
+            return self.async_create_entry(title="", data=data)
+
+        schema: dict[Any, Any] = {}
+        if items:
+            schema[vol.Optional(FIELD_REMOVE_DEPENDENCIES, default=[])] = selector.SelectSelector(
+                selector.SelectSelectorConfig(
+                    options=[
+                        selector.SelectOptionDict(value=item.item_id, label=self._dependency_label(item))
+                        for item in items
+                    ],
+                    multiple=True,
+                    mode=selector.SelectSelectorMode.LIST,
+                )
+            )
+        return self.async_show_form(
+            step_id="dependencies",
+            data_schema=vol.Schema(schema),
+            description_placeholders={"count": str(len(items))},
         )
 
     async def async_step_valve_curve(self, user_input: dict[str, Any] | None = None):

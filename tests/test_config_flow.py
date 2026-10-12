@@ -275,7 +275,14 @@ async def test_options_flow_shows_valve_linearization_from_dedicated_target_conf
 
     result = await hass.config_entries.options.async_init(plugin_entry.entry_id)
 
+    # A thermostat entry opens a menu; the regulator settings are one of its steps.
+    assert result["type"] == FlowResultType.MENU
+    assert result["menu_options"] == ["settings", "dependencies", "valve_curve"]
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"], {"next_step_id": "settings"}
+    )
+
     assert result["type"] == FlowResultType.FORM
-    assert result["step_id"] == "init"
+    assert result["step_id"] == "settings"
     schema_keys = _schema_keys(result["data_schema"])
     assert CONF_SMART_PI_ENABLE_VALVE_LINEARIZATION in schema_keys
