@@ -78,6 +78,38 @@
           "smart_pi_enable_valve_linearization": "Enable valve curve linearization"
         }
       },
+      "thermostat_menu": {
+        "title": "SmartPI thermostat options",
+        "menu_options": {
+          "settings": "Regulator settings",
+          "dependencies": "Zone dependencies",
+          "valve_curve": "Valve curve"
+        }
+      },
+      "settings": {
+        "title": "Regulator settings",
+        "data": {
+          "minimal_activation_delay": "Minimal activation delay",
+          "minimal_deactivation_delay": "Minimal deactivation delay",
+          "smart_pi_deadband": "Deadband",
+          "smart_pi_hysteresis_on": "Hysteresis on",
+          "smart_pi_hysteresis_off": "Hysteresis off",
+          "smart_pi_release_tau_factor": "Release tau factor",
+          "smart_pi_use_setpoint_filter": "Use setpoint filter",
+          "smart_pi_use_ff3": "Use FF3",
+          "smart_pi_deadband_allow_p": "Allow damped P near deadband edge",
+          "smart_pi_allow_pwm_cycle_force": "Allow PWM cycle restart on band transitions",
+          "smart_pi_debug": "Record full diagnostics (debug)",
+          "smart_pi_enable_valve_linearization": "Enable valve curve linearization"
+        }
+      },
+      "dependencies": {
+        "title": "Zone dependencies",
+        "description": "Neighbouring zones and second heat sources linked to this thermostat: {count} configured. Select the ones to remove.",
+        "data": {
+          "remove": "Remove"
+        }
+      },
       "valve_curve": {
         "title": "Valve curve",
         "data": {
@@ -90,6 +122,9 @@
     },
     "error": {
       "invalid_valve_curve": "The valve curve must satisfy minimum opening < knee opening < maximum opening."
+    },
+    "abort": {
+      "dependencies_unchanged": "No dependency was selected, nothing changed."
     }
   },
   "services": {

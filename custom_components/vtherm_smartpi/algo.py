@@ -46,7 +46,7 @@ import time
 from dataclasses import replace
 from datetime import datetime
 from math import exp
-from typing import Any, Dict, Optional
+from typing import Any, Callable, Dict, Optional
 
 from .hvac_mode import (
     VThermHvacMode,
@@ -98,6 +98,8 @@ from .smartpi.setpoint import SmartPISetpointManager
 from .smartpi.guards import SmartPIGuards
 from .smartpi.controller import SmartPIController
 from .smartpi.learning_window import LearningWindowManager
+from .smartpi.dependencies import DependencyState
+from .smartpi.effective_model import EffectiveModel, KnownInputs, compose
 from .smartpi.deadband import DeadbandManager
 from .smartpi.calibration import CalibrationManager
 from .smartpi.gains import GainScheduler
@@ -386,6 +388,16 @@ class SmartPI:
         # --- AutoCalibTrigger (supervision) ---
         self.autocalib = AutoCalibTrigger(name)
 
+        # --- Known model inputs (zone dependencies) ---
+        # The handler registers a provider; without one the control law sees the
+        # learned model unchanged. The switch exists for differential tests.
+        self._known_inputs_provider: Callable[[], KnownInputs | None] | None = None
+        self._known_inputs_enabled: bool = True
+        self._known_inputs: KnownInputs | None = None
+        self._effective_model: EffectiveModel | None = None
+        self._learning_gate: str | None = None
+        self.dependency_state = DependencyState()
+
         # --- FFv2: trim bias + AB confidence ---
         self._ff_trim: FFTrim = FFTrim()
         self._fftrim_observer = CausalFFTrimObserver(cycle_min)
@@ -431,6 +443,7 @@ class SmartPI:
     def reset_learning(self) -> None:
         """Reset all learned parameters to defaults."""
         self.est.reset()
+        self.dependency_state.reset()
         self._session_learn_ok_count_base = self.est.learn_ok_count
         self._session_learn_skip_count_base = self.est.learn_skip_count
         if self.ctl:
@@ -821,6 +834,7 @@ class SmartPI:
         setpoint_changed: bool = False,
         hvac_mode: VThermHvacMode | None = None,
         target_temp: float | None = None,
+        known_rate: float = 0.0,
     ) -> None:
         """
         Feed learning data from the heartbeat tick.
@@ -835,6 +849,8 @@ class SmartPI:
             setpoint_changed: True if setpoint changed during this interval
             hvac_mode: Current HVAC mode.
             target_temp: Current target temperature.
+            known_rate: Rate (degC/min) added by known model inputs, removed from
+                the learning measurement.
         """
         now = time.monotonic()
 
@@ -864,6 +880,7 @@ class SmartPI:
             is_hysteresis=(self.phase == SmartPIPhase.HYSTERESIS),
             hvac_mode=hvac_mode,
             target_temp=target_temp,
+            known_rate=known_rate,
         )
 
     def stage_cycle_command(
@@ -1192,7 +1209,7 @@ class SmartPI:
         """Apply one complete causal window when enough evidence is available."""
         result = self._fftrim_observer.try_complete_window(
             a=self.est.a,
-            b=self.est.b,
+            b=self.control_b,
             deadtime_s=deadtime_s,
             deadtime_reliable=deadtime_reliable,
             current_trim=self._ff_trim.u_ff_trim,
@@ -1222,7 +1239,7 @@ class SmartPI:
         result = self._fftrim_observer.evaluate_periodic_window(
             window.samples,
             a=self.est.a,
-            b=self.est.b,
+            b=self.control_b,
             deadtime_s=window.deadtime_s,
             current_trim=self._ff_trim.u_ff_trim,
         )
@@ -1704,6 +1721,109 @@ class SmartPI:
     @property
     def b(self) -> float:
         return self.est.b
+
+    # ------------------------------
+    # Known model inputs
+    # ------------------------------
+
+    def set_known_inputs_provider(
+        self, provider: Callable[[], KnownInputs | None] | None
+    ) -> None:
+        """Register the callable that returns the known model inputs of each calculation."""
+        self._known_inputs_provider = provider
+
+    @property
+    def control_b(self) -> float:
+        """Loss coefficient used by the control law: b_eff while known inputs are active."""
+        model = self._effective_model
+        return model.b if model is not None and model.active else self.est.b
+
+    def _control_estimator(self):
+        """Estimator as seen by control components: the learned one, or a view with b_eff."""
+        model = self._effective_model
+        if model is None or not model.active:
+            return self.est
+        return _EffectiveEstimatorView(self.est, model.b)
+
+    def _control_tau_min(self, tau_info) -> float:
+        """Integral time base for the gains, shortened by the active heat exchanges.
+
+        The learned time constant 1/b gains the exchange conductances; a direct
+        heat input does not change the zone dynamics.
+        """
+        model = self._effective_model
+        if model is None or not model.active or not tau_info.reliable or tau_info.tau_min <= 0.0:
+            return tau_info.tau_min
+        conductance = model.exchange_conductance
+        if conductance <= 0.0:
+            return tau_info.tau_min
+        return 1.0 / (1.0 / tau_info.tau_min + conductance)
+
+    def _compose_effective_model(
+        self,
+        ext_current_temp: float | None,
+        now_monotonic: float,
+        hvac_mode: VThermHvacMode,
+    ) -> EffectiveModel:
+        """Single substitution point: fold the known inputs into (b_eff, T_ref).
+
+        Each edge of the learning gate discards the open learning window and the
+        dead-time observation in progress, and a change of the active inputs
+        invalidates the open FF trim windows, whose evidence assumed the
+        previous model. A failing provider leaves the learned model unchanged.
+        """
+        inputs = None
+        if self._known_inputs_enabled and self._known_inputs_provider is not None:
+            try:
+                inputs = self._known_inputs_provider()
+            except Exception:  # pylint: disable=broad-except
+                # Safety first: a dependency problem must never stop regulation.
+                _LOGGER.exception("%s - Reading the known model inputs failed", self._name)
+                inputs = None
+        previous = self._effective_model
+        model = compose(self.est.b, ext_current_temp, inputs)
+        self._known_inputs = inputs
+        self._effective_model = model
+
+        gate = inputs.learning_gate if inputs is not None else None
+        if (gate is None) != (self._learning_gate is None):
+            # Observations spanning a gate edge mix two regimes. Only learning is
+            # reset: the control law's dead-time episode markers stay untouched.
+            self.learn_win.reset()
+            self.dt_est.reset_observation(self._committed_on_percent)
+        self._learning_gate = gate
+
+        previous_signature = previous.signature if previous is not None else ()
+        if model.signature != previous_signature:
+            self._invalidate_fftrim_context(
+                "known_inputs_changed",
+                now_monotonic=now_monotonic,
+                hvac_mode=hvac_mode,
+            )
+        return model
+
+    @property
+    def learning_gate(self) -> str | None:
+        """Reason why the dependency layer pauses learning, or None."""
+        return self._learning_gate
+
+    def dependency_diagnostics(self) -> Dict[str, Any] | None:
+        """Model inputs of the configured dependencies, or None when there are none."""
+        inputs = self._known_inputs
+        if inputs is None or not inputs.status:
+            return None
+        model = self._effective_model
+        return {
+            "b_eff": round(model.b, 6) if model is not None else None,
+            "t_ref": (
+                round(model.ext_temp, 3)
+                if model is not None and model.ext_temp is not None
+                else None
+            ),
+            "inputs_active": bool(model is not None and model.active),
+            "learning_gate": self._learning_gate,
+            "items": [dict(status) for status in inputs.status],
+        }
 
     def _to_actuator_power(self, linear_power: float) -> float:
         """Convert internal linear demand to actuator command."""
@@ -2426,6 +2546,10 @@ class SmartPI:
             "ff_trim_delta": self._last_ff_trim_delta,
             "tint_filter_state": self.tint_filter.save_state(),
         }
+        # Present only when dependencies have learned something, so a thermostat
+        # without dependencies keeps exactly the previous persisted format.
+        if self.dependency_state:
+            state["dependencies"] = self.dependency_state.save_state()
         return state
 
     def load_state(self, state: dict) -> None:
@@ -2453,6 +2577,7 @@ class SmartPI:
         self.deadband_mgr.load_state(state.get("db_state", {}))
         self.calibration_mgr.load_state(state.get("cal_state", {}))
         self.gain_scheduler.load_state(state.get("gs_state", {}))
+        self.dependency_state.load_state(state.get("dependencies"))
         self.integral_guard.load_state(state.get("integral_guard_state", {}))
         self.integral_guard.reset()
         self.sp_mgr.clear_runtime_transients()
@@ -2770,7 +2895,7 @@ class SmartPI:
             near_band_above_deg=self.deadband_mgr.near_band_above_deg,
             cycle_min=self._cycle_min,
             a=self.est.a,
-            b=self.est.b,
+            b=self.control_b,
             deadtime_heat_s=self.dt_est.deadtime_heat_s,
             deadtime_cool_s=self.dt_est.deadtime_cool_s,
         )
@@ -2851,7 +2976,7 @@ class SmartPI:
                 current_temp=current_temp,
                 hvac_mode=hvac_mode,
                 a=self.est.a,
-                b=self.est.b,
+                b=self.control_b,
                 ext_current_temp=ext_current_temp,
                 u_ref=self._committed_on_percent,
                 deadtime_cool_s=self.dt_est.deadtime_cool_s,
@@ -2949,7 +3074,7 @@ class SmartPI:
             hvac_mode=hvac_mode,
             tau_reliable=self._tau_reliable,
             dt_est=self.dt_est,
-            estimator=self.est,
+            estimator=self._control_estimator(),
             current_temp=current_temp,
             ext_temp=ext_current_temp,
             cycle_min=self.cycle_min,
@@ -2991,7 +3116,7 @@ class SmartPI:
         tau_info = self.est.tau_reliability()
         self.gain_scheduler.calculate(
             tau_reliable=self._tau_reliable,
-            tau_min=tau_info.tau_min,
+            tau_min=self._control_tau_min(tau_info),
             estimator=self.est,
             dt_est=self.dt_est,
             in_near_band=self.deadband_mgr.in_near_band,
@@ -3033,7 +3158,7 @@ class SmartPI:
             else self.est.a > 1e-6
         )
         if model_ready and self._tau_reliable and model_sign_valid:
-            k_ff = clamp(self.est.b / self.est.a, -3.0, 3.0)
+            k_ff = clamp(self.control_b / self.est.a, -3.0, 3.0)
         else:
             k_ff = 0.0
         learn_scale = clamp(self.est.learn_ok_count / float(self.ff_warmup_ok_count), 0.0, 1.0)
@@ -3269,11 +3394,17 @@ class SmartPI:
 
         remaining_cycle_min = self._remaining_cycle_min(now, cycle_boundary)
 
+        # --- 2b. Known model inputs ---
+        # Control uses (b_eff, T_ref); learning, governance and safety keep the raw
+        # outdoor temperature and the learned b.
+        effective_model = self._compose_effective_model(ext_current_temp, now, hvac_mode)
+        control_ext_temp = effective_model.ext_temp
+
         # --- 3. Setpoint Management ---
         target_temp_filt, setpoint_changed, error_i, error_p, old_target_temp = self._manage_setpoint(
             target_temp,
             current_temp,
-            ext_current_temp,
+            control_ext_temp,
             hvac_mode,
             dt_min,
             now,
@@ -3319,6 +3450,7 @@ class SmartPI:
         # --- 4. Learning & Calibration ---
         if (
             self._learning_enabled
+            and self._learning_gate is None
             and self.phase != SmartPIPhase.HYSTERESIS
             and not self.calibration_mgr.is_calibrating
         ):
@@ -3337,8 +3469,8 @@ class SmartPI:
                 hvac_mode=hvac_mode,
             )
 
-        # Heartbeat learning update
-        if dt_min > 0:
+        # Heartbeat learning update (paused while the dependency layer gates learning)
+        if dt_min > 0 and self._learning_gate is None:
             self.update_learning(
                 dt_min=dt_min,
                 current_temp=t_int_clean,
@@ -3347,6 +3479,7 @@ class SmartPI:
                 setpoint_changed=setpoint_changed,
                 hvac_mode=hvac_mode,
                 target_temp=target_temp,
+                known_rate=effective_model.known_rate(t_int_clean),
             )
 
         # Calibration state machine
@@ -3378,7 +3511,7 @@ class SmartPI:
             # Refresh tau_reliable for twin diagnostics
             self._tau_reliable = self.est.tau_reliability().reliable
             # Update Twin Diagnostics even in calibration
-            self._update_twin_diagnostics(current_temp, ext_current_temp, target_temp, hvac_mode, dt_s=dt_min * 60.0)
+            self._update_twin_diagnostics(current_temp, control_ext_temp, target_temp, hvac_mode, dt_s=dt_min * 60.0)
             return
 
         # --- 5. Hysteresis Phase ---
@@ -3396,7 +3529,7 @@ class SmartPI:
             # so commit the bang-bang output now for deadtime tracking.
             self._commit_current_linear_output()
             self._update_deadtime_episode_status(self._committed_on_percent, hvac_mode, now)
-            if self._learning_enabled:
+            if self._learning_enabled and self._learning_gate is None:
                 self.dt_est.update(
                     now=now,
                     tin=t_int_lp,
@@ -3408,7 +3541,7 @@ class SmartPI:
                 )
 
             # Update Twin Diagnostics even in hysteresis
-            self._update_twin_diagnostics(current_temp, ext_current_temp, target_temp, hvac_mode, dt_s=dt_min * 60.0)
+            self._update_twin_diagnostics(current_temp, control_ext_temp, target_temp, hvac_mode, dt_s=dt_min * 60.0)
             self._last_current_temp = current_temp
             self._last_ext_temp = ext_current_temp
             return
@@ -3418,7 +3551,7 @@ class SmartPI:
             error_i,
             hvac_mode,
             current_temp,
-            ext_current_temp,
+            control_ext_temp,
             error_p,
             dt_min,
             include_band_state=True,
@@ -3481,7 +3614,7 @@ class SmartPI:
         u_ff, gov_hold = self._apply_gains_and_ff(
             gov_decision_g,
             target_temp,
-            ext_current_temp,
+            control_ext_temp,
             hvac_mode,
             error_i,
             current_temp,
@@ -3624,13 +3757,13 @@ class SmartPI:
             measurement_id=temperature_measure_id,
             current_temp=current_temp,
             target_temp=target_temp,
-            ext_current_temp=ext_current_temp,
+            ext_current_temp=control_ext_temp,
             hvac_mode=hvac_mode,
             setpoint_changed=setpoint_changed,
         )
 
         # --- 15. Thermal Twin & ETA (diagnostics-only) ---
-        self._update_twin_diagnostics(current_temp, ext_current_temp, target_temp, hvac_mode, dt_s=dt_min * 60.0)
+        self._update_twin_diagnostics(current_temp, control_ext_temp, target_temp, hvac_mode, dt_s=dt_min * 60.0)
 
     def _update_twin_diagnostics(
         self,
@@ -3649,7 +3782,7 @@ class SmartPI:
             on_percent=self._on_percent,
             tau_reliable=self._tau_reliable,
             a=self.est.a,
-            b=self.est.b,
+            b=self.control_b,
             mode=mode,
             deadtime_heat_s=self.dt_est.deadtime_heat_s,
             deadtime_cool_s=self.dt_est.deadtime_cool_s,
@@ -3700,3 +3833,14 @@ class SmartPI:
         if not self._debug_mode:
             return None
         return build_debug_diagnostics(self)
+
+
+class _EffectiveEstimatorView:
+    """Read-only view of the estimator with the effective loss coefficient."""
+
+    def __init__(self, estimator: ABEstimator, b_eff: float) -> None:
+        self._estimator = estimator
+        self.b = b_eff
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._estimator, name)

@@ -54,6 +54,8 @@ class LearningWindowManager:
         self._T_int_start: float = 0.0
         self._T_ext_start: float = 0.0
         self._u_int: float = 0.0
+        # Integral of the known-input rate (degC/min * s) removed from the measured slope.
+        self._known_int: float = 0.0
         self._t_int_s: float = 0.0
         self._u_first: float | None = None
 
@@ -132,6 +134,7 @@ class LearningWindowManager:
         self._active = False
         self._start_ts = None
         self._u_int = 0.0
+        self._known_int = 0.0
         self._t_int_s = 0.0
         self._u_first = None
         self._u_count = 0
@@ -139,6 +142,12 @@ class LearningWindowManager:
         self._u_m2 = 0.0
         self._last_extend_method = ""
         self._sliding_elapsed_s = 0.0
+
+    def _without_known_inputs(self, slope: float) -> float:
+        """Remove the window average of the known-input rate from a measured slope."""
+        if self._known_int == 0.0 or self._t_int_s <= 0.0:
+            return slope
+        return slope - self._known_int / self._t_int_s
 
     def reset_all(self) -> None:
         """Reset all learning window state including timestamps."""
@@ -251,6 +260,7 @@ class LearningWindowManager:
         is_hysteresis: bool = False,
         hvac_mode: "VThermHvacMode | None" = None,
         target_temp: float | None = None,
+        known_rate: float = 0.0,
     ) -> tuple[int, int]:
         """
         Update learning window and submit to estimator if conditions met.
@@ -275,6 +285,8 @@ class LearningWindowManager:
             deadtime_skip_count_b: Counter for cooling deadtime skips (returned).
             hvac_mode: Current HVAC mode.
             target_temp: Current target temperature.
+            known_rate: Rate (degC/min) the known model inputs add during this
+                interval; its window average is removed from the measured slope.
             
         Returns:
             Tuple of (deadtime_skip_count_a, deadtime_skip_count_b) for tracking.
@@ -453,6 +465,7 @@ class LearningWindowManager:
             self._T_int_start = current_temp
             self._T_ext_start = ext_temp
             self._u_int = 0.0
+            self._known_int = 0.0
             self._t_int_s = 0.0
             self._u_first = u_active
             self._sliding_elapsed_s = 0.0
@@ -500,6 +513,7 @@ class LearningWindowManager:
             # Accumulate current sample into power stats and energy integral
             self._update_u_stats(u_active)
             self._u_int += clamp(u_active, 0.0, 1.0) * dt_s
+            self._known_int += known_rate * dt_s
             self._t_int_s += dt_s
 
             # Current Window Stats
@@ -523,8 +537,10 @@ class LearningWindowManager:
 
             # --- Sliding start: discard data while slope direction is wrong ---
             # Work in an oriented temperature space where positive means that
-            # active HVAC power moves the room in the requested direction.
-            oriented_dT = -dT if hvac_mode == VThermHvacMode_COOL else dT
+            # active HVAC power moves the room in the requested direction. The
+            # change caused by known model inputs is removed first.
+            response_dT = dT - self._known_int / 60.0
+            oriented_dT = -response_dT if hvac_mode == VThermHvacMode_COOL else response_dT
 
             # B (OFF): temperature still follows the previous active response.
             # A (ON): temperature still follows the passive response after start.
@@ -543,6 +559,7 @@ class LearningWindowManager:
                     self._T_ext_start = ext_temp
                     self._t_int_s = 0.0
                     self._u_int = 0.0
+                    self._known_int = 0.0
                     label = (
                         f"B flywheel ({dT:+.2f}°C)"
                         if b_wrong_dir
@@ -661,7 +678,7 @@ class LearningWindowManager:
                 return deadtime_skip_count_a, deadtime_skip_count_b
 
             estimator.learn(
-                dT_int_per_min=final_slope,
+                dT_int_per_min=self._without_known_inputs(final_slope),
                 u=0.0,
                 t_int=self._T_int_start,
                 t_ext=self._T_ext_start,
@@ -692,7 +709,7 @@ class LearningWindowManager:
                 return deadtime_skip_count_a, deadtime_skip_count_b
 
             estimator.learn(
-                dT_int_per_min=final_slope,
+                dT_int_per_min=self._without_known_inputs(final_slope),
                 u=u_eff,
                 t_int=self._T_int_start,
                 t_ext=self._T_ext_start,

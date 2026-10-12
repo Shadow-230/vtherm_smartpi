@@ -25,6 +25,7 @@ CONF_SMART_PI_MIN_VALVE = "smart_pi_min_valve"
 CONF_SMART_PI_KNEE_DEMAND = "smart_pi_knee_demand"
 CONF_SMART_PI_KNEE_VALVE = "smart_pi_knee_valve"
 CONF_SMART_PI_MAX_VALVE = "smart_pi_max_valve"
+CONF_SMART_PI_DEPENDENCIES = "smart_pi_dependencies"
 
 DEFAULT_MINIMAL_ACTIVATION_DELAY = 0
 DEFAULT_MINIMAL_DEACTIVATION_DELAY = 0

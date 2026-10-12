@@ -432,3 +432,10 @@ TINT_LP_ALPHA = 0.2              # EMA smoothing factor (0..1)
 TINT_SIGMA_WINDOW = 30           # Rolling window size for sigma estimation
 TINT_SIGMA_MIN = 0.02            # Floor on sigma (degC)
 TINT_ADAPTIVE_K = 3.0            # Threshold multiplier: publish when |delta| > k * sigma
+
+# --- Known model inputs (zone dependencies) ---
+# Smallest effective loss coefficient (1/min) for which known inputs are composed.
+KNOWN_INPUTS_B_EFF_MIN = 1e-5
+# A known direct heat input shifts the reference temperature by q / b_eff;
+# the shift is bounded so that a weak loss estimate cannot amplify it unbounded.
+KNOWN_HEAT_MAX_SHIFT_C = 15.0

@@ -435,7 +435,15 @@ def _build_analysis_diagnostics(diag: Dict[str, Any]) -> Dict[str, Any]:
 def build_published_diagnostics(algo: SmartPI) -> Dict[str, Any]:
     """Return the canonical SmartPI live diagnostics."""
     diag = _build_full_diagnostics(algo)
+    published = _build_published_core(algo, diag)
+    dependencies = algo.dependency_diagnostics()
+    if dependencies is not None:
+        published["dependencies"] = dependencies
+    return published
 
+
+def _build_published_core(algo: SmartPI, diag: Dict[str, Any]) -> Dict[str, Any]:
+    """Return the published diagnostics common to every thermostat."""
     return {
         "control": {
             "phase": diag["phase"],
