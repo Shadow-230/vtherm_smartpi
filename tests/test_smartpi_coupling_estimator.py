@@ -278,3 +278,15 @@ def test_saved_rows_that_cannot_be_read_are_skipped() -> None:
 
     assert estimator.samples("hall") == 1
     assert estimator.save_shared()["joint_b"] == [0.001]
+
+
+def test_a_switched_cycle_on_water_is_on_longer_at_its_water_factor() -> None:
+    """The cycle's energy stays its mean power; on water it is spread over the real on-time."""
+    from custom_components.vtherm_smartpi.smartpi.coupling_estimator import CouplingEstimator
+
+    estimator = CouplingEstimator()
+    estimator.record_realized_power(0.0, 600.0, 0.2, switched=True, level=0.4)
+
+    assert estimator._delayed_power(0.0, 600.0) == pytest.approx(0.2)
+    assert estimator._delayed_power(0.0, 300.0) == pytest.approx(0.4)
+    assert estimator._delayed_power(300.0, 600.0) == pytest.approx(0.0)

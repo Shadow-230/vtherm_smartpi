@@ -5,16 +5,21 @@ from __future__ import annotations
 import pytest
 
 from custom_components.vtherm_smartpi.smartpi.dependencies import (
+    ERROR_CUSTOM_EMITTER_WITHOUT_RESPONSE,
     ERROR_DOOR_MODE_WITHOUT_SENSOR,
     ERROR_DUPLICATE_ID,
     ERROR_DUPLICATE_NEIGHBOUR,
     ERROR_MISSING_ENTITY,
     ERROR_MISSING_ID,
+    ERROR_INVALID_SPLIT_PARAMETER,
     ERROR_SECOND_SOURCE,
     ERROR_SELF_REFERENCE,
     ERROR_SHARED_DOOR_SENSOR,
+    ERROR_SOURCE_IS_NEIGHBOUR,
+    ERROR_UNKNOWN_EMITTER,
     ERROR_UNKNOWN_KIND,
     ERROR_UNKNOWN_MODE,
+    ERROR_UNKNOWN_SPLIT_RULE,
     ERROR_UNKNOWN_WINDOW_ACTION,
     KIND_NEIGHBOUR,
     KIND_SOURCE,
@@ -36,6 +41,20 @@ def _neighbour(item_id="n1", entity="reg-kitchen", mode=MODE_ALWAYS, sensors=(),
         "door_sensors": list(sensors),
         "neighbour_window_action": action,
     }
+
+
+def _source(item_id="s1", entity="reg-floor", **fields):
+    values = {
+        "id": item_id,
+        "kind": KIND_SOURCE,
+        "entity": entity,
+        "split_rule": "lead_band",
+        "lead_band_percent": 20,
+        "lead_emitter": "radiator",
+        "source_emitter": "floor_water",
+    }
+    values.update(fields)
+    return values
 
 
 def _codes(raw, own_entity="reg-own"):
@@ -83,7 +102,7 @@ def test_valid_neighbours_and_one_source() -> None:
     raw = [
         _neighbour("n1", "reg-kitchen", MODE_DOOR, ("reg-door-1",)),
         _neighbour("n2", "reg-hall", MODE_ALWAYS),
-        {"id": "s1", "kind": KIND_SOURCE, "entity": "reg-floor"},
+        _source(),
     ]
     assert _codes(raw) == []
 
@@ -105,9 +124,15 @@ def test_valid_neighbours_and_one_source() -> None:
             [(ERROR_SHARED_DOOR_SENSOR, "n2")],
         ),
         (
-            [{"id": "s1", "kind": KIND_SOURCE, "entity": "reg-a"}, {"id": "s2", "kind": KIND_SOURCE, "entity": "reg-b"}],
+            [_source("s1", "reg-a"), _source("s2", "reg-b")],
             [(ERROR_SECOND_SOURCE, "s2")],
         ),
+        ([_source(entity="reg-a"), _neighbour("n1", "reg-a")], [(ERROR_SOURCE_IS_NEIGHBOUR, "n1")]),
+        ([_source(split_rule="half_half")], [(ERROR_UNKNOWN_SPLIT_RULE, "s1")]),
+        ([_source(split_ratio=0)], [(ERROR_INVALID_SPLIT_PARAMETER, "s1")]),
+        ([_source(source_alone_percent=120)], [(ERROR_INVALID_SPLIT_PARAMETER, "s1")]),
+        ([_source(source_emitter="stove")], [(ERROR_UNKNOWN_EMITTER, "s1")]),
+        ([_source(lead_emitter="custom", lead_lag_min=5)], [(ERROR_CUSTOM_EMITTER_WITHOUT_RESPONSE, "s1")]),
     ],
     ids=[
         "missing_id",
@@ -121,6 +146,12 @@ def test_valid_neighbours_and_one_source() -> None:
         "unknown_window_action",
         "shared_door_sensor",
         "second_source",
+        "source_is_neighbour",
+        "unknown_split_rule",
+        "invalid_ratio",
+        "invalid_alone",
+        "unknown_emitter",
+        "custom_emitter_without_response",
     ],
 )
 def test_validation_reports_structural_problems(raw, expected) -> None:

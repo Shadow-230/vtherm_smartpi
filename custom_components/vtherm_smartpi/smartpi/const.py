@@ -438,7 +438,9 @@ TINT_ADAPTIVE_K = 3.0            # Threshold multiplier: publish when |delta| > 
 KNOWN_INPUTS_B_EFF_MIN = 1e-5
 # A known direct heat input shifts the reference temperature by q / b_eff;
 # the shift is bounded so that a weak loss estimate cannot amplify it unbounded.
-KNOWN_HEAT_MAX_SHIFT_C = 15.0
+# The bound must exceed the largest setpoint-to-outdoor difference: below it the
+# feed-forward counts less known heat than there is (b cancels out of it).
+KNOWN_HEAT_MAX_SHIFT_C = 40.0
 
 # --- Neighbour coupling (zone dependencies) ---
 # Smallest zone-to-neighbour temperature difference that carries information on k.
@@ -524,3 +526,90 @@ WATER_FACTOR_MAX = 1.0
 # No reading at all (or an unknown reason) for this long after data were seen counts
 # as a lasting gap: Smart Boiler removed, or the thermostat no longer one of its zones.
 WATER_NO_DATA_LASTING_S = 24 * 3600.0
+
+# --- Second heat source: its heat as a known input of the lead ---
+# x_f below this: the source's heat counts as absent (learning is not gated).
+SOURCE_X_OFF = 0.05
+# A window teaches a_f only when the source's weighted x_f reaches this.
+SOURCE_X_MIN = 0.2
+# Largest credible a_f (degC/min at full power).
+SOURCE_A_F_MAX = 0.5
+# A joint fit separates a_f only when x_f varies at least this much (standard deviation).
+SOURCE_X_MIN_STD = 0.1
+# A newly published coefficient enters the control law over this time, so that
+# the controller's integral, which had absorbed its effect, follows smoothly.
+KNOWN_INPUT_FADE_S = 60 * 60.0
+# A lead command older than this is stale: the source applies 0.
+SOURCE_COMMAND_MAX_AGE_S = 15 * 60.0
+# Horizon points of the source's predicted heat (minutes).
+SOURCE_TRAJECTORY_MIN = (15.0, 30.0, 60.0, 120.0)
+# While SmartPI learns, the source works too, in blocks alternating between
+# SOURCE_LEARN_HIGH and SOURCE_LEARN_LOW, each lasting twice the source's
+# response time and at least SOURCE_LEARN_BLOCK_MIN_S, so that the zone fit can
+# tell both sources apart. A zone colder than its setpoint by SOURCE_LEARN_COLD_C
+# gets the source at full power; one warmer by SOURCE_LEARN_WARM_C gets none.
+SOURCE_LEARN_HIGH = 1.0
+SOURCE_LEARN_LOW = 0.0
+SOURCE_LEARN_BLOCK_MIN_S = 2 * 3600.0
+SOURCE_LEARN_COLD_C = 0.5
+SOURCE_LEARN_WARM_C = 0.3
+# Joint fit of the zone (zone_fit.py): least squares of a, b, a_f and the
+# neighbours' k on the measurement windows, for each candidate delay of the lead
+# and each candidate time scale of the source. Published from
+# ZONE_FIT_MIN_WINDOWS windows when the relative standard errors of a, b and a_f
+# are within ZONE_FIT_MAX_REL_SE; the sums fade over ZONE_FIT_MEMORY_WINDOWS; a
+# new best candidate replaces the one in use when its squared error is
+# ZONE_FIT_SWITCH_GAIN lower.
+ZONE_FIT_MIN_WINDOWS = 36.0
+ZONE_FIT_MEMORY_WINDOWS = 288.0
+ZONE_FIT_MAX_REL_SE = 0.2
+ZONE_FIT_SWITCH_GAIN = 0.2
+# Candidate delays of the lead (minutes): SmartPI's own dead time is too long
+# with slow rises and 0.1 degC sensors, which kept the fit from publishing.
+ZONE_FIT_LEAD_DELAYS_MIN = (0.0, 3.0, 6.0, 10.0, 15.0, 20.0, 30.0, 45.0, 60.0)
+# Candidate time scales of the source: its emitter's delay and lag stretched
+# together by these factors (separately they cannot be told apart in 30-min
+# windows); a source without delay and lag gets lags of SOURCE_FAST_TAU_MIN.
+SOURCE_SCALE_MULTIPLIERS = (0.4, 0.55, 0.7, 0.85, 1.0, 1.2, 1.4, 1.7, 2.0, 2.5)
+SOURCE_FAST_TAU_MIN = (0.0, 1.0, 2.0, 5.0, 10.0, 15.0, 20.0, 30.0, 45.0, 60.0)
+# SmartPI waits for the fit to learn while the source heats; if the fit is not
+# published this long after learning started, SmartPI learns on its own.
+ZONE_FIT_TIMEOUT_S = 48 * 3600.0
+# A gap between calculations this long breaks a window of the fit and does not
+# count on the learning clock (Home Assistant stopped, a restart).
+ZONE_FIT_MAX_GAP_S = 15 * 60.0
+# While SmartPI holds the zone fit's a and b, its count of learned a samples is
+# at least this: the near band then follows the model, as after SmartPI's own learning.
+ZONE_FIT_MODEL_SAMPLES_A = 10
+# Predictive brake: the zone is predicted over the source's response time (at
+# least SOURCE_PREDICTION_MIN_S, in steps of SOURCE_PREDICTION_STEP_S) with the
+# fitted model; the source's command is capped at the largest that keeps the
+# predicted zone at its setpoint (SPLIT_PREDICTED_SHARE of the predicted error
+# corrected), found in SOURCE_BRAKE_STEPS halvings. A source that moves the
+# predicted zone less than SOURCE_SENSITIVITY_MIN_C is not braked; the same
+# margin is the brake's tolerance.
+SOURCE_PREDICTION_STEP_S = 60.0
+SOURCE_PREDICTION_MIN_S = 30 * 60.0
+SOURCE_SENSITIVITY_MIN_C = 0.01
+SPLIT_PREDICTED_SHARE = 1.0
+SOURCE_BRAKE_STEPS = 8
+# The allocation loop follows the lead's steady demand (feed-forward plus
+# integral), not its answer to the current error: a setpoint change does not
+# move the source. When the lead is stuck at a limit, the loop gets the end of
+# its demand range instead: at 0 % with the zone warmer than the setpoint by
+# SPLIT_LIMIT_ERROR_C (too much heat, even while SmartPI cuts its output), or at
+# 100 % with the zone that much colder for longer than the source takes to
+# settle (the source as a reserve).
+SPLIT_LIMIT_ERROR_C = 0.2
+SPLIT_LEAD_STOPPED = 0.01
+SPLIT_LEAD_FULL = 0.99
+# The source does not move up while the zone is warmer than its setpoint by
+# more than this, nor down while it is that much colder: inside SmartPI's
+# deadband the lead's demand stops reacting, so the zone's error decides.
+SPLIT_HOLD_ERROR_C = 0.05
+# Besides the allocation, the source answers the zone's error in proportion
+# (command per degC, divided by its power relative to the lead's): two devices
+# then correct a lasting error together, as two independent controllers would,
+# while the rule still sets the split once the error is gone. Chosen on a heated
+# floor and on a second radiator with a 0.1 degC sensor (2 holds both best).
+SPLIT_ERROR_GAIN = 2.0

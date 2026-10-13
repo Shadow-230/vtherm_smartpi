@@ -11,7 +11,14 @@ A valve thermostat retains integer-percent commands like VTherm's
 A zone may have a second thermostat (``SourceSpec``), for example a heated
 floor: it has its own actuator, cycle scheduler, sensor and SmartPI handler,
 shares Home Assistant with the zone thermostat, and heats the zone through a
-transport delay and a first-order lag.
+transport delay and a first-order lag. Without ``split`` it regulates the zone
+on its own, as two independent SmartPI do today; with ``split`` the zone
+thermostat names it as its second source and drives it.
+
+Several zones can share one world (``SimWorld``: clock, events, thermal network
+and Home Assistant) and run together (``CoupledSimulation``); a zone reads the
+other through its thermostat (``SimZoneNeighbour``), and the test links their
+nodes, always or by a door's schedule.
 """
 
 from __future__ import annotations
@@ -29,9 +36,11 @@ from custom_components.vtherm_smartpi.const import (
 from custom_components.vtherm_smartpi.handler import SmartPIHandler
 from custom_components.vtherm_smartpi.smartpi.dependencies import (
     KIND_NEIGHBOUR,
+    KIND_SOURCE,
     MODE_DOOR,
     DependencyItem,
 )
+from custom_components.vtherm_smartpi.smartpi.source_settings import SourceSettings
 from custom_components.vtherm_smartpi.smartpi.dependency_inputs import (
     DependencyReadings,
     NeighbourObservation,
@@ -44,7 +53,7 @@ from custom_components.vtherm_smartpi.hvac_mode import (
     VThermHvacMode_OFF,
 )
 
-from fakes.fake_thermostat_runtime import FakeThermostatRuntime
+from fakes.fake_thermostat_runtime import FakeHass, FakeThermostatRuntime
 
 from .boiler import SimBoiler, SimSmartBoiler
 from .clock import EventQueue, VirtualClock
@@ -122,6 +131,58 @@ class SimNeighbour:
         return NeighbourObservation(item, reading, door_open=_in_intervals(t_s, self.doors_open_h))
 
 
+@dataclass
+class SimZoneNeighbour:
+    """Another simulated zone, read through its zone thermostat as the handler reads a
+    neighbour thermostat. The heat exchange goes through the shared thermal network."""
+
+    key: str
+    conductance: float
+    mode: str = "always"
+    doors_open_h: tuple[tuple[float, float], ...] = ()
+    zone: Simulation | None = field(default=None, compare=False, repr=False)
+
+    def observation(self, t_s: float) -> NeighbourObservation:
+        item = DependencyItem(
+            item_id=self.key,
+            kind=KIND_NEIGHBOUR,
+            entity=f"reg-{self.key}",
+            mode=self.mode,
+            door_sensors=(f"reg-door-{self.key}",) if self.mode == MODE_DOOR else (),
+        )
+        temperature = self.zone.thermostat.current_temperature if self.zone is not None else None
+        reading = NeighbourReading(
+            item_id=self.key,
+            entity_id=f"climate.{self.key}",
+            temperature=temperature,
+            available=temperature is not None,
+            is_thermostat=True,
+        )
+        return NeighbourObservation(item, reading, door_open=_in_intervals(t_s, self.doors_open_h))
+
+
+@dataclass
+class SimWorld:
+    """Clock, events, thermal network and Home Assistant shared by coupled zones."""
+
+    clock: VirtualClock
+    queue: EventQueue
+    network: ThermalNetwork
+    hass: FakeHass
+
+    @classmethod
+    def create(cls, monkeypatch) -> SimWorld:
+        clock = VirtualClock()
+        clock.install(monkeypatch)
+        queue = EventQueue(clock)
+        monkeypatch.setattr(
+            handler_module,
+            "async_track_time_interval",
+            lambda _hass, action, interval: queue.track_interval(interval.total_seconds(), action),
+        )
+        return cls(clock, queue, ThermalNetwork(), FakeHass())
+
+
 def FixedNeighbour(key: str, temperature_c: float, conductance: float) -> SimNeighbour:  # noqa: N802
     """Neighbour at a constant temperature, always connected."""
     return SimNeighbour(key=key, temperature_c=temperature_c, conductance=conductance)
@@ -147,6 +208,14 @@ class SourceSpec:
     # Setpoint when the second thermostat regulates on its own (None: the zone's).
     setpoint_c: float | None = None
     options: dict = field(default_factory=dict)
+    # Source item fields (rule, parameter, emitters) when the zone thermostat
+    # drives this one as its second source; None: it regulates on its own.
+    split: dict | None = None
+    # 2: the emitter warms through two lags of tau_min / 2 in series.
+    stages: int = 1
+    # Water heating of this emitter, as ZoneSpec's (Smart Boiler's data follow ZoneSpec.smart_boiler).
+    boiler: SimBoiler | None = None
+    emitter: str = "floor_water"
 
 
 @dataclass
@@ -322,42 +391,58 @@ class Simulation:
         weather: Weather | None = None,
         known_inputs: Callable[[Simulation], KnownInputs | None] | None = None,
         dependency_layer: bool = False,
+        world: SimWorld | None = None,
+        node: str = ZONE_NODE,
+        suffix: str = "",
     ) -> None:
         self.zone = zone or ZoneSpec()
         self.weather = weather or Weather()
-        self.clock = VirtualClock()
-        self.clock.install(monkeypatch)
-        self.queue = EventQueue(self.clock)
-        monkeypatch.setattr(
-            handler_module,
-            "async_track_time_interval",
-            lambda _hass, action, interval: self.queue.track_interval(interval.total_seconds(), action),
-        )
+        self.world = world
+        self.node = node
+        self.suffix = suffix
+        if world is None:
+            self.clock = VirtualClock()
+            self.clock.install(monkeypatch)
+            self.queue = EventQueue(self.clock)
+            monkeypatch.setattr(
+                handler_module,
+                "async_track_time_interval",
+                lambda _hass, action, interval: self.queue.track_interval(interval.total_seconds(), action),
+            )
+            self.network = ThermalNetwork()
+        else:
+            self.clock, self.queue, self.network = world.clock, world.queue, world.network
 
         self.actuator = SimActuator(self.clock, valve=self.zone.valve)
-        self.network = ThermalNetwork()
-        self.network.add_node(ZONE_NODE, self.zone.initial_c)
-        self.network.link_outdoor(ZONE_NODE, self.zone.b)
+        self.network.add_node(node, self.zone.initial_c)
+        self.network.link_outdoor(node, self.zone.b)
         self.network.add_heater(
-            ZONE_NODE,
+            node,
             self.zone.a,
             DelayedPower(self.actuator.history, self.zone.deadtime_min * 60.0),
             self.zone.boiler.emitter_factor(self.zone.emitter) if self.zone.boiler is not None else None,
         )
         for neighbour in self.zone.neighbours:
-            self.network.link_boundary(
-                ZONE_NODE, neighbour.conductance, neighbour.temperature, neighbour.schedule()
-            )
+            if isinstance(neighbour, SimNeighbour):
+                self.network.link_boundary(
+                    node, neighbour.conductance, neighbour.temperature, neighbour.schedule()
+                )
 
-        self.thermostat = SimThermostat(self.zone, self.clock, self.actuator)
-        if self.zone.boiler is not None and self.zone.boiler.on_demand:
-            # The boiler fires while the zone called for heat in the last 20 minutes.
-            history = self.actuator.history
-            self.zone.boiler.demand = lambda t_s: history.on_seconds(t_s - 1200.0, t_s) > 0.0
+        self.thermostat = SimThermostat(
+            self.zone, self.clock, self.actuator, unique_id=f"sim-zone{suffix}", entity_id=f"climate.sim_zone{suffix}"
+        )
+        if world is not None:
+            self.thermostat.hass = world.hass
+        _boiler_on_demand(self.zone.boiler, self.actuator)
         self.smart_boiler: SimSmartBoiler | None = None
-        if self.zone.smart_boiler and self.zone.boiler is not None:
-            self.smart_boiler = SimSmartBoiler(self.clock, self.weather)
-            self.smart_boiler.zones[self.thermostat.entity_id] = self.zone.boiler
+        if self.zone.smart_boiler and (
+            self.zone.boiler is not None or (self.zone.source is not None and self.zone.source.boiler is not None)
+        ):
+            # Zones of one world share Home Assistant, and so Smart Boiler.
+            existing = self.thermostat.hass.data.get("vtherm_smart_boiler_api")
+            self.smart_boiler = existing if isinstance(existing, SimSmartBoiler) else SimSmartBoiler(self.clock, self.weather)
+            if self.zone.boiler is not None:
+                self.smart_boiler.zones[self.thermostat.entity_id] = self.zone.boiler
             self.thermostat.hass.data["vtherm_smart_boiler_api"] = self.smart_boiler
         self.scheduler, self.handler = self._attach_handler(self.thermostat, self.actuator, self.zone)
         if known_inputs is not None:
@@ -373,6 +458,8 @@ class Simulation:
         self.source_indoor_sensor: QuantizedSensor | None = None
         if self.zone.source is not None:
             self._add_source(self.zone.source)
+            if self.zone.source.split is not None:
+                self._drive_source(monkeypatch, self.zone.source.split)
 
         self.indoor_sensor = QuantizedSensor(self.zone.sensor_resolution_c)
         self.outdoor_sensor = QuantizedSensor(0.1)
@@ -406,11 +493,14 @@ class Simulation:
         """Second thermostat of the zone, heating through its delay and lag."""
         self.source_actuator = SimActuator(self.clock, valve=source.valve)
         self.source_heater = self.network.add_lagged_heater(
-            ZONE_NODE,
+            self.node,
             source.a_f,
             DelayedPower(self.source_actuator.history, source.deadtime_min * 60.0),
             source.tau_min,
+            source.boiler.emitter_factor(source.emitter) if source.boiler is not None else None,
+            stages=source.stages,
         )
+        _boiler_on_demand(source.boiler, self.source_actuator)
         spec = replace(
             self.zone,
             name="Sim source",
@@ -427,14 +517,35 @@ class Simulation:
             source=None,
         )
         self.source_thermostat = SimThermostat(
-            spec, self.clock, self.source_actuator, unique_id="sim-source", entity_id="climate.sim_source"
+            spec,
+            self.clock,
+            self.source_actuator,
+            unique_id=f"sim-source{self.suffix}",
+            entity_id=f"climate.sim_source{self.suffix}",
         )
         # Both thermostats live in the same Home Assistant.
         self.source_thermostat.hass = self.thermostat.hass
+        if self.smart_boiler is not None and source.boiler is not None:
+            self.smart_boiler.zones[self.source_thermostat.entity_id] = source.boiler
         self.source_scheduler, self.source_handler = self._attach_handler(
             self.source_thermostat, self.source_actuator, spec
         )
         self.source_indoor_sensor = QuantizedSensor(self.zone.sensor_resolution_c)
+
+    def _drive_source(self, monkeypatch, split: dict) -> None:
+        """Name the second thermostat as the zone thermostat's source, as its options would."""
+        item = DependencyItem(item_id="source", kind=KIND_SOURCE, entity="reg-sim-source", extra=dict(split))
+        self.handler._dependency_items = [*self.handler._dependency_items, item]
+        self.handler._source_settings = SourceSettings.from_item(item)
+        self.algo.configure_source(self.handler._source_settings)
+        source_id = f"sim-source{self.suffix}"
+        monkeypatch.setattr(self.handler, "_resolve_unique_id", lambda _registry_id: source_id)
+        self.handler._attach_source()
+        self.algo.set_known_inputs_provider(self.dependency_readings)
+
+    @property
+    def drives_source(self) -> bool:
+        return self.handler._source_settings is not None
 
     def _thermostats(self) -> list[tuple[SimThermostat, QuantizedSensor]]:
         units = [(self.thermostat, self.indoor_sensor)]
@@ -452,6 +563,7 @@ class Simulation:
         return DependencyReadings(
             neighbours=tuple(n.observation(t_s) for n in self.zone.neighbours),
             presets=dict(self.zone.presets),
+            source=self.handler._read_source(),
         )
 
     @property
@@ -460,7 +572,7 @@ class Simulation:
 
     @property
     def zone_c(self) -> float:
-        return self.network.temperature(ZONE_NODE)
+        return self.network.temperature(self.node)
 
     async def start(self) -> None:
         """Publish the first readings and start the thermostats like VTherm at startup."""
@@ -532,6 +644,13 @@ class Simulation:
             if indoor is not None:
                 await thermostat.temperature_published(indoor)
 
+    def _source_command(self) -> float:
+        if self.source_algo is None:
+            return 0.0
+        if self.drives_source:
+            return float(self.algo.source_command or 0.0)
+        return float(self.source_algo.on_percent)
+
     def _record(self) -> None:
         if self.clock.elapsed_s + 1e-9 < self._next_trace_s:
             return
@@ -545,8 +664,44 @@ class Simulation:
                 command=float(self.algo.on_percent),
                 power=self.actuator.power,
                 phase=str(getattr(self.algo.phase, "value", self.algo.phase)),
-                source_command=float(self.source_algo.on_percent) if self.source_algo is not None else 0.0,
+                source_command=self._source_command(),
                 source_power=self.source_actuator.power if self.source_actuator is not None else 0.0,
             )
         )
 
+
+def _boiler_on_demand(boiler: SimBoiler | None, actuator: SimActuator) -> None:
+    """A boiler firing on demand fires while its circuit called for heat in the last 20 minutes."""
+    if boiler is not None and boiler.on_demand:
+        history = actuator.history
+        boiler.demand = lambda t_s: history.on_seconds(t_s - 1200.0, t_s) > 0.0
+
+
+class CoupledSimulation:
+    """Zones sharing one world, advanced together."""
+
+    def __init__(self, world: SimWorld, zones: list[Simulation]) -> None:
+        self.world = world
+        self.zones = zones
+        self.clock = world.clock
+
+    async def run_for(self, hours: float, stop: Callable[[CoupledSimulation], bool] | None = None) -> None:
+        for zone in self.zones:
+            if not zone._started:
+                await zone.start()
+        weather = self.zones[0].weather
+        end_s = self.clock.elapsed_s + hours * 3600.0
+        while self.clock.elapsed_s < end_s - 1e-9:
+            target_s = min(end_s, self.clock.elapsed_s + SENSOR_STEP_S)
+            due = self.world.queue.next_due()
+            if due is not None and due < target_s:
+                target_s = max(due, self.clock.elapsed_s)
+            self.world.network.advance(self.clock.elapsed_s, target_s, weather.outdoor_c)
+            self.clock.advance_to(target_s)
+            for zone in self.zones:
+                await zone._publish_sensors()
+            await self.world.queue.run_due()
+            for zone in self.zones:
+                zone._record()
+            if stop is not None and stop(self):
+                return

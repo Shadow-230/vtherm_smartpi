@@ -17,6 +17,7 @@ from .algo import SmartPI
 from .smartpi.command_ownership import project_cycle_command
 from .smartpi.const import (
     SMARTPI_RECALC_INTERVAL_SEC,
+    SOURCE_COMMAND_MAX_AGE_S,
     SmartPIPhase,
     SmartPICalibrationPhase,
     SmartPICalibrationResult,
@@ -42,6 +43,7 @@ from .const import (
     CONF_SMART_PI_MAX_VALVE,
     CONF_SMART_PI_DEPENDENCIES,
     CONF_SMART_PI_HEATING_TYPE,
+    DATA_SOURCE_LINK,
     DEFAULT_OPTIONS,
     DIAGNOSTIC_SENSOR_UNIQUE_ID_PREFIX,
     DOMAIN,
@@ -53,10 +55,13 @@ from .commons import write_event_log
 from .smartpi.valve_curve import ValveCurveParams
 from .smartpi.water_input import SOURCE_LASTING, WaterInput, WaterReading
 from .smartpi.dependencies import DependencyItem, parse_dependencies
+from .smartpi.source_link import SourceCycle, SourceLink
+from .smartpi.source_settings import SourceSettings
 from .smartpi.dependency_inputs import (
     DependencyReadings,
     EntitySnapshot,
     NeighbourObservation,
+    SourceObservation,
     doors_open,
     read_neighbour,
 )
@@ -106,6 +111,8 @@ class SmartPIHandler:
         self._store: Store | None = None
         self._legacy_store: Store | None = None
         self._recalc_timer_remove = None
+        # While this thermostat is off and has a source: it still tells the source so.
+        self._source_heartbeat_remove = None
         # State for learning
         self._last_temp = None
         self._last_ext_temp = None
@@ -120,6 +127,11 @@ class SmartPIHandler:
         self._valve_linearization_configured: bool = False
         self._valve_curve_params: ValveCurveParams | None = None
         self._dependency_items: list[DependencyItem] = []
+        # Second source of this zone (lead side): its settings and unique id.
+        self._source_settings: SourceSettings | None = None
+        self._source_unique_id: str | None = None
+        # Last command applied as a source (valve changes are reported).
+        self._applied_source_command: float | None = None
 
     def init_algorithm(self):
         """Initialize SmartPI algorithm."""
@@ -237,6 +249,10 @@ class SmartPIHandler:
         t.prop_algorithm.set_known_inputs_provider(
             self._read_dependencies if self._dependency_items else None
         )
+        source_item = next((item for item in self._dependency_items if item.is_source), None)
+        self._source_settings = SourceSettings.from_item(source_item) if source_item else None
+        t.prop_algorithm.configure_source(self._source_settings)
+        self._attach_source()
 
         _LOGGER.info("%s - SmartPI Algorithm initialized", t)
         async_dispatcher_send(t.hass, SIGNAL_SMARTPI_TARGET_UPDATED, t.unique_id)
@@ -315,6 +331,134 @@ class SmartPIHandler:
             except Exception as e:
                 _LOGGER.error("%s - Failed to save SmartPI state: %s", t, e)
 
+    # --- second source -----------------------------------------------------
+
+    def _source_link(self) -> SourceLink:
+        data = self._thermostat.hass.data.setdefault(DOMAIN, {})
+        link = data.get(DATA_SOURCE_LINK)
+        if not isinstance(link, SourceLink):
+            link = data[DATA_SOURCE_LINK] = SourceLink()
+        return link
+
+    def _resolve_unique_id(self, registry_id: str) -> str | None:
+        """Unique id of the climate entity behind a registry id."""
+        registry = er.async_get(self._thermostat.hass)
+        entity_id = er.async_resolve_entity_id(registry, registry_id)
+        entry = registry.async_get(entity_id) if entity_id else None
+        return entry.unique_id if entry is not None else None
+
+    def _attach_source(self) -> None:
+        """Make the configured source work for this thermostat (lead side)."""
+        t = self._thermostat
+        link = self._source_link()
+        link.detach_lead(t.unique_id)
+        self._source_unique_id = None
+        if self._source_settings is None:
+            return
+        try:
+            source_unique_id = self._resolve_unique_id(self._source_settings.entity)
+        except Exception:  # pylint: disable=broad-except
+            source_unique_id = None
+        if source_unique_id is None or source_unique_id == t.unique_id:
+            _LOGGER.warning("%s - The second source cannot be found", t)
+            return
+        if not link.attach(t.unique_id, source_unique_id, time.monotonic()):
+            _LOGGER.warning("%s - The second source already works for another thermostat", t)
+            return
+        self._source_unique_id = source_unique_id
+
+    def _publish_source_command(self) -> None:
+        """Give the source the command the dependency layer decided (lead side)."""
+        if self._source_unique_id is None:
+            return
+        t = self._thermostat
+        algo = t.prop_algorithm if isinstance(t.prop_algorithm, SmartPI) else None
+        hvac_mode = t.vtherm_hvac_mode
+        command = 0.0
+        if algo is not None and hvac_mode in (VThermHvacMode_HEAT, VThermHvacMode_COOL):
+            command = algo.source_command or 0.0
+        self._source_link().publish_command(t.unique_id, command, time.monotonic(), str(hvac_mode))
+
+    def _read_source(self) -> SourceObservation | None:
+        """The source as the lead sees it at this calculation."""
+        if self._source_settings is None:
+            return None
+        t = self._thermostat
+        source_unique_id = self._source_unique_id
+        link = self._source_link()
+        algo = t.prop_algorithm if isinstance(t.prop_algorithm, SmartPI) else None
+        after_s = algo.dependency_model.source_cycles_after_s if algo is not None else 0.0
+        try:
+            entity_id = er.async_resolve_entity_id(er.async_get(t.hass), self._source_settings.entity)
+        except Exception:  # pylint: disable=broad-except
+            entity_id = None
+        return SourceObservation(
+            item_id=self._source_settings.item_id,
+            entity_id=entity_id,
+            active=source_unique_id is not None
+            and link.is_active(source_unique_id, time.monotonic(), SOURCE_COMMAND_MAX_AGE_S),
+            cycles=tuple(link.cycles_since(source_unique_id, after_s)) if source_unique_id else (),
+            power_cap=link.power_cap(source_unique_id) if source_unique_id else 1.0,
+        )
+
+    @property
+    def is_executive_source(self) -> bool:
+        """This thermostat currently works for a lead as its second source."""
+        algo = self._thermostat.prop_algorithm
+        return isinstance(algo, SmartPI) and algo.is_executive
+
+    def _enter_source_role(self, lead: str) -> None:
+        t = self._thermostat
+        algo = t.prop_algorithm
+        if isinstance(algo, SmartPI):
+            algo.enter_source_role(lead)
+        self._applied_source_command = None
+        _LOGGER.info("%s - Working as the second source of another thermostat; own regulation and learning paused", t)
+
+    def _leave_source_role(self) -> None:
+        t = self._thermostat
+        algo = t.prop_algorithm
+        if isinstance(algo, SmartPI):
+            algo.leave_source_role()
+            algo.reset_cycle_state()
+        self._applied_source_command = None
+        _LOGGER.info("%s - No longer a second source; own regulation resumed", t)
+
+    async def _control_as_source(self, force: bool) -> None:
+        """Apply the lead's command with this thermostat's own cycle and delays."""
+        t = self._thermostat
+        link = self._source_link()
+        now_s = time.monotonic()
+        hvac_mode = t.vtherm_hvac_mode
+        running = hvac_mode in (VThermHvacMode_HEAT, VThermHvacMode_COOL)
+        command = (
+            link.command_for(t.unique_id, now_s, SOURCE_COMMAND_MAX_AGE_S, str(hvac_mode))
+            if running and not t.is_overpowering_detected
+            else 0.0
+        )
+        link.set_active(t.unique_id, running, now_s)
+        algo = t.prop_algorithm if isinstance(t.prop_algorithm, SmartPI) else None
+        if algo is not None:
+            # The lead's command is power at the reference water: this source's
+            # own water factor turns it into the command of its emitter.
+            self._update_water(algo)
+            link.set_power_cap(t.unique_id, algo.source_power_cap)
+            algo.set_source_command(command)
+        if not running:
+            setattr(t, "_on_time_sec", 0)
+            setattr(t, "_off_time_sec", int(t.cycle_min * 60))
+            if t.is_device_active:
+                await t.async_underlying_entity_turn_off()
+            return
+        scheduler = t.cycle_scheduler
+        if bool(getattr(scheduler, "is_valve_mode", False)) and command != self._applied_source_command:
+            # A valve takes a new opening within its cycle: report it as it comes.
+            duration_s = float(t.cycle_min) * 60.0
+            power = algo._to_linear_power(algo.on_percent) if algo is not None else command
+            link.report_cycle(t.unique_id, SourceCycle(now_s, duration_s, duration_s, power, False))
+        self._applied_source_command = command
+        await scheduler.start_cycle(hvac_mode, algo.on_percent if algo is not None else command, force)
+
     def remove(self):
         """Cleanup and save state on removal."""
         t = self._thermostat
@@ -323,6 +467,12 @@ class SmartPIHandler:
             t.hass.async_create_task(self._async_save())
 
         self._stop_recalc_timer()
+        self._stop_source_heartbeat()
+        if self._source_unique_id is not None:
+            self._source_link().detach_lead(t.unique_id)
+        if self.is_executive_source:
+            # The lead must not keep counting the heat of a source that is gone.
+            self._source_link().set_active(t.unique_id, False, time.monotonic())
 
     def on_scheduler_ready(self, scheduler) -> None:
         """Register SmartPI learning callbacks on the cycle scheduler."""
@@ -340,7 +490,14 @@ class SmartPIHandler:
                 valve_mode=bool(getattr(scheduler, "is_valve_mode", False)),
             )
             scheduler.register_cycle_start_callback(self._on_scheduler_cycle_started)
-            scheduler.register_cycle_end_callback(algo.on_cycle_completed)
+            scheduler.register_cycle_end_callback(self._on_scheduler_cycle_completed)
+
+    async def _on_scheduler_cycle_completed(self, **kwargs) -> None:
+        """Forward the end of a cycle to SmartPI, unless this thermostat works as a source."""
+        algo = self._thermostat.prop_algorithm
+        if self.is_executive_source or not isinstance(algo, SmartPI):
+            return
+        await algo.on_cycle_completed(**kwargs)
 
     def _synchronize_scheduler_timing(
         self,
@@ -405,6 +562,24 @@ class SmartPIHandler:
     ) -> None:
         """Forward scheduler starts after valve publication when required."""
         algo = self._thermostat.prop_algorithm
+        link = self._source_link()
+        if link.lead_of(self._thermostat.unique_id) is not None:
+            # Also while regulating on its own because the lead is silent: once
+            # back, the lead rebuilds the heat on its way from these cycles.
+            scheduler = self._thermostat.cycle_scheduler
+            link.report_cycle(
+                self._thermostat.unique_id,
+                SourceCycle(
+                    start_s=time.monotonic(),
+                    on_s=float(on_time_sec),
+                    duration_s=float(on_time_sec) + float(off_time_sec),
+                    power=algo._to_linear_power(float(on_percent)) if isinstance(algo, SmartPI) else float(on_percent),
+                    switched=not bool(getattr(scheduler, "is_valve_mode", False)),
+                    level=algo.water_factor if isinstance(algo, SmartPI) else 1.0,
+                ),
+            )
+        if self.is_executive_source:
+            return
         if not isinstance(algo, SmartPI):
             return
         if not bool(
@@ -486,11 +661,32 @@ class SmartPIHandler:
             high = own_state.attributes.get("max_temp")
             if isinstance(low, (int, float)) and isinstance(high, (int, float)) and low < high:
                 temp_range = (float(low), float(high))
-        return DependencyReadings(neighbours=tuple(neighbours), presets=presets, temp_range=temp_range)
+        return DependencyReadings(
+            neighbours=tuple(neighbours),
+            presets=presets,
+            temp_range=temp_range,
+            source=self._read_source(),
+        )
 
     async def control_heating(self, timestamp=None, force=False):
         """Control heating using SmartPI."""
         t = self._thermostat
+        link = self._source_link()
+        lead = link.lead_of(t.unique_id)
+        if lead is not None and link.lead_silent(t.unique_id, time.monotonic(), SOURCE_COMMAND_MAX_AGE_S):
+            # The lead no longer works: this thermostat regulates the zone with
+            # its own SmartPI until the lead's commands come back.
+            if self.is_executive_source:
+                _LOGGER.warning("%s - No command from the lead thermostat; regulating on its own", t)
+                link.set_active(t.unique_id, False, time.monotonic())
+            lead = None
+        if lead is not None:
+            if not self.is_executive_source:
+                self._enter_source_role(lead)
+            await self._control_as_source(force)
+            return
+        if self.is_executive_source:
+            self._leave_source_role()
         from datetime import datetime
         from .smartpi.guards import GuardAction
 
@@ -547,12 +743,7 @@ class SmartPIHandler:
                 algo._last_restart_reason = "guard_kick"
                 force = True
 
-            # Water data for this calculation (documentation/en/water_input.md).
-            water_input = getattr(algo, "water", None)
-            if isinstance(water_input, WaterInput) and water_input.uses_water:
-                water = algo.update_water(self._read_water(), t.current_temperature)
-                if water.changed_for_good:
-                    self._offer_model_reset(algo, gone=water.source == SOURCE_LASTING)
+            self._update_water(algo)
 
             # Calculate uses current temp, ext temp, etc.
             # If guard_cut is active, calculate() will set on_percent=0.
@@ -596,6 +787,8 @@ class SmartPIHandler:
                 )
                 algo._last_restart_reason = "near_band_transition"
                 force = True
+
+        self._publish_source_command()
 
         # Stop here if we are off
         if t.vtherm_hvac_mode == VThermHvacMode_OFF:
@@ -714,6 +907,7 @@ class SmartPIHandler:
             # Check if we're resuming from OFF (timer was stopped)
             timer_was_stopped = self._recalc_timer_remove is None
 
+            self._stop_source_heartbeat()
             self._start_recalc_timer()
 
             # When resuming from OFF state (e.g., window close), reset the cycle start state
@@ -723,6 +917,7 @@ class SmartPIHandler:
                 _LOGGER.debug("%s - SmartPI resumed from OFF: cycle and learning window reset", t.name)
         else:
             self._stop_recalc_timer()
+            self._start_source_heartbeat()
             # Cancel any ongoing calibration when switching to OFF/SLEEP mode
             await self._cancel_calibration_if_active()
 
@@ -745,6 +940,27 @@ class SmartPIHandler:
             timedelta(seconds=SMARTPI_RECALC_INTERVAL_SEC)
         )
         _LOGGER.debug("%s - SmartPI calc timer started", t)
+
+    def _start_source_heartbeat(self) -> None:
+        """While off, keep telling the source so, more often than it would take this
+        thermostat for silent (VTherm's own control call may come every cycle_min only)."""
+        t = self._thermostat
+        if self._source_heartbeat_remove or self._source_unique_id is None:
+            return
+
+        async def _heartbeat(now):
+            del now
+            self._publish_source_command()
+
+        self._source_heartbeat_remove = async_track_time_interval(
+            t.hass, _heartbeat, timedelta(seconds=SMARTPI_RECALC_INTERVAL_SEC)
+        )
+        self._publish_source_command()
+
+    def _stop_source_heartbeat(self) -> None:
+        if self._source_heartbeat_remove:
+            self._source_heartbeat_remove()
+            self._source_heartbeat_remove = None
 
     def _stop_recalc_timer(self):
         """Stop the periodic recalculation timer."""
@@ -804,6 +1020,14 @@ class SmartPIHandler:
             specific_states[WATER_FACTOR_KEY] = round(factor, 3)
         else:
             specific_states.pop(WATER_FACTOR_KEY, None)
+
+    def _update_water(self, algo: SmartPI) -> None:
+        """Water data for this calculation (documentation/en/water_input.md)."""
+        water_input = getattr(algo, "water", None)
+        if isinstance(water_input, WaterInput) and water_input.uses_water:
+            water = algo.update_water(self._read_water(), self._thermostat.current_temperature)
+            if water.changed_for_good:
+                self._offer_model_reset(algo, gone=water.source == SOURCE_LASTING)
 
     def _read_water(self) -> WaterReading | None:
         """Smart Boiler's water data for this thermostat (None: no data now).

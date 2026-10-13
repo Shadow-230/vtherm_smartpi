@@ -307,9 +307,11 @@ for a time window.
 | `WATER_NO_DATA_LASTING_S` | 24 h |
 
 - **Provisional exponents and reference waters**, to be checked against field data.
-- **The zone with two heat sources** (a radiator and a floor loop in one room, see
-  [Zone dependencies and a second heat source](zone_dependencies.md)) will use each source's
-  own factor in its joint model; this comes with that work.
+- **The zone with two heat sources** (a radiator and a floor loop in one room) uses each source's
+  own factor: the main source's command is power at the reference water, the additional source
+  turns it into its own command with its factor and reports its cycles, switched ones at their
+  factor, and its power cap to the main source. See
+  [Zone dependencies and a second heat source, §6.2 and §6.7](zone_dependencies.md#6-a-second-heat-source).
 - **Short cycling with an on-demand boiler** (to watch in the field): with cold water a small
   demand gives a large command; once the water is warm the command shrinks to `power / φ`. If
   Smart Boiler only fires above a valve-opening threshold, the boiler could stop and start

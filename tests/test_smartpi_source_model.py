@@ -92,12 +92,47 @@ def test_old_commands_are_dropped_without_changing_the_result() -> None:
     assert heat.value(36000.0) == pytest.approx(_brute_force(commands, response, 36000.0), abs=1e-3)
 
 
-def test_commands_are_clamped_and_out_of_order_ones_ignored() -> None:
+def test_commands_are_clamped() -> None:
     heat = SourceHeat(SourceResponse(0.0, 0.0))
     heat.record(100.0, 1.7)
-    heat.record(50.0, 0.0)
 
     assert heat.value(200.0) == 1.0
+
+
+def test_a_cycle_cut_short_replaces_the_rest_of_its_plan() -> None:
+    """A switched cycle heats first; a new cycle started early replaces the planned rest."""
+    heat = SourceHeat(SourceResponse(0.0, 0.0))
+    heat.record_cycle(0.0, on_s=400.0, duration_s=600.0, power=0.66, switched=True)
+    assert heat.at(0.0, 300.0) == 1.0
+    assert heat.at(0.0, 500.0) == 0.0
+
+    heat.record_cycle(200.0, on_s=0.0, duration_s=600.0, power=0.0, switched=True)
+    assert heat.value(250.0) == 0.0
+
+    valve = SourceHeat(SourceResponse(0.0, 0.0))
+    valve.record_cycle(0.0, on_s=400.0, duration_s=600.0, power=0.66, switched=False)
+    assert valve.value(500.0) == 0.66
+
+
+def test_a_switched_cycle_on_water_heats_at_its_water_factor() -> None:
+    """With water data a switched emitter on gives its water factor, not its full power."""
+    heat = SourceHeat(SourceResponse(0.0, 0.0))
+    heat.record_cycle(0.0, on_s=600.0, duration_s=600.0, power=0.4, switched=True, level=0.4)
+
+    assert heat.at(0.0, 300.0) == pytest.approx(0.4)
+
+
+def test_saved_heat_resumes_and_decays() -> None:
+    heat = SourceHeat(SourceResponse(0.0, 3600.0))
+    heat.record(0.0, 1.0)
+    heat.value(7200.0)
+    saved = heat.save_state()
+
+    restored = SourceHeat(SourceResponse(0.0, 3600.0))
+    restored.load_state(saved, now_s=100.0)
+
+    assert restored.value(100.0) == pytest.approx(1.0 - math.exp(-2.0))
+    assert restored.value(3700.0) == pytest.approx((1.0 - math.exp(-2.0)) * math.exp(-1.0))
 
 
 def test_emitter_types_give_starting_values() -> None:

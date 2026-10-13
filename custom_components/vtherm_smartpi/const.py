@@ -71,6 +71,8 @@ PROP_FUNCTION_SMART_PI = "smartpi"
 
 DATA_FACTORY_REGISTERED = "factory_registered"
 DATA_SERVICES_REGISTERED = "services_registered"
+# Link between lead thermostats and their second sources (smartpi/source_link.py).
+DATA_SOURCE_LINK = "source_link"
 SIGNAL_SMARTPI_TARGET_UPDATED = "vtherm_smartpi_target_updated"
 DIAGNOSTIC_SENSOR_UNIQUE_ID_PREFIX = "smartpi_diag"
 

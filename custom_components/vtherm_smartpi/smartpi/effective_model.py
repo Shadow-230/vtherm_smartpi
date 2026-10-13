@@ -91,6 +91,10 @@ class KnownInputs:
     action_setpoint: float | None = None
     # Per-item diagnostics prepared by the dependency layer.
     status: tuple[Mapping[str, Any], ...] = ()
+    # Command for the zone's second source (0..1), or None without a source.
+    source_command: float | None = None
+    # Diagnostics of the second source.
+    source: Mapping[str, Any] | None = None
 
 
 @dataclass(frozen=True)

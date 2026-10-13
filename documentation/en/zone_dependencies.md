@@ -1,8 +1,8 @@
 # Zone dependencies and a second heat source — technical documentation
 
-> **In development.** Neighbouring zones work. The second heat source is being built:
-> its model, split rules and allocation loop exist as modules; the lead and source
-> thermostats do not use them yet (see the status in each section).
+> **In development.** Neighbouring zones work. A zone with two heat sources works between
+> the main and the additional source's thermostats; its options form comes next (see the
+> status in each section).
 
 This document describes how SmartPI takes into account what happens around a zone: the
 heat it exchanges with neighbouring zones, and a second device heating the same zone. It
@@ -50,7 +50,7 @@ it bit for bit.
 |---|---|---|
 | Foundation | known inputs, composition, substitution point, learning correction and gates, persistence, diagnostics, options menu | in use |
 | Neighbouring zones | three connection modes, learned exchange, reaction to a neighbour's open window, options forms | in use |
-| Second heat source | emitter types, the source's heat model, split rules, allocation loop | modules and tests; integration in progress |
+| Second heat source | emitter types, the additional source's heat and time scale, the zone's joint fit, learning blocks, split rules, allocation loop and predictive brake, the executive role with water data and a fallback | in use; options form in progress |
 
 ## 2. The model with known inputs
 
@@ -63,7 +63,7 @@ it bit for bit.
 - An **exchange input** `i` couples the zone to a temperature `T_i` through a conductance
   `g_i` (1/min). A neighbour connected to the zone is one, with `g = k`, the learned
   exchange coefficient.
-- A **heat input** `j` adds `q_j` (degC/min, either sign) directly. The second source's heat
+- A **heat input** `j` adds `q_j` (degC/min, either sign) directly. The additional source's heat
   `a_f·x_f` is one (section 6).
 
 ### 2.2 Composition
@@ -75,7 +75,10 @@ coefficient and its outdoor temperature:
     T_ref = (b·T_ext + Σ_i g_i·T_i) / b_eff + Σ_j q_j / b_eff
 
 - The heat term is a shift of `T_ref`, bounded by `KNOWN_HEAT_MAX_SHIFT_C`, so that a weak
-  loss estimate cannot amplify it.
+  loss estimate cannot amplify it. The bound must exceed the largest difference between the
+  setpoint and the outdoors: in the feed-forward `b` cancels out (`b/a · q/b = q/a`), and a bound
+  below the shift a floor needs in cold weather counted less floor heat than there was
+  (section 6.8).
 - With an always-connected neighbour whose exchange SmartPI's `b` has absorbed, the loss
   term uses the coefficient fitted without it (section 5.4).
 - Every input has a value now and may carry a trajectory over a horizon; without one it
@@ -94,6 +97,13 @@ coefficient and its outdoor temperature:
 Learning on raw data keeps SmartPI's own parameters meaning what they meant before; the
 correction removes the part of the measured slope that known inputs explain.
 
+**A coefficient that becomes known enters gradually.** Before a neighbour's `k` or the
+source's `a_f` is published, its effect acts on the zone as an unknown disturbance, which the
+controller's integral has absorbed. Folding it into the model at once would step the
+feed-forward and make the zone dip or overshoot while the integral unwinds. It therefore
+enters over `KNOWN_INPUT_FADE_S`. A coefficient already known before a restart is fully in
+the model at once.
+
 ## 3. Components
 
 All modules below are pure Python, testable without HA.
@@ -106,17 +116,25 @@ All modules below are pure Python, testable without HA.
 | `smartpi/coupling_estimator.py` | Learning of the exchange coefficients `k` from measurement windows |
 | `smartpi/dependency_model.py` | Inside the algorithm: readings to known inputs, learning gates, the reaction to a neighbour's window, diagnostics |
 | `smartpi/source_model.py` | Second source: emitter types, delay and lag, the heat `x_f` now and ahead |
+| `smartpi/source_candidates.py` | Second source: the candidate time scales and the heat under each |
+| `smartpi/zone_fit.py` | Second source: the zone's joint fit (losses, both sources, the main source's delay, the time scale, neighbours) |
 | `smartpi/split.py` | Second source: split rules, allocation loop, recommendation by emitter type |
+| `smartpi/source_settings.py` | Second source: its rule and emitters, read from the configured item |
+| `smartpi/source_link.py` | Second source: the link between the main and the additional source in one Home Assistant (commands one way, cycles and the power cap the other) |
 
 In the existing files:
 
 - **`algo.py`** reads the known inputs at each calculation (`_read_known_inputs`), applies a
   neighbour's window reaction, composes the effective model at the single substitution point
   (`_compose_effective_model`) and passes the learning gate and correction to the learning
-  window. It also records the power each completed cycle realized.
+  window. It also records the power each completed cycle realized. In a zone with two sources it
+  starts from the zone's fit and keeps its model (`_apply_zone_fit`, section 6.5).
 - **`handler.py`** registers the readings provider when dependencies are configured
   (`_read_dependencies`), resolving entities through their registry identifier, and drops the
-  learned state of items removed from the configuration at startup.
+  learned state of items removed from the configuration at startup. A main source attaches its
+  additional source on the link and publishes its command after each calculation; a thermostat
+  named as an additional source runs the executive path instead of its own controller, or its own
+  controller while the main source is silent (section 6.7).
 - **`config_flow.py`** gives the thermostat entry an options menu with the dependency list
   and the neighbour forms (section 10).
 
@@ -188,7 +206,8 @@ stateDiagram-v2
     Window --> Open: window closed or connection gone
 ```
 
-- Priority when several apply: `neighbour_window` over `door_open` over `door_settling`.
+- Priority when several apply: `neighbour_window` over `door_open` over `source_heat` over
+  `door_settling`. The `source_heat` gate belongs to the second source (section 6.5).
 - An always-connected neighbour does not gate learning: SmartPI's `b` absorbs its exchange,
   and the joint fit (section 5.4) separates it.
 - `k` learns only when SmartPI itself could learn: learning enabled and not paused, the
@@ -224,8 +243,8 @@ flowchart LR
   instead, a steady ripple biased `k` by about 6 % in the tests.
 - **Realized power.** The power acting on the zone is the applied power shifted by the dead
   time. It is the power each completed cycle realized, as VTherm reports it, delivered from
-  the start of the cycle by a switched actuator; the commanded power covers only the cycle
-  still running. VTherm often cuts a cycle, which starts with its on-time, so the commanded
+  the start of the cycle by a switched actuator, at its water factor with water data (section 6.2);
+  the commanded power covers only the cycle still running. VTherm often cuts a cycle, which starts with its on-time, so the commanded
   average was lower than what the zone received.
 - A window counts only when some `|T − T_j| ≥ COUPLING_K_MIN_DT`.
 
@@ -278,6 +297,8 @@ the neighbour.
 - Several neighbours with open windows: the most protective reaction wins
   (`turn_off` > `frost` > `eco`).
 - A calibration in progress is cancelled; it ends as cancelled instead of stalling.
+- The reaction applies to an additional source as well (section 6.6): `turn_off` gives it 0 %,
+  `frost` and `eco` make its allocation loop follow the same, lower setpoint.
 
 ### 5.6 Results and limits (simulation)
 
@@ -300,41 +321,73 @@ the neighbour.
 
 ### 6.1 Roles and the main decision
 
-The zone thermostat is the **lead**; it names a second VTherm with SmartPI, the **source**,
-which then works for it (one source per zone, no chains).
+A zone may have two heat sources, each a VTherm with SmartPI, for example a radiator and a heated
+floor. The **main source** is the zone thermostat whose SmartPI regulates the zone; in the code and
+the link it is the **lead**. It names the other thermostat as its **additional source** (in the code,
+the **source**), which then works for it: one additional source per zone, no chains.
 
-**Decision: the lead's command stays exactly what SmartPI computes.** The source is moved by
-a slow allocation loop towards the split the rule chooses, and its heat reaches the lead's
-model as a known input. The alternative, mapping one demand to two commands with fixed curves,
+**Decision: the main source's command stays exactly what SmartPI computes.** The additional source is
+moved by a slow allocation loop towards the split the rule chooses, and its heat reaches the main
+source's model as a known input. The alternative, mapping one demand to two commands with fixed curves,
 was rejected:
 
-- the lead would receive another command than its controller computed. SmartPI would read
-  it as a limited actuator: its anti-windup would drain the integral every cycle, the command
-  ownership and FF trim would reject their windows, and the learning phase would see the
-  wrong power;
-- the source's heat would be counted twice, once in the map and once as a known input;
-- with a slow source, half of the lead's command would show its effect hours later, which
-  makes the lead overshoot and swing.
+- the main source would receive another command than its controller computed. SmartPI would read it
+  as a limited actuator: its anti-windup would drain the integral every cycle, the command ownership
+  and FF trim would reject their windows, and the learning phase would see the wrong power;
+- the additional source's heat would be counted twice, once in the map and once as a known input;
+- with a slow source, half of the main source's command would show its effect hours later, which
+  makes the zone overshoot and swing.
 
 | | Fixed maps (rejected) | Allocation loop (chosen) |
 |---|---|---|
 | SmartPI's controller, learning and safeguards | must be reworked | unchanged |
 | Slow source (heated floor) | swings | stable by design |
-| Reaction of the source | immediate | follows the rule over minutes (fast source) to hours (floor) |
+| Reaction of the additional source | immediate | follows the rule over minutes (fast source) to hours (floor), plus a proportional answer to the zone's error |
 | Split | exact at every instant | exact in steady state |
 
-### 6.2 Emitter types and the source's heat
+**Decision: one model of the zone for both sources.** The zone's model is learned once, with both
+sources at work, by a joint fit of the zone (section 6.4): the losses `b`, the main source's `a` and
+delay, the additional source's `a_f` and time scale, and the neighbours' `k`. SmartPI starts from that
+model and keeps it. Learning each source on its own, one after the other, was the first design and was
+dropped (section 6.8): SmartPI's own windows, at 0.1 degC, measure a slow cooling about half as fast as
+it is, and every value learned on top of SmartPI's model inherited its errors.
 
-The source's applied command `u_f` reaches the zone after a transport delay `L_f` and a
+```mermaid
+flowchart LR
+    subgraph Main["Main source (lead thermostat)"]
+        SP[SmartPI: FF + PI] --> W[Its own actuator]
+        DM[Dependency model] --> SP
+    end
+    subgraph Add["Additional source"]
+        EX[Executive path: own cycle and delays] --> F[Its own actuator]
+    end
+    DM -- "command Z" --> L[(Link in hass.data)]
+    L -- "Z" --> EX
+    EX -- "cycles, power cap" --> L
+    L -- "cycles" --> DM
+    T[Zone temperature] --> SP
+    T --> DM
+    ZF[Joint fit of the zone] --> DM
+    DM --> ZF
+```
+
+### 6.2 Emitter types and the additional source's heat
+
+The additional source's applied command `u_f` reaches the zone after a transport delay `L_f` and a
 first-order lag `tau_f`, the thermal mass of its emitter:
 
     x_f(t + dt) = u_d + (x_f(t) − u_d)·exp(−dt / tau_f),   u_d = u_f(t − L_f)
 
-`x_f` is in 0..1 of the source's full power and its heat is `a_f·x_f`. The commands already
-sent make `x_f` known now and predictable over a horizon: they keep arriving for `L_f`, and
-the last one is assumed to hold after that.
+`x_f` is in 0..1 of the source's full power and its heat is `a_f·x_f`. The commands already sent make
+`x_f` known now and predictable over a horizon: they keep arriving for `L_f`, and the last one is
+assumed to hold after that.
 
-The user chooses the type of both devices; the type gives the starting values:
+- **Cycles.** The source reports each cycle it starts. A switched actuator heats first, at its
+  **level** for its on-time; a valve holds its power for the whole cycle. The level is 1 without water
+  data; with them it is the source's water factor (its power at the reference water, see the
+  [water input](water_input.md)), since a floor whose water is at 30 degC gives about 40 % of its power
+  at 45 degC while switched on. The main source's own cycles are recorded the same way.
+- **The user chooses the type of both devices**; the type gives the starting values:
 
 | Emitter type | `L_f` (min) | `tau_f` (min) |
 |---|---|---|
@@ -344,98 +397,389 @@ The user chooses the type of both devices; the type gives the starting values:
 | `floor_water` | 30 | 180 |
 | `custom` | user | user |
 
-These are orders of magnitude to be refined with field data; learning them is planned later.
+- **The real time scale is learned.** The delay and the lag of a floor depend on the screed, the pipes
+  and the water. Within the 30-min measurement windows of the zone's fit the delay and the lag cannot
+  be told apart, but their common time scale can. The candidates stretch the type's response by
+  `SOURCE_SCALE_MULTIPLIERS` (0.4 to 2.5 times); a source without delay and lag gets lags of
+  `SOURCE_FAST_TAU_MIN` instead. Each candidate rebuilds `x_f` from the same cycles, and the zone's fit
+  chooses the one that explains the zone best (section 6.4), apart for heating and cooling. The
+  candidate in use gives `x_f`, its prediction, the allocation loop's speed and the brake's horizon.
 
 ### 6.3 Split rules
 
-`W` is the lead's command, `Z` the source's. Each rule is a curve of steady states from
-`(0, 0)` to `(100 %, 100 %)` and gives the lead's target average `f(Z)`:
+`W` is the main source's command, `Z` the additional source's. Each rule is a curve of steady states
+from `(0, 0)` to `(100 %, 100 %)` and gives the main source's target average `f(Z)`:
 
 | Rule | Curve | Parameter (default) | Examples |
 |---|---|---|---|
 | `together` | `Z = p·W`; once one is at 100 %, the other rises alone | `p` (100 %), any value | `p` = 200 %: W 20 %, Z 40 % |
-| `source_first` | the source alone up to θ; above it both rise and reach 100 % together: `W = (Z − θ)/(100 − θ)` | θ (50 %) | θ = 50 %: Z 30/W 0, Z 70/W 40, both 100; θ = 100 % strictly one after the other; θ = 0 like `together` at 100 % |
-| `lead_band` | the source settles so that the lead's average stays in the band | band (20 %) | the lead always keeps a margin for quick corrections |
+| `source_first` | the additional source alone up to θ; above it both rise and reach 100 % together: `W = (Z − θ)/(100 − θ)` | θ (50 %) | θ = 50 %: Z 30/W 0, Z 70/W 40, both 100; θ = 100 % strictly one after the other; θ = 0 like `together` at 100 % |
+| `lead_band` | the additional source settles so that the main source's average stays in the band | band (20 %) | the main source always keeps a margin for quick corrections |
 
 The defaults overlap: both devices work together over part of the range.
 
 **Recommendation by emitter type** (the form's default, with its reason):
 
-| Lead + source | Default | Reason |
+| Main + additional source | Default | Reason |
 |---|---|---|
 | radiator + heated floor | `lead_band`, 20 % | the floor carries the base load; the radiator adds and corrects quickly (sun, cooking, an open door) |
 | devices of similar speed | `together`, 100 % | a common percentage |
-| a source to use first (e.g. cheaper energy) | `source_first`, chosen by the user | priority of the source |
-| a lead clearly slower than its source | warning | the quick corrections belong to the faster device: swap the roles |
+| an additional source to use first (e.g. cheaper energy) | `source_first`, chosen by the user | priority of the additional source |
+| a main source clearly slower than the additional one | warning | the quick corrections belong to the faster device: swap the roles |
 
-`source_first` is not the default next to a floor: with a low demand the radiator would stand
-at 0 % and the floor alone would regulate, overheating after any gain because it takes hours
-to slow down.
+`source_first` is not the default next to a floor: with a low demand the radiator stands at 0 % and the
+floor alone regulates. The predictive brake (section 6.6) keeps it from overheating, but a floor alone
+answers a gain (sun, cooking) hours late.
 
-### 6.4 Allocation loop
+### 6.4 The zone's joint fit
+
+The zone follows
+
+    dT/dt = a·u(t − L) − b·(T − T_ext) + a_f·x_f + Σ_j k_j·(T_j − T)
+
+with `u` the main source's realized power, `L` its delay, `x_f` the additional source's heat and `T_j`
+the connected neighbours' temperatures (zero while a door is closed). With water data both powers are
+powers at the reference water.
+
+```mermaid
+flowchart TD
+    A[Each calculation: T, T_ext, T_j, x_f of every candidate] --> B[30-min window]
+    P[Realized power of the main source's cycles] --> D
+    B --> C[Least-squares slope of T and its interval weights]
+    C --> D["Weighted means: u shifted by each candidate delay L, −(T − T_ext), x_f of each candidate c, T_j − T"]
+    D --> E[Sums of the normal equations for every pair L, c, fading over ZONE_FIT_MEMORY_WINDOWS]
+    E --> F{At least ZONE_FIT_MIN_WINDOWS windows?}
+    F -- yes --> G[Solve every pair; keep those with a, b, a_f > 0]
+    G --> H[Smallest residual; the pair in use is kept unless another explains ZONE_FIT_SWITCH_GAIN better]
+    H --> I{Columns not collinear and SE of a, b, a_f ≤ ZONE_FIT_MAX_REL_SE?}
+    I -- yes --> J[Publish a, b, a_f, k, L and the candidate]
+    I -- no --> K[Keep the previous result]
+```
+
+- **Windows.** Each measurement window of `COUPLING_WINDOW_S` (30 min) gives one row, built like the
+  neighbours' windows (section 5.3): the plain least-squares slope of `T` and, with the same weights,
+  the means of the regressors. A window starts again after a calibration of the main source's dead
+  times, a door change or a neighbour's open window, while the additional source does not apply the
+  main one's commands, while the zone is off, without a zone or outdoor temperature, and after a gap
+  between calculations longer than `ZONE_FIT_MAX_GAP_S`: no window spans a pause.
+- **The main source's delay from a grid.** The power column is built for each delay of
+  `ZONE_FIT_LEAD_DELAYS_MIN` (0 to 60 min). SmartPI's own dead time is not used: with slow rises and a
+  0.1 degC sensor it comes out two to six times too long, which shifted the power in the windows and
+  kept the fit from publishing (21 to 62 min instead of 10 in the trials; section 6.8).
+- **The additional source's time scale from its candidates** (section 6.2). Every pair of a delay and
+  a candidate is solved by least squares; the pair with the smallest residual wins.
+- **Nothing is taken from SmartPI's model**, so the fit works while SmartPI still learns, and
+  SmartPI's errors do not leak in.
+- **Publication.** At least `ZONE_FIT_MIN_WINDOWS` windows (with the fading, about 19 h), a
+  well-conditioned matrix
+  (condition number of the normalized matrix at most `10·COUPLING_LS_COND_MAX`), and a relative
+  standard error of `a`, `b` and `a_f` of at most `ZONE_FIT_MAX_REL_SE`. The sums fade over
+  `ZONE_FIT_MEMORY_WINDOWS` (6 days), so the fit follows slow changes.
+- **Heating and cooling apart.** A fit is kept per HVAC mode. In cooling both sources' columns change
+  sign, so the fitted strengths stay positive; a cooling fit is never used in heating and the reverse.
+- **Neighbours.** A neighbour connected to the zone gets a column; one never connected is left out.
+  Once the fit is published, its `k` replaces the one learned in the neighbour's own windows
+  (section 5.4) — in the control law, the gains and the brake — when it lies in
+  `(0, COUPLING_K_MAX]` with a relative standard error of at most `ZONE_FIT_MAX_REL_SE`: a door
+  seldom open is fitted from few windows. The neighbour's own windows still treat the additional
+  source's heat as an unknown column, so that it does not leak into their `k`.
+
+### 6.5 Learning
+
+```mermaid
+stateDiagram-v2
+    state "learn: blocks of SOURCE_LEARN_HIGH and SOURCE_LEARN_LOW" as Learn
+    state "allocation: the loop, the proportional answer and the brake" as Allocation
+    state "off: the additional source gets 0 %" as Off
+
+    [*] --> Learn: SmartPI learns a and b
+    Learn --> Allocation: the fit is published (SmartPI seeded from it) or SmartPI learned on its own after ZONE_FIT_TIMEOUT_S
+    Allocation --> Off: main source off, a neighbour's window turns the zone off, or the additional source not applying the commands
+    Learn --> Off: same
+    Off --> Learn: back, SmartPI still learning
+    Off --> Allocation: back
+```
+
+- **Both sources work from the first day.** While SmartPI learns, the additional source works in
+  blocks alternating between `SOURCE_LEARN_HIGH` and `SOURCE_LEARN_LOW`, each
+  `max(SOURCE_LEARN_BLOCK_MIN_S, 2 × L_f + 2 × tau_f)` long, so that the fit sees its heat change while
+  the main source regulates. A zone colder than its setpoint by `SOURCE_LEARN_COLD_C` gets it at full
+  power, a zone warmer by `SOURCE_LEARN_WARM_C` gets none.
+- **The learning clock.** Each HVAC mode has its own clock: the time its fit has been awaited with
+  the additional source at work. It counts only while the source applies the main one's commands and
+  the mode's fit is not published, and not across gaps between calculations longer than
+  `ZONE_FIT_MAX_GAP_S`. The blocks follow it, and so does the timeout below.
+- **A main source that has already learned on its own** — the additional source is added later, or
+  SmartPI was reset by an HVAC mode change — gets no blocks: the allocation loop runs at once, without
+  the brake until the fit is published, and the `source_heat` gate pauses SmartPI's learning until the
+  fit comes or the mode's clock reaches the timeout. In the simulations the allocation and the daily
+  swing were enough for the fit to publish after 19.5 h.
+- **SmartPI waits for the fit.** While the additional source's heat is present and the fit is not
+  published, the `source_heat` gate pauses SmartPI's own learning of `a`, `b` and dead times: it would
+  take the floor's heat for its own. The gate has a hysteresis: on once `x_f` reaches `SOURCE_X_MIN`,
+  off when `x_f` falls below `SOURCE_X_OFF` or once the fit is published. Each edge of a gate discards
+  SmartPI's open learning window, and a source running near a single threshold would discard them over
+  and over.
+- **SmartPI starts from the fit.** Whenever SmartPI learns while the current mode's fit is published
+  — the fit has just come, or a change of HVAC mode made SmartPI learn again — SmartPI's `a` and `b`
+  and the histories that end its learning phase are set from it. From then on SmartPI keeps the fit's
+  `a` and `b`, signed for the HVAC mode, at every calculation, and again right after its own learning
+  step, so that a window of its own closing in a calculation does not move them for one cycle.
+- **The fit's windows stand for SmartPI's own.** SmartPI judges its model by its own counts of learned
+  samples and the spread of its own `b`: its feed-forward warms up with `learn_ok_count`, its time
+  constant needs agreeing values of `b`, its near band follows the model after ten `a` samples. With the
+  fit in use these see the fit: its `b` gives the time constant, and the counts are at least what the
+  checks ask for (`AB_CONFIDENCE_MIN_SAMPLES_A`, `AB_CONFIDENCE_MIN_SAMPLES_B`,
+  `ZONE_FIT_MODEL_SAMPLES_A`, the feed-forward's warm-up count). Without that, SmartPI, which rarely
+  learns at a steady setpoint, kept its feed-forward at about a sixth of its value, the integral carried
+  the load and the zone settled off its setpoint (section 6.8).
+- **A fit that does not come.** If the mode's clock reaches `ZONE_FIT_TIMEOUT_S` (48 h) without a
+  published fit, the `source_heat` gate opens for good in that mode and SmartPI learns on its own, as
+  today; the diagnostics show `timed_out`. The clocks survive a restart.
+- **Then a known input.** With the fit published, the additional source's heat `a_f·x_f`, now and
+  predicted over the horizon, is a known input of the main source, fading in as described in
+  section 2.3.
+
+### 6.6 Allocation loop and predictive brake
 
 ```mermaid
 flowchart LR
-    S[Zone temperature and setpoint] --> L[Lead SmartPI: demand D before its 0..100 % limits]
-    L --> W[Lead actuator: W]
-    L --> AV[Average of D]
-    AV --> E[error = average − f of Z]
-    E --> I[Integrator, rate limit, range 0..100 %]
-    I --> Z[Source command Z]
-    Z --> SRC[Source thermostat: own cycle and delays]
+    S[Zone temperature and setpoint] --> L[Main source's SmartPI]
+    L --> W[Main source's actuator: its own command W]
+    L --> D[Steady demand: feed-forward plus integral]
+    D --> LIM{Main source stuck at a limit?}
+    LIM -- "0 %, zone too warm" --> MIN[demand = minimum]
+    LIM -- "100 %, zone too cold for longer than the source settles" --> MAX[demand = maximum]
+    LIM -- no --> AV[Average of the demand]
+    MIN --> AV
+    MAX --> AV
+    AV --> E[error = average − f of the applied Z]
+    E --> I[Integrator, rate limit, holds]
+    I --> P[+ proportional answer to the zone's error]
+    P --> BR[Predictive brake: at most the largest Z that keeps the predicted zone at its setpoint]
+    BR --> Z[Additional source's command Z]
+    Z --> SRC[Additional source: own cycle and delays]
     SRC --> X[x_f through L_f and tau_f]
-    X --> K[Known heat a_f·x_f in the lead's model]
+    X --> K[Known heat a_f·x_f in the main source's model]
     K --> L
 ```
 
-- A lead working more than the curve asks moves the source up, a lead working less moves it
-  down.
-- The lead's demand is taken **before its 0..100 % limits**. Above 100 % the lead alone cannot
-  keep up and the source rises as a reserve; below 0 the zone is warmer than the lead can
-  correct by stopping, and the source comes down. Without it, a source left above its share
-  with the lead at 0 % would overheat the zone unseen.
-- **Speed.** An error held for `SPLIT_SETTLE_FACTOR` source settle times (`L_f + tau_f`),
-  never less than `SPLIT_MIN_TIME_S`, moves the source by 100 %. It is slowed in proportion
-  for a source stronger than the lead. The demand is averaged over `SPLIT_AVERAGE_FRACTION`
-  of that time, never less than `SPLIT_AVERAGE_MIN_S`. The source never covers its range
-  faster than it settles, nor faster than `SPLIT_MIN_FULL_RANGE_S`.
-- **How the speed was chosen.** On an ideal lead with fast and slow, weak and strong sources
-  and every rule (15 cases), these values keep the source's overshoot within 3 % (26 % with
-  the first trial values), with no swinging. A fast source settles in about 3 h, a water
-  floor in about a day; the lead holds the zone temperature meanwhile.
+- **What the loop follows.** The main source's **steady** demand: its feed-forward plus its integral,
+  before its 0..100 % limits. The proportional part answers the current error, for example a setpoint
+  change, and would make the additional source chase transients.
+- **On the applied command.** The loop's error compares the main source's average with the rule's
+  curve at the command the additional source actually got, after the brake, not at the loop's own
+  value; while the brake holds the source below the loop, the loop does not wind further up.
+- **Pauses.** Whenever the loop does not run — the zone or the additional source off, a calibration,
+  SmartPI learning, no steady demand — it keeps its command and average, and does not integrate over
+  the pause once it runs again. A change between heating and cooling starts it again from 0, since
+  each mode has its own split. Out of the learning blocks it starts from the heat the source gives at
+  that moment (`x_f`), so the heat does not step.
+- **A main source stuck at a limit.** At 0 % with the zone warmer than its setpoint by
+  `SPLIT_LIMIT_ERROR_C`, the loop gets the lowest demand. At the most it can give — 100 % of VTherm's
+  maximum on-percent, of the valve curve's top, of its water — with the zone that much colder for
+  longer than the additional source takes to settle, it gets the highest demand: the source rises as a
+  reserve. A morning setpoint rise is shorter than that and does not move the loop.
+- **Holds.** The loop does not move the source up while the zone is warmer than its setpoint by more
+  than `SPLIT_HOLD_ERROR_C`, nor down while it is that much colder.
+- **Proportional answer.** Besides the allocation, the additional source answers the zone's error with
+  `SPLIT_ERROR_GAIN` command per degree, divided by its power relative to the main source's. The answer
+  vanishes with the error, so the rule still sets the split.
+- **Speed.** An error held for `SPLIT_SETTLE_FACTOR` settle times (`L_f + tau_f`), never less than
+  `SPLIT_MIN_TIME_S`, moves the source by 100 %; the time grows in proportion for a source stronger than
+  the main one. Both follow the candidate time scale in use and the fitted `a_f/a`. The demand is averaged over `SPLIT_AVERAGE_FRACTION` of that time, never less than
+  `SPLIT_AVERAGE_MIN_S`. The source never covers its range faster than it settles, nor faster than
+  `SPLIT_MIN_FULL_RANGE_S`.
+- **A neighbour's open window.** The zone's reaction (section 5.5) reaches the additional source: with
+  `turn_off` it gets 0 %; with `frost` or `eco` the loop works against the preset's setpoint instead of
+  the comfort one, never a more demanding one.
+- **Calibration.** While SmartPI calibrates the main source's dead times, it drives it to 100 % and 0 %
+  on purpose. The additional source keeps its command and the loop pauses.
 
-### 6.5 Still to come (planned design)
+**Predictive brake.** A floor answers hours late: the heat already on its way keeps coming after the
+zone has reached its setpoint. The brake caps the command at what the fitted model says the zone can
+take:
 
-- **Lead side.** The source's heat as a known input, now and over the horizon. `a_f` is
-  learned with the measurement windows of section 5.3, generalized from neighbours to known
-  inputs. SmartPI's own learning of `a` and `b` is gated while the source's heat is present
-  and `a_f` is not yet reliable.
-- **Learning phase.** The zone learns both devices from the start. A plan interleaves
-  episodes: both off (for `b`), the lead alone (for `a`), the source alone (for `a_f`). The
-  phase ends when all three have their samples, and the diagnostics show the progress of each.
-- **Executive path of the source.** The source's handler applies the lead's command with its
-  own cycle and delays. It applies 0 when the lead is off, in safety mode, unavailable, in
-  another HVAC mode, or when its command is stale. The source's own learning is put to sleep
-  and restored when the role ends.
+    e(c) = setpoint − T(now + H),   H = max(L_f + tau_f, SOURCE_PREDICTION_MIN_S)
+
+`T` is integrated in steps of `SOURCE_PREDICTION_STEP_S` with the fitted `a`, `b`, `a_f` and `k`, the
+outdoor and neighbour temperatures held, and the additional source at command `c` (at most its power
+cap, section 6.7) after the commands already on their way. The main source starts at its steady
+demand and **hands over its load**: its feed-forward takes off `a_f/a` per unit of `x_f` that the
+additional source's known heat adds (as far as that heat is already in its control law), down to 0 %,
+and takes it back up to the most it can give (its water factor and maximum on-percent).
+
+- The cap is the largest `c` with `e(c) ≥ (1 − SPLIT_PREDICTED_SHARE)·e(allocation)` — with the share
+  at 1, the predicted zone at its setpoint. `e` falls as `c` rises, flat while the main source still
+  hands over its load and steeper once it is down to 0, so the cap is found by `SOURCE_BRAKE_STEPS`
+  halvings.
+- A zone too warm whatever the additional source does — the main source's own heat — only asks the
+  source not to add to it: the cap is then the largest `c` with `e(c) ≥ e(0)`.
+- Both conditions have a tolerance of `SOURCE_SENSITIVITY_MIN_C`. A source that moves the predicted zone
+  by less than that is not braked, and there is no brake without a published fit.
+
+```mermaid
+flowchart TD
+    A[Allocation and proportional answer: Z0] --> B{Fit published?}
+    B -- no --> Z[Z = Z0]
+    B -- yes --> C[Predict e at 0, at 1 and at the allocation]
+    C --> D{e 0 − e 1 ≤ SOURCE_SENSITIVITY_MIN_C?}
+    D -- yes --> Z
+    D -- no --> E[Floor = min of 1 − share times e at the allocation, and e 0, less the tolerance]
+    E --> F{e 1 ≥ floor?}
+    F -- yes --> Z
+    F -- no --> G[Halve SOURCE_BRAKE_STEPS times: largest c with e c ≥ floor]
+    G --> H[Z = min of Z0 and c]
+```
+
+### 6.7 Executive path
 
 ```mermaid
 sequenceDiagram
-    participant L as Lead handler
-    participant R as Registry (hass.data)
-    participant S as Source handler
-    L->>L: calculate: W, demand D
-    L->>R: source command Z, time
-    S->>R: read Z (every control call)
-    S->>S: own cycle with Z, delays
-    S->>R: realized power of each cycle
-    L->>R: read the source's realized power
-    L->>L: x_f, known heat a_f·x_f
+    participant L as Main source's handler
+    participant K as Link (hass.data)
+    participant S as Additional source's handler
+    L->>K: attach(main, additional) at setup
+    loop every calculation of the main source
+        L->>L: calculate: W, then the command Z
+        L->>K: publish Z, time, HVAC mode
+    end
+    loop every control call of the additional source
+        S->>K: did the main source publish anything within SOURCE_COMMAND_MAX_AGE_S?
+        alt yes
+            K-->>S: Z for my HVAC mode, else 0
+            S->>S: water data, then its own cycle with Z / water factor and its delays
+            S->>K: active, power cap; each cycle it starts: on-time, duration, power, level
+        else no: the main source is silent
+            S->>K: no longer active
+            S->>S: regulates the zone with its own SmartPI
+        end
+    end
+    L->>K: cycles since the last read, power cap
+    L->>L: x_f of every candidate, the zone's fit, known heat a_f·x_f
 ```
 
-- **Options.** A source form with the emitter types, the rule and its parameter, validation
-  (the source runs SmartPI, no chains, one source per zone), the automatically created entry
-  of the source showing only its delays and PWM restart, and a reload of the two affected
-  thermostats only.
+- **The link** lives in `hass.data`, keyed by the thermostats' unique ids. An additional source follows
+  one main source only; a second one naming it gets a warning and no source.
+- **The command** is applied with the additional source's own cycle and delays. It is 0 when the
+  command was given for another HVAC mode (the main source is off, for example), the additional
+  source's own thermostat is off, or its own load is shed by the power manager; its own window
+  detection and safety still act as usual. Each thermostat sheds its own load: a main source that is
+  shed still gives a command.
+- **A silent main source.** When the main source has published nothing at all, for any HVAC mode, for
+  `SOURCE_COMMAND_MAX_AGE_S` — its integration stopped, it is not ready, it was removed — the
+  additional source regulates the zone with its own SmartPI and its own model, with a warning in the
+  log, until the commands come back. Meanwhile it still reports its cycles, so the main source knows
+  the heat on its way when it is back. A main source that is switched off (by the user or by its
+  window detection) publishes its 0 every `SMARTPI_RECALC_INTERVAL_SEC`, since VTherm may call it only
+  every `cycle_min`, and is not silent. The time counts from the attachment until the first command,
+  so a main source that has just started is not silent either. Without this the zone fell from 20 to 16.2 degC in 12 h after a
+  failure of the main source; with it, it stayed within 19.4 to 20.6 degC.
+- **Water.** The main source's command is power at the reference water. The additional source reads
+  its own water data at each control call and gives its emitter `power / factor` (at most 1), as its
+  own SmartPI would. It publishes its **power cap**, the most power a full command gives now: its water
+  factor, at least `WATER_NO_HEAT`, 1 without water data. The main source's brake predicts with it.
+- **The main source gives nothing when it cannot decide.** When its dependency inputs cannot be read
+  at a calculation, it publishes 0 rather than its last command.
+- **Is the additional source there?** At each control call the additional source tells the link that
+  it applies the commands. The main source counts it as active, and its heat as present, only while
+  that is fresher than `SOURCE_COMMAND_MAX_AGE_S`. A source removed or stopped without a word stops
+  counting after that time, and its heat fades from the model.
+- **Cycles.** The additional source reports each cycle it starts (section 6.2); a cycle cut short is
+  replaced by the next one. A valve's new opening is reported as it comes.
+- **The additional source's own SmartPI stands still.** Versatile Thermostat keeps calling its
+  algorithm on each measurement, and recalculates a valve straight from its output between control
+  calls. While the role lasts, each of these calculations returns the main source's command at once:
+  nothing is regulated, nothing is learned, and the learned model stays as it was when the role began.
+  Its state is saved as usual, and SmartPI's services act on that real state. When the role ends, its
+  SmartPI starts a fresh cycle from its own model.
+- **Diagnostics of the additional source.** Its `dependencies` block shows only its role, the main
+  source and the command it applies (section 9).
+
+### 6.8 Results and limits (simulation)
+
+The suite `tests/test_smartpi_sim_zone_set.py` (run with `SMARTPI_SIM_LOCAL=1`) compares the zone with
+its two sources against today's setup, two SmartPI regulating the zone independently. A radiator is
+the main source and a water floor (30 min delay, 180 min lag, `a_f = a`) the additional one, rule
+`lead_band` at 20 %, 0.1 degC sensors, outdoor 3 degC (mild) or −8 degC (cold) with a daily swing of
+±3 degC. Day 1 starts 1 degC below the setpoint; the steady error is the mean over days 3–4; then
+three nights at 17 degC (6, 8 and 10 h).
+
+**Twelve rooms** (`b` 0.0005 to 0.002 /min, `a` 0.015 to 0.06 degC/min):
+
+| Measure | Zone with two sources | Two independent SmartPI |
+|---|---|---|
+| Steady error, mean of the 12 rooms | 0.029 degC | 0.065 degC |
+| Steady error, range | 0.018–0.052 degC | 0.032–0.113 degC |
+| Overshoot after the night, worst room | 0.19 degC | 0.53 degC |
+| Day 1 error, mean | 0.43 degC | 0.33 degC |
+| Fit published | after 19.5 h in every room | — |
+| Fitted `a`, `b`, `a_f` against the truth | 0.99–1.03, one `a_f` 1.10 | SmartPI's own, one thermostat: `a` 0.55–1.34, `b` 0.53–1.16 |
+| Main source's delay | 10 min, the truth, in every room | — |
+
+**Installations** (room `b` 0.001, `a` 0.03, mild):
+
+| Case | Zone | Independent | Fit |
+|---|---|---|---|
+| floor behind a valve | 0.020 degC | 0.050 degC | 1.03/1.02/1.03 |
+| slab warming through its depth (two lags in series) | 0.035 degC | 0.056 degC | `a` 0.96, `b` 1.07, `a_f` 1.17 |
+| water on heating curves, Smart Boiler's data | 0.053 degC | 0.094 degC | 0.99/0.98/0.96 |
+| two zones, door open 6–23 h | 0.034 / 0.029 degC | 0.072 / 0.055 degC | `k` 0.89 / 0.94 |
+| two zones, always open | 0.021 / 0.018 degC | 0.055 / 0.042 degC | `k` 1.04 / 0.96 |
+
+Scenarios of `tests/test_smartpi_sim_second_source.py`: a second radiator as the additional source
+(Z4) 0.037 degC against 0.053; cooling with two sources 0.024 degC; the curves of `source_first` and
+`together` reached.
+
+**Decisions taken on these results:**
+
+- **Learning blocks 100 % / 0 %.** Blocks of 70 % / 30 % make day 1 milder (mean 0.39 against
+  0.43 degC) for the same steady error (0.030 against 0.029 degC), but the smaller contrast leaves the
+  fit further off even after a week: one room 8 % off (`a_f` 0.92) and one `a_f` at 1.12, against
+  every value within 3 % and one `a_f` at 1.10. The fit gives SmartPI its model for good; day 1
+  happens once.
+- **What did not work, and why the design is what it is:**
+  - *Learning the additional source on top of SmartPI's model* (the first design): `a_f` came out
+    0.61–1.64 times the truth with 0.1 degC sensors, or was never published.
+  - *SmartPI's dead time in the fit*: two to six times too long with slow rises, so 2 of 12 rooms never
+    published and SmartPI waited 57 h in another. The delay grid finds the truth.
+  - *The brake with the main source held at its demand*: the main source never handed its load over, so
+    the split stayed where it was when the loop started (rule `source_first`: main source at 21 % where
+    the curve asks 0 %).
+  - *The handover with a straight-line cap*: with `e` flat over the handover the cap fell to 0 and the
+    floor switched between 0 and 100 %.
+  - *Cutting the source whenever the zone is predicted too warm*: a zone warm from the main source's own
+    heat lost its additional source (two radiators: 0.072 against 0.053 degC). The brake now only keeps
+    the source from adding to it.
+  - *An allocation loop integrating over pauses*: after hours off or a calibration its first step
+    covered the whole pause and jumped to 0 or 100 %; it now pauses.
+  - *SmartPI's own reliability counts after the fit*: the feed-forward stayed at a sixth of its value
+    (5 of 30 learned samples) and the integral, frozen in the deadband, carried the load. With this and
+    the brake's fixes above, the base room's steady error went from 0.058 to 0.022 degC.
+  - *The bound of the known heat's shift at 15 degC*: in cold weather a floor carrying most of the load
+    shifts `T_ref` by more, the feed-forward counted less floor heat than there was and the zone settled
+    0.07 degC warm. The bound is now `KNOWN_HEAT_MAX_SHIFT_C` (section 2.2).
+  - *Switched cycles at full power with water*: a floor switched on gives its water factor, not 1; the
+    fit took `a_f` as 0.30 of the truth.
+  - *The neighbours' own `k` in a zone with two sources*: behind a door it was never published, the
+    zone missed the exchange and settled 0.14 degC low while the door was open (0.125 against
+    0.055 degC); the fit's `k` fixed it.
+
+**Limits:**
+
+- **Morning recovery after a night setback is slower in some rooms.** With the floor's heat known, the
+  main source's feed-forward is what it needs at the setpoint, and SmartPI's own recovery — its
+  proportional part, with positive integral blocked after a setpoint change by its integral guard — is
+  gentle. Two independent SmartPI each count the full load, both run at full power and recover faster,
+  with the overshoot above. Time to reach 0.2 degC below the setpoint, mean of the three nights: shorter
+  or equal in 3 of 12 rooms, 0.2–1.4 h longer in 8, and 4.8 h longer in the slowest room in cold weather
+  (8.9 h against 4.1 h); with water on a heating curve, where the floor's power is limited by its
+  water, 12.4 h against 5.9 h.
+- **Day 1** is worse than with two independent SmartPI (0.43 against 0.33 degC): the learning blocks
+  swing the zone until the fit is published.
+- **A slab warming through its depth** is not one of the candidates' shapes: its fit carries errors of
+  up to 17 % (`a_f`), and regulation stays better than two independent SmartPI.
+- Each thermostat still runs its own on/off cycles; the split does not reduce switching.
 
 ## 7. Resetting the learned model
 
@@ -470,6 +814,21 @@ dependencies
         └── joint_b             loss coefficients fitted with them
 ```
 
+For the additional source, its item keeps:
+
+| Key | Content |
+|---|---|
+| `zone_fit`, `zone_fit_cool` | the zone's joint fit per HVAC mode: its sums (10 significant digits), the pair in use and the published result (`a`, `b`, `a_f`, `k` and their errors, the main source's delay, the candidate); absent before its first window |
+| `response_start` | the emitter response the fits were learned with: fits learned with another are dropped at startup |
+| `response` | the candidate time scale in use (`lag_s`, `tau_s`) |
+| `allocation`, `x_f` | the allocation loop's command and the source's heat |
+| `learn_elapsed_s` | the learning clock of each HVAC mode (`heat`, `cool`; section 6.5) |
+| `k_history`, `cool` | the neighbours' windows' own estimate of the source's heat, which only keeps it out of their `k` |
+
+A restart resumes where the zone was: a fit published before it is fully in the control law at
+once. A zone with a published fit adds about 16 KB to SmartPI's saved state per HVAC mode (more
+with neighbours).
+
 - An old saved state without the key loads as before.
 - At startup, the state of items no longer configured is dropped.
 - A saved state that cannot be read is ignored, rows that cannot be used are skipped, and the
@@ -484,12 +843,26 @@ The published diagnostics gain a `dependencies` block only when dependencies are
 |---|---|
 | `b_eff`, `t_ref` | the composed model |
 | `inputs_active` | whether known inputs are active |
-| `learning_gate` | `door_open`, `door_settling`, `neighbour_window` or none |
+| `learning_gate` | `neighbour_window`, `door_open`, `source_heat`, `door_settling` or none |
 | `neighbour_window_action` | the window reaction applied |
-| `items[]` | per neighbour: `id`, `kind`, `entity`, `mode`, `available`, `active`, `t_neighbour`, `neighbour_window`, `k`, `k_reliable`, `k_samples`, `indistinguishable`, `share_of_losses` |
+| `items[]` | per neighbour: `id`, `kind`, `entity`, `mode`, `available`, `active`, `t_neighbour`, `neighbour_window`, `k`, `k_reliable`, `k_from_zone_fit`, `k_samples`, `indistinguishable`, `share_of_losses` |
 
-The second source will add a `second_source` block (rule, command, `x_f`, `a_f` and its
-samples, `L_f`, `tau_f`, the lead's average) and, on the source thermostat, its role.
+With a second source, the block gains `second_source`:
+
+| Field | Meaning |
+|---|---|
+| `id`, `entity`, `rule` | the additional source's item and its rule |
+| `active` | the additional source applies the main source's commands |
+| `mode` | `learn`, `allocation` or `off` (section 6.5) |
+| `command`, `x_f` | the command given and the source's heat now (0..1) |
+| `power_cap` | the most power a full command gives now (its water factor, 1 without water data) |
+| `a_f`, `a_f_reliable` | the fitted effect for the current HVAC mode |
+| `lead_emitter`, `source_emitter`, `lag_min`, `tau_min` | the emitters and the time scale in use |
+| `lead_demand_avg` | the main source's average steady demand followed by the loop |
+| `zone_fit` | `published`, `windows`, `a`, `b`, `a_f`, `lead_delay_min`, `k`, `timed_out` (section 6.4) |
+
+A thermostat working as another's additional source publishes instead `role` (`second_source`),
+`lead` (the main source's unique id) and `command`, the command it applies.
 
 ## 10. Options
 
@@ -530,11 +903,23 @@ flowchart TD
 - **Options forms** with `pytest-homeassistant-custom-component`.
 - **Simulator** (`tests/sim/`): the real `SmartPIHandler` in virtual time against a thermal
   model, with VTherm's cycle scheduler, moving average and slope reproduced. A zone may have a
-  second thermostat whose emitter has a delay and a lag.
+  second thermostat whose emitter has a delay and one lag or two in series, on water of its own
+  boiler; several zones can share one world, linked always or by a door's schedule.
 - **Differential test**: a run with inactive dependencies equals, bit for bit, a run with the
   substitution switched off.
-- **Scenarios**: neighbours N1–N7; second source Z1–Z7 as the integration lands. Today's
-  baseline, two independent SmartPI on one zone, is measured for comparison.
+- **Second source, unit tests**: the joint fit finds the delay, the time scale, `a`, `b`, `a_f` and
+  a neighbour's `k` from simulated measurements; the candidates; the link (silent main source,
+  power cap); the learning blocks, the gate and its timeout; the brake (handover, a zone warm from
+  the main source); SmartPI holding the fit and its evidence; switched cycles at their water level.
+- **Scenarios**: neighbours N1–N7; second source:
+  - in the pull-request suite: Z1/Z3 (floor, `lead_band`: blocks, the gate, the fit, SmartPI
+    seeded from it, the split), Z6 (the main source switched off, then silent), the executive role
+    leaving the source's SmartPI untouched, a valve source following between control calls, the
+    additional source's water, power shedding, a restart with the fit, cooling;
+  - in the full suite: against two independent SmartPI at a constant setpoint and with a night
+    setback, the curves of `source_first` and `together`, two radiators (Z4), a main source too
+    weak for the cold (Z5), and `tests/test_smartpi_sim_zone_set.py` (twelve rooms, a valve, a
+    two-stage slab, water on heating curves, two zones with a door; section 6.8).
 - **Two levels of runs.** Pull requests run the short suite ("Tests"). The long scenarios and
   the comparisons with VTherm's own classes run with `SMARTPI_SIM_LOCAL=1`, locally and in the
   "Full tests" workflow on the `qas` branch.
@@ -544,7 +929,7 @@ flowchart TD
 | Constant | Value | Role |
 |---|---|---|
 | `KNOWN_INPUTS_B_EFF_MIN` | 1e-5 /min | smallest composed loss |
-| `KNOWN_HEAT_MAX_SHIFT_C` | 15 degC | bound of the heat shift of `T_ref` |
+| `KNOWN_HEAT_MAX_SHIFT_C` | 40 degC | bound of the heat shift of `T_ref` |
 | `COUPLING_WINDOW_S` | 30 min | measurement window |
 | `COUPLING_K_MIN_DT` | 0.5 degC | smallest informative temperature difference and variation |
 | `COUPLING_K_MAX` | 0.02 /min | largest credible `k` |
@@ -566,3 +951,29 @@ flowchart TD
 | `SPLIT_DEMAND_MIN`, `SPLIT_DEMAND_MAX` | −1, 2 | range of the demand fed to the loop |
 | `SPLIT_SLOW_SOURCE_S` | 60 min | a source settling this slowly is slow |
 | `SPLIT_ROLES_REVERSED_FACTOR` | 1.5 | a lead this much slower than its source is flagged |
+| `SPLIT_LIMIT_ERROR_C`, `SPLIT_LEAD_STOPPED`, `SPLIT_LEAD_FULL` | 0.2 degC, 1 %, 99 % | a lead stuck at a limit |
+| `SPLIT_HOLD_ERROR_C` | 0.05 degC | holds of the source against the zone's error |
+| `SPLIT_ERROR_GAIN` | 2 per degC | the source's proportional answer to the error |
+| `SOURCE_X_OFF` | 0.05 | below it the source's heat counts as absent and the `source_heat` gate lets learning resume |
+| `SOURCE_X_MIN` | 0.2 | the `source_heat` gate pauses learning from this `x_f` |
+| `SOURCE_A_F_MAX`, `SOURCE_X_MIN_STD` | 0.5 degC/min, 0.1 | the source's column in the neighbours' own windows: largest credible value, variation needed |
+| `KNOWN_INPUT_FADE_S` | 60 min | a newly known coefficient enters the model |
+| `SOURCE_COMMAND_MAX_AGE_S` | 15 min | a main source silent this long no longer works; a source's word that it applies the commands lasts this long |
+| `SOURCE_TRAJECTORY_MIN` | 15, 30, 60, 120 min | horizon points of the source's predicted heat |
+| `SOURCE_LEARN_HIGH`, `SOURCE_LEARN_LOW` | 100 %, 0 % | the additional source's learning blocks |
+| `SOURCE_LEARN_BLOCK_MIN_S` | 2 h | shortest block (else twice the settle time) |
+| `SOURCE_LEARN_COLD_C`, `SOURCE_LEARN_WARM_C` | 0.5 degC, 0.3 degC | a zone this cold gets the source at full power, this warm none |
+| `ZONE_FIT_MIN_WINDOWS` | 36 windows (18 h) | windows before the fit may be published |
+| `ZONE_FIT_MEMORY_WINDOWS` | 288 windows (6 days) | fading memory of the fit |
+| `ZONE_FIT_MAX_REL_SE` | 0.2 | largest relative standard error of `a`, `b`, `a_f` |
+| `ZONE_FIT_SWITCH_GAIN` | 0.2 | how much better another pair must explain the zone to replace the pair in use |
+| `ZONE_FIT_LEAD_DELAYS_MIN` | 0, 3, 6, 10, 15, 20, 30, 45, 60 min | the main source's candidate delays |
+| `SOURCE_SCALE_MULTIPLIERS` | 0.4 to 2.5 (ten values) | candidate time scales of a source with a delay or a lag |
+| `SOURCE_FAST_TAU_MIN` | 0 to 60 min (ten values) | candidate lags of a source without them |
+| `ZONE_FIT_TIMEOUT_S` | 48 h | without a published fit, SmartPI learns on its own |
+| `ZONE_FIT_MAX_GAP_S` | 15 min | a longer gap between calculations breaks a window of the fit and does not count on the learning clock |
+| `ZONE_FIT_MODEL_SAMPLES_A` | 10 | SmartPI's count of `a` samples while it holds the fit (its near band follows the model) |
+| `SOURCE_PREDICTION_STEP_S`, `SOURCE_PREDICTION_MIN_S` | 60 s, 30 min | the brake's prediction: step, shortest horizon |
+| `SOURCE_SENSITIVITY_MIN_C` | 0.01 degC | a source moving the prediction less is not braked; the brake's tolerance |
+| `SPLIT_PREDICTED_SHARE` | 1 | share of the predicted error the source may correct |
+| `SOURCE_BRAKE_STEPS` | 8 | halvings that find the brake's cap |

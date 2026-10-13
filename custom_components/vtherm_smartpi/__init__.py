@@ -22,6 +22,7 @@ from .const import (
     CONF_TARGET_VTHERM,
     DATA_FACTORY_REGISTERED,
     DATA_SERVICES_REGISTERED,
+    DATA_SOURCE_LINK,
     DOMAIN,
     PROP_FUNCTION_SMART_PI,
     SERVICE_FORCE_SMARTPI_CALIBRATION,
@@ -302,7 +303,11 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     data = _ensure_domain_data(hass)
     data.pop(entry.entry_id, None)
 
-    if not [key for key in data if key not in (DATA_FACTORY_REGISTERED, DATA_SERVICES_REGISTERED)]:
+    if not [
+        key
+        for key in data
+        if key not in (DATA_FACTORY_REGISTERED, DATA_SERVICES_REGISTERED, DATA_SOURCE_LINK)
+    ]:
         _unregister_factory(hass)
         _unregister_services(hass)
 
