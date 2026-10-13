@@ -58,6 +58,7 @@ from .const import (
     DOOR_SETTLING_S,
     COUPLING_K_MAX,
     KNOWN_INPUT_FADE_S,
+    SOURCE_BOOST_ERROR_C,
     SOURCE_BRAKE_STEPS,
     SOURCE_LEARN_BLOCK_MIN_S,
     SOURCE_LEARN_COLD_C,
@@ -169,6 +170,8 @@ class ModelContext:
     target_temp: float | None = None
     # Most power the lead gives at full command (its water factor, its maximum on-percent).
     lead_power_cap: float = 1.0
+    # The lead's cycle.
+    lead_cycle_s: float = 600.0
 
 
 class _Source:
@@ -196,6 +199,8 @@ class _Source:
         self.full_since_s: float | None = None
         # The predictive brake held the command below the allocation at the last calculation.
         self.braked = False
+        # The lead's feed-forward leaves the source's heat out while the zone recovers.
+        self.boost = False
         # Time each HVAC mode has spent with the source active and its fit not
         # published: the clock of the learning blocks and of the fit's timeout.
         self.learn_elapsed_s = {_FIT_HEAT: 0.0, _FIT_COOL: 0.0}
@@ -397,8 +402,20 @@ class DependencyModel:
             if k is not None:
                 exchanges.append(ExchangeInput(obs.item.item_id, weight * k, obs.reading.temperature))
 
+        drive_exchanges = tuple(exchanges)
+        if source is not None and fit is not None:
+            # The predictions use the exchanges at their full value, like the fit's a, b and a_f.
+            drive_exchanges = tuple(
+                ExchangeInput(obs.item.item_id, k, obs.reading.temperature)
+                for obs in connected
+                if (k := self._neighbour_k(obs.item.item_id, fit)) is not None
+                and obs.reading.temperature is not None
+            )
+        if source is not None:
+            source.boost = self._recovery_boost(ctx, fit, drive_exchanges)
+
         heats = []
-        if source is not None and x_f is not None:
+        if source is not None and x_f is not None and not source.boost:
             weight = self._fade(source_key, a_f, ctx.now_s)
             if a_f is not None and weight > 0.0:
                 rate = _sign(ctx.hvac_mode) * weight * a_f
@@ -414,15 +431,6 @@ class DependencyModel:
                 )
         action, setpoint = self._window_action(connected, readings, ctx)
         if source is not None:
-            drive_exchanges = tuple(exchanges)
-            if fit is not None:
-                # The prediction uses the exchanges at their full value, like the fit's a, b and a_f.
-                drive_exchanges = tuple(
-                    ExchangeInput(obs.item.item_id, k, obs.reading.temperature)
-                    for obs in connected
-                    if (k := self._neighbour_k(obs.item.item_id, fit)) is not None
-                    and obs.reading.temperature is not None
-                )
             self._drive_source(ctx, fit, action, setpoint, drive_exchanges)
             self._save_source()
 
@@ -439,6 +447,35 @@ class DependencyModel:
             source_command=source.command if source is not None else None,
             source=self._source_status(readings.source, ctx) if source is not None else None,
         )
+
+    def _recovery_boost(
+        self, ctx: ModelContext, fit: ZoneFitResult | None, exchanges: tuple[ExchangeInput, ...]
+    ) -> bool:
+        """The zone recovers: the lead's feed-forward leaves the source's heat out.
+
+        Far from its setpoint (after a setback, say) the zone needs more than the
+        steady load. Counting the additional source's rising heat, the lead's
+        feed-forward would hand its share over while the zone is still cold, and
+        only its gentle proportional part would drive the recovery; two
+        independent SmartPI recover faster because each counts the whole load.
+        So while the zone is colder than its setpoint by more than
+        SOURCE_BOOST_ERROR_C, the lead works as if it were alone. The boost ends
+        early, once the fitted model says the zone reaches that band within the
+        lead's delay plus one of its cycles at the present powers: the heat the
+        lead has already sent then lands the zone instead of overshooting it.
+        """
+        source = self._source
+        if fit is None or source.mode != SOURCE_MODE_ALLOCATION:
+            return False
+        error = self._zone_error(ctx)
+        if error is None or error <= SOURCE_BOOST_ERROR_C or ctx.zone_temp is None or ctx.ext_temp is None:
+            return False
+        sign = _sign(ctx.hvac_mode)
+        lead = min(max(ctx.lead_output, 0.0), 1.0) * min(max(ctx.lead_power_cap, 0.0), 1.0)
+        exchange = sum(item.conductance * (ctx.zone_temp - item.temperature) for item in exchanges)
+        rate = sign * fit.a * lead + sign * fit.a_f * source.x_f - fit.b * (ctx.zone_temp - ctx.ext_temp) - exchange
+        horizon_min = (fit.lead_delay_s + max(ctx.lead_cycle_s, 0.0)) / 60.0
+        return error - sign * rate * horizon_min > SOURCE_BOOST_ERROR_C
 
     def _neighbour_k(self, item_id: str, fit: ZoneFitResult | None) -> float | None:
         """The exchange coefficient in use: the zone's joint fit's once published, which
@@ -827,10 +864,13 @@ class DependencyModel:
         demand = ctx.lead_demand if ctx.lead_demand is not None else ctx.lead_output
         handover = self._fade_weight(source.key(ctx.hvac_mode), ctx.now_s) * fit.a_f / fit.a
         lead_cap = min(max(ctx.lead_power_cap, 0.0), 1.0)
+        # While the lead recovers without counting the source's heat, it counts
+        # all of it again once the recovery is over.
+        counted_now = 0.0 if source.boost else source.x_f
         temp = ctx.zone_temp
         step_min = step_s / 60.0
         for x_f in x_values:
-            lead = min(max(demand - handover * (x_f - source.x_f), 0.0), lead_cap)
+            lead = min(max(demand - handover * (x_f - counted_now), 0.0), lead_cap)
             exchange = sum(item.conductance * (temp - item.temperature) for item in exchanges)
             temp += step_min * (model_a * lead - model_b * (temp - ctx.ext_temp) - exchange + rate_f * x_f)
         error = ctx.target_temp - temp
@@ -884,6 +924,7 @@ class DependencyModel:
             "command": round(source.command, 3),
             "x_f": round(source.x_f, 3),
             "power_cap": round(source.power_cap, 3),
+            "recovery_boost": source.boost,
             "a_f": round(fit.a_f, 5) if fit is not None else None,
             "a_f_reliable": fit is not None,
             "lead_emitter": settings.lead_emitter,

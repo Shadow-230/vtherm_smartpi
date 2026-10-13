@@ -596,6 +596,26 @@ flowchart LR
 - **Calibration.** While SmartPI calibrates the main source's dead times, it drives it to 100 % and 0 %
   on purpose. The additional source keeps its command and the loop pauses.
 
+**Recovery.** After a night setback the zone needs more than its steady load. The main source's
+feed-forward counts the additional source's known heat: as a floor at full power warms up, the main
+source hands its share over while the zone is still a degree or two cold, and only its proportional
+part drives the rest of the recovery, which SmartPI keeps gentle (its integral is held after a
+setpoint change). Two independent SmartPI recover faster because each counts the whole load. So
+while the zone is colder than its setpoint by more than `SOURCE_BOOST_ERROR_C`, the main source's
+feed-forward leaves the additional source's heat out and the main source works as if alone
+(`recovery_boost` in the diagnostics). The boost ends early, once the fitted model says the zone
+reaches that band within the main source's fitted delay plus one of its cycles at the present
+powers: the heat the main source has already sent then lands the zone instead of overshooting it. A
+radiator rising 0.03 degC/min with 10 min of delay otherwise added 0.3 to 0.6 degC (section 6.8).
+
+```mermaid
+stateDiagram-v2
+    state "the lead counts the source's heat" as Counted
+    state "recovery: the lead works as if alone" as Boost
+    Counted --> Boost: zone colder than the setpoint by more than SOURCE_BOOST_ERROR_C, and not predicted to reach the band within the lead's delay plus a cycle
+    Boost --> Counted: predicted to reach the band within the lead's delay plus a cycle, or within the band
+```
+
 **Predictive brake.** A floor answers hours late: the heat already on its way keeps coming after the
 zone has reached its setpoint. The brake caps the command at what the fitted model says the zone can
 take:
@@ -607,7 +627,10 @@ outdoor and neighbour temperatures held, and the additional source at command `c
 cap, section 6.7) after the commands already on their way. The main source starts at its steady
 demand and **hands over its load**: its feed-forward takes off `a_f/a` per unit of `x_f` that the
 additional source's known heat adds (as far as that heat is already in its control law), down to 0 %,
-and takes it back up to the most it can give (its water factor and maximum on-percent).
+and takes it back up to the most it can give (its water factor and maximum on-percent). During a
+recovery its demand holds none of the source's heat, and the prediction lets it count all of it again
+from now on: the recovery ends before the source's heat arrives, so the brake does not take the boost
+for good.
 
 - The cap is the largest `c` with `e(c) ≥ (1 − SPLIT_PREDICTED_SHARE)·e(allocation)` — with the share
   at 1, the predicted zone at its setpoint. `e` falls as `c` rises, flat while the main source still
@@ -709,9 +732,11 @@ three nights at 17 degC (6, 8 and 10 h).
 
 | Measure | Zone with two sources | Two independent SmartPI |
 |---|---|---|
-| Steady error, mean of the 12 rooms | 0.029 degC | 0.065 degC |
+| Steady error, mean of the 12 rooms | 0.030 degC | 0.065 degC |
 | Steady error, range | 0.018–0.052 degC | 0.032–0.113 degC |
-| Overshoot after the night, worst room | 0.19 degC | 0.53 degC |
+| Overshoot after the night, worst room / mean | 0.30 / 0.13 degC | 0.53 / 0.40 degC |
+| Time to reach 0.2 degC below the setpoint after the night, mean | 2.94 h | 2.86 h |
+| Same, slowest room (`b` 0.0005, `a` 0.015, cold) | 4.8 h | 4.1 h |
 | Day 1 error, mean | 0.43 degC | 0.33 degC |
 | Fit published | after 19.5 h in every room | — |
 | Fitted `a`, `b`, `a_f` against the truth | 0.99–1.03, one `a_f` 1.10 | SmartPI's own, one thermostat: `a` 0.55–1.34, `b` 0.53–1.16 |
@@ -722,8 +747,8 @@ three nights at 17 degC (6, 8 and 10 h).
 | Case | Zone | Independent | Fit |
 |---|---|---|---|
 | floor behind a valve | 0.020 degC | 0.050 degC | 1.03/1.02/1.03 |
-| slab warming through its depth (two lags in series) | 0.035 degC | 0.056 degC | `a` 0.96, `b` 1.07, `a_f` 1.17 |
-| water on heating curves, Smart Boiler's data | 0.053 degC | 0.094 degC | 0.99/0.98/0.96 |
+| slab warming through its depth (two lags in series) | 0.035 degC | 0.056 degC | `a` 0.95, `b` 1.06, `a_f` 1.18 |
+| water on heating curves, Smart Boiler's data (recovery 6.7 h against 5.9 h) | 0.053 degC | 0.094 degC | 0.99/0.97/0.94 |
 | two zones, door open 6–23 h | 0.034 / 0.029 degC | 0.072 / 0.055 degC | `k` 0.89 / 0.94 |
 | two zones, always open | 0.021 / 0.018 degC | 0.055 / 0.042 degC | `k` 1.04 / 0.96 |
 
@@ -738,6 +763,16 @@ Scenarios of `tests/test_smartpi_sim_second_source.py`: a second radiator as the
   fit further off even after a week: one room 8 % off (`a_f` 0.92) and one `a_f` at 1.12, against
   every value within 3 % and one `a_f` at 1.10. The fit gives SmartPI its model for good; day 1
   happens once.
+- **Recovery with the main source working as if alone** (section 6.6). Without it the morning
+  recovery took 3.55 h on average against 2.86 h, 8.9 h against 4.1 h in the slowest room and 12.4 h
+  against 5.9 h with water. Tried on the way:
+  - leaving out only the source's heat above its allocation: 3.21 h on average, 6.1 h in the slowest
+    room, almost nothing with water, where the floor's heat stays below its allocation;
+  - leaving out all of it with the brake taking the boost for good: the brake cut the floor, 3.35 h;
+  - leaving out all of it until 0.2 degC below the setpoint: 2.92 h, but up to 0.66 degC of overshoot
+    in fast rooms from the heat the radiator had already sent; hence the early end;
+  - a smooth fade between 0.5 and 0.1 degC instead of a threshold: no faster, and a zone on water
+    settled 0.15 degC low.
 - **What did not work, and why the design is what it is:**
   - *Learning the additional source on top of SmartPI's model* (the first design): `a_f` came out
     0.61–1.64 times the truth with 0.1 degC sensors, or was never published.
@@ -767,14 +802,12 @@ Scenarios of `tests/test_smartpi_sim_second_source.py`: a second radiator as the
 
 **Limits:**
 
-- **Morning recovery after a night setback is slower in some rooms.** With the floor's heat known, the
-  main source's feed-forward is what it needs at the setpoint, and SmartPI's own recovery — its
-  proportional part, with positive integral blocked after a setpoint change by its integral guard — is
-  gentle. Two independent SmartPI each count the full load, both run at full power and recover faster,
-  with the overshoot above. Time to reach 0.2 degC below the setpoint, mean of the three nights: shorter
-  or equal in 3 of 12 rooms, 0.2–1.4 h longer in 8, and 4.8 h longer in the slowest room in cold weather
-  (8.9 h against 4.1 h); with water on a heating curve, where the floor's power is limited by its
-  water, 12.4 h against 5.9 h.
+- **Morning recovery after a night setback** is as fast as with two independent SmartPI on average,
+  faster in 4 of 12 rooms and up to 0.9 h slower in the others: 4.8 h against 4.1 h in the slowest
+  room, 6.0 h against 5.1 h in another slow one in cold weather, 6.7 h against 5.9 h with water. The
+  rest comes from the night: the zone's floor stands almost still until the setpoint rises (its heat
+  0.11 in the morning against 0.36 with two independent SmartPI). Only a start ahead of a known
+  schedule would make it up.
 - **Day 1** is worse than with two independent SmartPI (0.43 against 0.33 degC): the learning blocks
   swing the zone until the fit is published.
 - **A slab warming through its depth** is not one of the candidates' shapes: its fit carries errors of
@@ -856,6 +889,7 @@ With a second source, the block gains `second_source`:
 | `mode` | `learn`, `allocation` or `off` (section 6.5) |
 | `command`, `x_f` | the command given and the source's heat now (0..1) |
 | `power_cap` | the most power a full command gives now (its water factor, 1 without water data) |
+| `recovery_boost` | the zone recovers: the main source's feed-forward leaves the source's heat out (section 6.6) |
 | `a_f`, `a_f_reliable` | the fitted effect for the current HVAC mode |
 | `lead_emitter`, `source_emitter`, `lag_min`, `tau_min` | the emitters and the time scale in use |
 | `lead_demand_avg` | the main source's average steady demand followed by the loop |
@@ -977,3 +1011,4 @@ flowchart TD
 | `SOURCE_SENSITIVITY_MIN_C` | 0.01 degC | a source moving the prediction less is not braked; the brake's tolerance |
 | `SPLIT_PREDICTED_SHARE` | 1 | share of the predicted error the source may correct |
 | `SOURCE_BRAKE_STEPS` | 8 | halvings that find the brake's cap |
+| `SOURCE_BOOST_ERROR_C` | 0.2 degC | a zone colder than this recovers with the main source working as if alone |

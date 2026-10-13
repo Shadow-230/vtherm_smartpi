@@ -135,6 +135,11 @@ def _compare(name: str, split: RoomResult, independent: RoomResult, fit_line: st
     assert split.fit is not None and split.fit_h is not None and split.fit_h <= 30.0
     assert split.steady <= independent.steady + 0.02
     assert max(split.overshoots) <= max(independent.overshoots) + 0.1
+    # The morning recovery after a night setback is not much slower than today's.
+    assert None not in split.reach_h
+    split_reach = sum(split.reach_h) / len(split.reach_h)
+    independent_reach = sum(r for r in independent.reach_h if r is not None) / len(independent.reach_h)
+    assert split_reach <= independent_reach + 1.0
 
 
 @pytest.mark.parametrize("weather", list(WEATHERS))

@@ -593,6 +593,10 @@ SOURCE_PREDICTION_MIN_S = 30 * 60.0
 SOURCE_SENSITIVITY_MIN_C = 0.01
 SPLIT_PREDICTED_SHARE = 1.0
 SOURCE_BRAKE_STEPS = 8
+# A zone colder than its setpoint by more than this recovers: the lead's
+# feed-forward leaves the source's heat out, until the zone is predicted to reach
+# the band within the lead's delay plus one cycle.
+SOURCE_BOOST_ERROR_C = 0.2
 # The allocation loop follows the lead's steady demand (feed-forward plus
 # integral), not its answer to the current error: a setpoint change does not
 # move the source. When the lead is stuck at a limit, the loop gets the end of

@@ -561,3 +561,41 @@ def test_while_the_brake_holds_the_source_its_allocation_does_not_wind_up() -> N
     held = model._source.loop.command
     model.update(_readings(), _ctx(now_s=3600.0, zone=19.9, demand=0.9))
     assert model._source.loop.command == pytest.approx(held)
+
+
+def _recovering(zone: float, lead_output: float = 1.0, x_f: float = 0.6):
+    model = _known(_published(_model(_state_with(allocation=0.6, x_f=x_f))))
+    model.update(_readings(), _ctx(demand=0.3))
+    inputs = model.update(_readings(), replace(_ctx(now_s=60.0, zone=zone, demand=0.3, output=lead_output)))
+    return model, inputs
+
+
+def test_a_recovering_zone_leaves_the_source_s_heat_out_of_the_lead_s_feed_forward() -> None:
+    """Far below its setpoint the lead works as if alone; near it, the heat is counted again."""
+    model, cold = _recovering(zone=18.0)
+    assert cold.source["recovery_boost"] is True
+    assert cold.heats == ()
+
+    _, near = _recovering(zone=19.9)
+    assert near.source["recovery_boost"] is False
+    assert near.heats[0].rate > 0.0
+
+
+def test_the_boost_ends_before_the_lead_s_heat_on_the_way_overshoots() -> None:
+    """Rising fast, the zone reaches the band within the lead's delay plus a cycle: no boost."""
+    # a 0.03 at full, x_f 0.6 * a_f 0.03, losses 0.001 * 13.5: about 0.035 degC/min, 0.7 degC in 20 min.
+    _, fast = _recovering(zone=19.5, lead_output=1.0)
+    assert fast.source["recovery_boost"] is False
+    _, slow = _recovering(zone=19.5, lead_output=0.0, x_f=0.0)
+    assert slow.source["recovery_boost"] is True
+
+
+def test_while_the_lead_recovers_the_brake_counts_it_handing_over_afterwards() -> None:
+    """The lead's demand then holds the source's whole heat: the brake does not take it for good."""
+    model, _ = _recovering(zone=18.0)
+    ctx = _ctx(now_s=120.0, zone=18.0, demand=0.8)
+    fit = model.zone_fit(VThermHvacMode_HEAT)
+    boosted = model._predicted_error(ctx, fit, (), 1.0)
+    model._source.boost = False
+    counted = model._predicted_error(ctx, fit, (), 1.0)
+    assert boosted > counted

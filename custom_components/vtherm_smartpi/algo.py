@@ -1854,6 +1854,7 @@ class SmartPI:
                             lead_output=self._lead_output_share(),
                             target_temp=target_temp,
                             lead_power_cap=min(self._max_on_linear(), self.source_power_cap),
+                            lead_cycle_s=float(self._cycle_min) * 60.0,
                         ),
                     )
                 else:
