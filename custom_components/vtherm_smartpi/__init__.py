@@ -7,7 +7,7 @@ from typing import Any
 
 import voluptuous as vol
 
-from homeassistant.config_entries import ConfigEntry
+from homeassistant.config_entries import SOURCE_IMPORT, ConfigEntry
 from homeassistant.core import CoreState, HomeAssistant
 from homeassistant.components.climate import DOMAIN as CLIMATE_DOMAIN
 from homeassistant.helpers import config_validation as cv
@@ -19,6 +19,7 @@ from vtherm_api.vtherm_api import VThermAPI
 from .const import (
     ATTR_LEARNING_ENABLED,
     CONF_PROP_FUNCTION,
+    CONF_SMART_PI_DEPENDENCIES,
     CONF_TARGET_VTHERM,
     DATA_FACTORY_REGISTERED,
     DATA_SERVICES_REGISTERED,
@@ -31,6 +32,7 @@ from .const import (
     SERVICE_SET_SMARTPI_LEARNING,
 )
 from .factory import SmartPIHandlerFactory
+from .smartpi.dependencies import parse_dependencies
 
 VT_DOMAIN = "versatile_thermostat"
 CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
@@ -271,9 +273,31 @@ async def _async_update_options(hass: HomeAssistant, entry: ConfigEntry) -> None
     target_unique_id = entry.data.get(CONF_TARGET_VTHERM)
     if target_unique_id:
         await _reload_smartpi_vtherms_for_target(hass, target_unique_id)
+        # A zone's main source reads its additional source's entry (heating type) at start.
+        for main_unique_id in _zone_mains_of(hass, target_unique_id):
+            await _reload_smartpi_vtherms_for_target(hass, main_unique_id)
         return
 
     await _reload_smartpi_vtherms_using_defaults(hass)
+
+
+def _zone_mains_of(hass: HomeAssistant, source_unique_id: str) -> list[str]:
+    """Unique ids of the thermostats whose zone has ``source_unique_id`` as its additional source."""
+    registry = er.async_get(hass)
+    entity_id = registry.async_get_entity_id(CLIMATE_DOMAIN, "versatile_thermostat", source_unique_id)
+    reg_entry = registry.async_get(entity_id) if entity_id else None
+    if reg_entry is None:
+        return []
+    mains = []
+    for plugin_entry in hass.config_entries.async_entries(DOMAIN):
+        main_unique_id = plugin_entry.data.get(CONF_TARGET_VTHERM)
+        if not main_unique_id or main_unique_id == source_unique_id:
+            continue
+        options = plugin_entry.options or plugin_entry.data
+        items = parse_dependencies(options.get(CONF_SMART_PI_DEPENDENCIES))
+        if any(item.is_source and item.entity == reg_entry.id for item in items):
+            mains.append(main_unique_id)
+    return mains
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
@@ -290,7 +314,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     # which fires after EVENT_HOMEASSISTANT_STARTED — reloading here would force
     # entity re-creation before the recorder has restored previous states.
     if hass.state == CoreState.running and not skip_full_reload:
-        await _reload_smartpi_vtherms(hass)
+        target_unique_id = entry.data.get(CONF_TARGET_VTHERM)
+        if entry.source == SOURCE_IMPORT and target_unique_id:
+            # The entry of a zone member, created by the zone form: only that thermostat changes.
+            await _reload_smartpi_vtherms_for_target(hass, target_unique_id)
+        else:
+            await _reload_smartpi_vtherms(hass)
     return True
 
 

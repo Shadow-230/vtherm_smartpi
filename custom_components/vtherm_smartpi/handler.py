@@ -3,6 +3,7 @@
 
 import logging
 import time
+from dataclasses import replace
 from typing import TYPE_CHECKING
 from homeassistant.util import slugify
 from homeassistant.components.sensor import DOMAIN as SENSOR_DOMAIN
@@ -43,6 +44,7 @@ from .const import (
     CONF_SMART_PI_MAX_VALVE,
     CONF_SMART_PI_DEPENDENCIES,
     CONF_SMART_PI_HEATING_TYPE,
+    CONF_SMART_PI_RESET_TOKEN,
     DATA_SOURCE_LINK,
     DEFAULT_OPTIONS,
     DIAGNOSTIC_SENSOR_UNIQUE_ID_PREFIX,
@@ -54,7 +56,14 @@ from .hvac_mode import VThermHvacMode_OFF, VThermHvacMode_HEAT, VThermHvacMode_C
 from .commons import write_event_log
 from .smartpi.valve_curve import ValveCurveParams
 from .smartpi.water_input import SOURCE_LASTING, WaterInput, WaterReading
-from .smartpi.dependencies import DependencyItem, parse_dependencies
+from .smartpi.dependencies import (
+    KEY_LEAD_EMITTER,
+    KEY_SOURCE_EMITTER,
+    KEY_ZONE_MASTER,
+    DependencyItem,
+    parse_dependencies,
+)
+from .smartpi.source_model import EMITTER_CUSTOM
 from .smartpi.source_link import SourceCycle, SourceLink
 from .smartpi.source_settings import SourceSettings
 from .smartpi.dependency_inputs import (
@@ -113,6 +122,8 @@ class SmartPIHandler:
         self._recalc_timer_remove = None
         # While this thermostat is off and has a source: it still tells the source so.
         self._source_heartbeat_remove = None
+        # The zone's master thermostat (registry id), when the zone form set it.
+        self._zone_master_id: str | None = None
         # State for learning
         self._last_temp = None
         self._last_ext_temp = None
@@ -250,12 +261,46 @@ class SmartPIHandler:
             self._read_dependencies if self._dependency_items else None
         )
         source_item = next((item for item in self._dependency_items if item.is_source), None)
+        self._zone_master_id = source_item.extra.get(KEY_ZONE_MASTER) if source_item is not None else None
+        if source_item is not None:
+            source_item = self._with_heating_types(source_item, entry)
         self._source_settings = SourceSettings.from_item(source_item) if source_item else None
         t.prop_algorithm.configure_source(self._source_settings)
         self._attach_source()
 
         _LOGGER.info("%s - SmartPI Algorithm initialized", t)
         async_dispatcher_send(t.hass, SIGNAL_SMARTPI_TARGET_UPDATED, t.unique_id)
+
+    def _with_heating_types(self, item: DependencyItem, own_config: dict) -> DependencyItem:
+        """The zone's source item with the heating types the two thermostats' entries set now.
+
+        A custom response set in the zone form is kept.
+        """
+        extra = dict(item.extra)
+        if extra.get(KEY_LEAD_EMITTER) != EMITTER_CUSTOM:
+            extra[KEY_LEAD_EMITTER] = own_config.get(
+                CONF_SMART_PI_HEATING_TYPE, DEFAULT_OPTIONS[CONF_SMART_PI_HEATING_TYPE]
+            )
+        if extra.get(KEY_SOURCE_EMITTER) != EMITTER_CUSTOM:
+            heating_type = self._source_heating_type(item.entity)
+            if heating_type is not None:
+                extra[KEY_SOURCE_EMITTER] = heating_type
+        return replace(item, extra=extra)
+
+    def _source_heating_type(self, registry_id: str) -> str | None:
+        """The heating type of the source thermostat's SmartPI entry (else the defaults')."""
+        hass = self._thermostat.hass
+        try:
+            unique_id = self._resolve_unique_id(registry_id)
+            entries = hass.config_entries.async_entries(DOMAIN)
+        except Exception:  # pylint: disable=broad-except
+            return None
+        own = next((e for e in entries if unique_id and e.data.get(CONF_TARGET_VTHERM) == unique_id), None)
+        chosen = own or next((e for e in entries if e.unique_id == DOMAIN), None)
+        if chosen is None:
+            return None
+        config = {**chosen.data, **chosen.options}
+        return config.get(CONF_SMART_PI_HEATING_TYPE)
 
     def _resolve_effective_config(self) -> tuple[dict, object | None]:
         """Return the merged SmartPI configuration for the thermostat."""
@@ -305,8 +350,20 @@ class SmartPIHandler:
                     t.prop_algorithm.forget_dependencies_except(
                         item.item_id for item in self._dependency_items
                     )
+                    self._apply_reset_request()
             except Exception as e:
                 _LOGGER.error("%s - Failed to load SmartPI state: %s", t, e)
+
+    def _apply_reset_request(self) -> None:
+        """Reset the learned model once after a change of the zone asked for it."""
+        t = self._thermostat
+        algo = t.prop_algorithm
+        token = self._get_effective_config().get(CONF_SMART_PI_RESET_TOKEN)
+        if not isinstance(algo, SmartPI) or not token or algo.applied_reset_token == token:
+            return
+        algo.reset_learning()
+        algo.applied_reset_token = token
+        _LOGGER.info("%s - Learned model reset after a change of the zone", t)
 
     async def async_startup(self):
         """Startup actions."""
@@ -366,6 +423,36 @@ class SmartPIHandler:
             _LOGGER.warning("%s - The second source already works for another thermostat", t)
             return
         self._source_unique_id = source_unique_id
+        self._check_zone_master()
+
+    def _check_zone_master(self) -> None:
+        """Warn when the zone's master no longer has exactly these two thermostats as its devices."""
+        t = self._thermostat
+        master_id = self._zone_master_id if self._source_settings else None
+        if not master_id:
+            return
+        try:
+            registry = er.async_get(t.hass)
+            master = registry.async_get(master_id)
+            source_entity = er.async_resolve_entity_id(registry, self._source_settings.entity)
+            vt_entry = (
+                t.hass.config_entries.async_get_entry(master.config_entry_id)
+                if master is not None and master.config_entry_id
+                else None
+            )
+        except Exception:  # pylint: disable=broad-except
+            return
+        if vt_entry is None:
+            _LOGGER.warning("%s - The zone's master thermostat cannot be found; check the zone", t)
+            return
+        devices = {**vt_entry.data, **vt_entry.options}.get("underlying_entity_ids") or []
+        if set(devices) != {t.entity_id, source_entity}:
+            _LOGGER.warning(
+                "%s - The zone's master %s no longer has exactly this thermostat and %s as its devices; check the zone",
+                t,
+                master.entity_id,
+                source_entity,
+            )
 
     def _publish_source_command(self) -> None:
         """Give the source the command the dependency layer decided (lead side)."""

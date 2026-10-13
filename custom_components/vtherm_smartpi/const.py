@@ -26,6 +26,9 @@ CONF_SMART_PI_KNEE_DEMAND = "smart_pi_knee_demand"
 CONF_SMART_PI_KNEE_VALVE = "smart_pi_knee_valve"
 CONF_SMART_PI_MAX_VALVE = "smart_pi_max_valve"
 CONF_SMART_PI_DEPENDENCIES = "smart_pi_dependencies"
+# Set by the options when the user asks to reset the zone's learned model after a
+# change of the zone; the handler applies each new value once.
+CONF_SMART_PI_RESET_TOKEN = "smart_pi_reset_token"
 CONF_SMART_PI_HEATING_TYPE = "smart_pi_heating_type"
 
 DEFAULT_MINIMAL_ACTIVATION_DELAY = 0

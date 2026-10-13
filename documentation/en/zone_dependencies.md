@@ -1,8 +1,7 @@
 # Zone dependencies and a second heat source — technical documentation
 
-> **In development.** Neighbouring zones work. A zone with two heat sources works between
-> the main and the additional source's thermostats; its options form comes next (see the
-> status in each section).
+> **In development.** Neighbouring zones and the zone with two heat sources work, each with
+> its options form (see the status in each section).
 
 This document describes how SmartPI takes into account what happens around a zone: the
 heat it exchanges with neighbouring zones, and a second device heating the same zone. It
@@ -50,7 +49,7 @@ it bit for bit.
 |---|---|---|
 | Foundation | known inputs, composition, substitution point, learning correction and gates, persistence, diagnostics, options menu | in use |
 | Neighbouring zones | three connection modes, learned exchange, reaction to a neighbour's open window, options forms | in use |
-| Second heat source | emitter types, the additional source's heat and time scale, the zone's joint fit, learning blocks, split rules, allocation loop and predictive brake, the executive role with water data and a fallback | in use; options form in progress |
+| Second heat source | emitter types, the additional source's heat and time scale, the zone's joint fit, learning blocks, split rules, allocation loop and predictive brake, the executive role with water data and a fallback, the zone form from the master thermostat | in use |
 
 ## 2. The model with known inputs
 
@@ -325,6 +324,13 @@ A zone may have two heat sources, each a VTherm with SmartPI, for example a radi
 floor. The **main source** is the zone thermostat whose SmartPI regulates the zone; in the code and
 the link it is the **lead**. It names the other thermostat as its **additional source** (in the code,
 the **source**), which then works for it: one additional source per zone, no chains.
+
+The zone is set up from its **master thermostat** (section 10): a Versatile Thermostat over climate
+whose two devices are the two SmartPI thermostats. A Versatile Thermostat gives one power to all its
+devices and has one type of device, so two sources with different powers are always two
+thermostats; the master holds the zone's setpoint, presets, schedule, mode and windows and passes
+the same setpoint to both. It has no power algorithm of its own: the zone's SmartPI runs in its
+devices.
 
 **Decision: the main source's command stays exactly what SmartPI computes.** The additional source is
 moved by a slow allocation loop towards the split the rule chooses, and its heat reaches the main
@@ -821,12 +827,19 @@ A configuration change that affects what the zone has learned shows a step with 
 
 | Change | Shows the reset step |
 |---|---|
-| a source added or removed, its emitter type or response changed | yes |
+| a zone set up or removed, its additional source swapped, the main source changed, a custom response changed | yes |
 | a neighbour added or removed, its mode or door sensors changed | yes |
 | the split rule or its parameter, a window reaction, delays | no |
 
-Today a neighbour whose mode or door sensors change is stored under a new identifier, so its
-learned `k` starts again; the reset step is planned with the source form.
+- **How it is applied.** Choosing the reset stores a new random token in the entry that holds the
+  zone (`smart_pi_reset_token`). When the thermostat starts with that entry, SmartPI resets its whole
+  learned model once (`a`, `b`, dead times, the zone's fit and exchanges, as the service
+  `reset_smartpi_learning` does) and keeps the token in its saved state (`dependency_reset_token`),
+  so a later restart does not reset it again.
+- A neighbour whose mode or door sensors change is stored under a new identifier, so its learned
+  `k` starts again whatever the choice.
+- A change of the additional source's heating type changes the response its candidate time scales
+  are built on: the zone's fit is dropped at the next start (section 8) and learned again.
 
 ## 8. Persistent state
 
@@ -862,6 +875,8 @@ A restart resumes where the zone was: a fit published before it is fully in the 
 once. A zone with a published fit adds about 16 KB to SmartPI's saved state per HVAC mode (more
 with neighbours).
 
+- SmartPI's saved state also keeps the last reset token it applied (`dependency_reset_token`,
+  section 7).
 - An old saved state without the key loads as before.
 - At startup, the state of items no longer configured is dropped.
 - A saved state that cannot be read is ignored, rows that cannot be used are skipped, and the
@@ -902,22 +917,89 @@ A thermostat working as another's additional source publishes instead `role` (`s
 
 ```mermaid
 flowchart TD
-    O[Thermostat entry options] --> M{Menu}
+    O[Thermostat entry options] --> R{This thermostat is a zone's additional source?}
+    R -- yes --> SR[Its role, the main source's entry, delays, cycle restart, heating type]
+    R -- no --> M{Menu}
     M --> ST[Regulator settings]
-    M --> DL[Dependencies: list]
+    M --> ZN[Zone with two heat sources]
+    M --> DL[Dependencies: neighbours]
     M --> VC[Valve curve, when linearization is on]
+    ZN --> ZE{A zone already?}
+    ZE -- yes --> ZM[Change it or remove it]
+    ZE -- no --> MA[Master thermostat]
+    ZM --> MA
+    ZM --> RS
+    MA --> MV{Valid?}
+    MV -- no --> MA
+    MV -- yes --> SO[Source 1, Source 2: main source, split rule, custom response]
+    SO --> PA[Rule parameter, with each source's delay and lag if custom]
+    PA --> AF{Affects what was learned?}
+    AF -- yes --> RS[Reset the zone's learned model?]
+    AF -- no --> SV[Save in the main source's entry]
+    RS --> SV
     DL --> NA[Add a neighbouring zone: entity]
     DL --> NE[Edit a neighbouring zone]
-    DL --> NR[Remove dependencies]
+    DL --> NR[Remove neighbours]
     NA --> ND[Details: mode, door sensors, window reaction]
     NE --> ND
     ND --> V{Valid?}
     V -- no --> ND
     V -- yes --> W{Warnings?}
     W -- yes --> NC[Confirm the warnings]
-    W -- no --> SV[Save]
-    NC --> SV
+    W -- no --> NF{New connection?}
+    NC --> NF
+    NF -- yes --> NRS[Reset the zone's learned model?]
+    NF -- no --> NSV[Save]
+    NRS --> NSV
+    NR --> NRS
 ```
+
+**Zone with two heat sources.**
+
+- **Master thermostat.** The form lists the Versatile Thermostats over climate that have this
+  thermostat among their devices; without one it explains what to create. The master must have
+  self-regulation off (SmartPI regulates in its devices) and exactly two devices, both Versatile
+  Thermostats running SmartPI and measuring the zone with the same temperature sensor, and neither
+  may already belong to another zone.
+- **Sources.** Source 1 and Source 2 are the master's devices, shown with the heating types of
+  their own entries (the form does not ask for them). In the same step: the **main source**, the
+  one whose SmartPI regulates and corrects quickly, chosen by hand with the faster device as the
+  default; the split rule, with the rule recommended for the two heating types (section 6.3); and
+  whether to set each source's delay and lag instead of starting from the heating types.
+- **Parameter.** The rule's parameter with what it means for these two thermostats, a warning when
+  the main source responds more slowly than the other one, and the delays and lags if asked for.
+- **Where it is saved.** In the main source's entry, as its `source` item with the master
+  (`zone_master`); the zone's neighbours and doors are in the same entry. The other thermostat's
+  entry stores nothing about the zone: it finds its role in the main source's entry. A thermostat
+  without a SmartPI entry gets one, created from the global defaults; creating it restarts only
+  that thermostat.
+- **Changing the main source** moves the zone, with its neighbours, to the other thermostat's
+  entry; the former main source then works as the additional one. A neighbour that is now part of
+  the zone is dropped; the moved neighbours win over the new main source's own ones that would clash
+  with them (the same neighbour or door sensor), and a list that still does not validate stops the
+  move. The moved neighbours learn their exchange again in the new main source.
+- **One form at a time.** At saving, the form checks again that the master and the entries of both
+  thermostats are as they were when it read them; otherwise it stops and asks to open it again, so
+  that two forms open at once cannot leave each thermostat naming the other.
+- **Neighbours of a zone.** The zone's additional source and its master cannot be added as its
+  neighbours: they heat or measure the same zone.
+- **The additional source's options** show which entry holds the zone and the settings that still
+  apply to it while it follows the main source: its activation delays, its heating type and, for a
+  valve, its curve. Its other regulator settings keep their values and apply only while it
+  regulates on its own because the main source has gone silent (section 6.7).
+- **Heating types at start.** The handler reads both thermostats' heating types from their entries
+  each time the main source starts, and saving the additional source's entry restarts the main
+  source too, so a changed heating type takes effect at once; a custom response set in the zone
+  form is kept. A heating type changed this way is not a change of the zone: editing only the rule
+  afterwards does not offer a reset.
+- **A changed master.** At start the main source checks that the master still has exactly these two
+  thermostats as its devices and logs a warning otherwise; the zone keeps running as configured
+  until the form is opened again.
+- **Recommended on the master** (from Versatile Thermostat's code): a long safety delay, since its
+  safety mode switches both devices off, and a small step of its regulation threshold, since it
+  rounds the setpoint it passes on to that step.
+
+**Neighbours.**
 
 - **Errors** keep the form open: an entity without a unique ID, the zone itself, a duplicate
   neighbour, door mode without a sensor, a window sensor, a door sensor of another neighbour.
@@ -934,7 +1016,10 @@ flowchart TD
   loop (including a closed loop with an ideal lead).
 - **Algorithm and handler tests**: the substitution reaches every control component, learning
   stays on raw data, gates, persistence, diagnostics, a failing provider.
-- **Options forms** with `pytest-homeassistant-custom-component`.
+- **Options forms** with `pytest-homeassistant-custom-component`: the neighbours, and the zone
+  (`test_config_flow_zone.py`: set up from the master, the master's checks, the recommendation,
+  moving the main source with the neighbours, the other thermostat's created entry and its options,
+  a custom response, the reset step, removal).
 - **Simulator** (`tests/sim/`): the real `SmartPIHandler` in virtual time against a thermal
   model, with VTherm's cycle scheduler, moving average and slope reproduced. A zone may have a
   second thermostat whose emitter has a delay and one lag or two in series, on water of its own

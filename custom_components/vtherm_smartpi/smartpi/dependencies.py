@@ -45,6 +45,8 @@ KEY_LEAD_TAU_MIN = "lead_tau_min"
 KEY_SOURCE_EMITTER = "source_emitter"
 KEY_SOURCE_LAG_MIN = "source_lag_min"
 KEY_SOURCE_TAU_MIN = "source_tau_min"
+# The zone's master thermostat (registry id), whose devices are the two sources.
+KEY_ZONE_MASTER = "zone_master"
 
 ERROR_MISSING_ID = "missing_id"
 ERROR_DUPLICATE_ID = "duplicate_id"

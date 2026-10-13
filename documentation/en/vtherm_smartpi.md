@@ -102,7 +102,7 @@ To add SmartPI to an additional thermostat, open the SmartPI integration configu
 
 The parameters available are the same as for global defaults. Any parameter set here overrides the corresponding global default for the selected thermostat only.
 
-The options of a per-thermostat entry open a menu: the regulator settings, the zone dependencies (neighbouring zones that exchange heat with this one, through a door or permanently) and, for a linearized valve, the valve curve. How SmartPI learns and uses a neighbour is described in [Zone dependencies and a second heat source](zone_dependencies.md).
+The options of a per-thermostat entry open a menu: the regulator settings, the zone with two heat sources (a room heated by two SmartPI thermostats, for example a radiator and an underfloor loop, set up from the master thermostat whose devices they are), the zone dependencies (neighbouring zones that exchange heat with this one, through a door or permanently) and, for a linearized valve, the valve curve. How SmartPI learns and uses them is described in [Zone dependencies and a second heat source](zone_dependencies.md).
 
 The regulator settings include the **heating type** (water radiator by default, water underfloor heating, electric heating mat, fast electric heater). For a water type, SmartPI uses the supply water temperature that the Smart Boiler plugin publishes for the thermostat's circuit, when it is available; without it nothing changes. See [Water input](water_input.md).
 
