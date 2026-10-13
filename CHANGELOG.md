@@ -4,6 +4,18 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+- Add the water input: a heating type in the regulator settings (water radiator by
+  default, water underfloor heating, electric mat, fast electric). For a water type,
+  SmartPI reads the supply water of the thermostat's circuit from the Smart Boiler
+  plugin (its feature manager or public API) and turns the command into power at a
+  reference water: the emitter gets power divided by the water factor, learning sees
+  the command times the factor, hot water with priority holds the command and the
+  integral, the cold water of an idle boiler holds only the integral (the zone can
+  still call for heat), and a lasting change of the water data offers a model reset
+  as a repair.
+  SmartPI publishes the factor it applies as `water_factor` in the thermostat's
+  `specific_states`. Without water data nothing changes. Documented in
+  `documentation/en/water_input.md`.
 - Add zone dependencies to a thermostat entry: neighbouring zones that exchange
   heat with the zone through a door or permanently. SmartPI learns the exchange
   and folds it into its model at a single substitution point, and a neighbour's

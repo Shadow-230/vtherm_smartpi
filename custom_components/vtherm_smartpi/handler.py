@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING
 from homeassistant.util import slugify
 from homeassistant.components.sensor import DOMAIN as SENSOR_DOMAIN
 from homeassistant.helpers import entity_registry as er
+from homeassistant.helpers import issue_registry as ir
 from homeassistant.helpers.storage import Store
 from homeassistant.helpers.event import async_track_time_interval
 from homeassistant.helpers.dispatcher import async_dispatcher_send
@@ -40,6 +41,7 @@ from .const import (
     CONF_SMART_PI_KNEE_VALVE,
     CONF_SMART_PI_MAX_VALVE,
     CONF_SMART_PI_DEPENDENCIES,
+    CONF_SMART_PI_HEATING_TYPE,
     DEFAULT_OPTIONS,
     DIAGNOSTIC_SENSOR_UNIQUE_ID_PREFIX,
     DOMAIN,
@@ -49,6 +51,7 @@ from .const import (
 from .hvac_mode import VThermHvacMode_OFF, VThermHvacMode_HEAT, VThermHvacMode_COOL
 from .commons import write_event_log
 from .smartpi.valve_curve import ValveCurveParams
+from .smartpi.water_input import SOURCE_LASTING, WaterInput, WaterReading
 from .smartpi.dependencies import DependencyItem, parse_dependencies
 from .smartpi.dependency_inputs import (
     DependencyReadings,
@@ -63,6 +66,32 @@ if TYPE_CHECKING:
     from .smartpi.autocalib import AutoCalibEvent
 
 _LOGGER = logging.getLogger(__name__)
+
+# Smart Boiler's water interface (its documentation/en/water-interface.md).
+SMART_BOILER_MANAGER = "vtherm_smart_boiler"
+SMART_BOILER_API_KEY = "vtherm_smart_boiler_api"
+WATER_FIELDS = ("supply_temperature", "supply_reason", "heat_available", "heat_reason")
+# Key SmartPI writes into the thermostat's specific_states for Smart Boiler.
+WATER_FACTOR_KEY = "water_factor"
+WATER_ISSUE_PREFIX = "water_data_changed_"
+
+
+def _water_reading(fields: dict) -> WaterReading:
+    """Keep only well-typed values: anything else means no data for that field."""
+    supply = fields.get("supply_temperature")
+    if isinstance(supply, bool) or not isinstance(supply, (int, float)):
+        supply = None
+    heat_available = fields.get("heat_available")
+
+    def text(value):
+        return value if isinstance(value, str) and value else None
+
+    return WaterReading(
+        supply_c=float(supply) if supply is not None else None,
+        supply_reason=text(fields.get("supply_reason")),
+        heat_available=heat_available if isinstance(heat_available, bool) else None,
+        heat_reason=text(fields.get("heat_reason")),
+    )
 
 STORAGE_VERSION = 1
 STORAGE_KEY = "vtherm_smartpi.{}"
@@ -200,6 +229,9 @@ class SmartPIHandler:
             valve_linearization_enabled,
             self._valve_curve_params,
             valve_mode=valve_mode_enabled,
+        )
+        t.prop_algorithm.configure_heating_type(
+            entry.get(CONF_SMART_PI_HEATING_TYPE, DEFAULT_OPTIONS[CONF_SMART_PI_HEATING_TYPE])
         )
         self._dependency_items = parse_dependencies(entry.get(CONF_SMART_PI_DEPENDENCIES))
         t.prop_algorithm.set_known_inputs_provider(
@@ -515,6 +547,13 @@ class SmartPIHandler:
                 algo._last_restart_reason = "guard_kick"
                 force = True
 
+            # Water data for this calculation (documentation/en/water_input.md).
+            water_input = getattr(algo, "water", None)
+            if isinstance(water_input, WaterInput) and water_input.uses_water:
+                water = algo.update_water(self._read_water(), t.current_temperature)
+                if water.changed_for_good:
+                    self._offer_model_reset(algo, gone=water.source == SOURCE_LASTING)
+
             # Calculate uses current temp, ext temp, etc.
             # If guard_cut is active, calculate() will set on_percent=0.
             cycle_boundary = (
@@ -756,6 +795,65 @@ class SmartPIHandler:
         specific_states["smartpi_learning_enabled"] = (
             algo.learning_enabled if algo is not None else True
         )
+        # Smart Boiler reads this key: present means "this thermostat's algorithm
+        # uses the water data" (Smart Boiler then skips its pause on water swings),
+        # so it is written only while water data are behind the factor.
+        water_input = getattr(algo, "water", None)
+        factor = water_input.state.published_factor if isinstance(water_input, WaterInput) else None
+        if factor is not None:
+            specific_states[WATER_FACTOR_KEY] = round(factor, 3)
+        else:
+            specific_states.pop(WATER_FACTOR_KEY, None)
+
+    def _read_water(self) -> WaterReading | None:
+        """Smart Boiler's water data for this thermostat (None: no data now).
+
+        Nothing of Smart Boiler is imported. The feature manager is read where VT
+        offers ``get_feature_manager`` (10.5.0.beta1 and later) and the thermostat
+        has it; otherwise the public API in ``hass.data``, which works with any VT
+        version and before VT's reload. Any failure means no data.
+        """
+        t = self._thermostat
+        try:
+            getter = getattr(t, "get_feature_manager", None)
+            manager = getter(SMART_BOILER_MANAGER) if callable(getter) else None
+            if manager is not None:
+                fields = {name: getattr(manager, name, None) for name in WATER_FIELDS}
+            else:
+                data = getattr(getattr(t, "hass", None), "data", None)
+                api = data.get(SMART_BOILER_API_KEY) if isinstance(data, dict) else None
+                zone_water = getattr(api, "zone_water", None)
+                mapping = zone_water(t.entity_id) if callable(zone_water) else None
+                if mapping is None:
+                    return None
+                fields = {name: mapping.get(name) for name in WATER_FIELDS}
+        except Exception as err:  # pylint: disable=broad-except
+            _LOGGER.debug("%s - Smart Boiler's water data cannot be read: %s", t, err)
+            return None
+        return _water_reading(fields)
+
+    def _offer_model_reset(self, algo: SmartPI, gone: bool) -> None:
+        """Water data appeared or went for good: offer the model reset (repair issue).
+
+        The learned power changes units; nothing to offer while SmartPI still learns.
+        """
+        t = self._thermostat
+        if algo.phase == SmartPIPhase.HYSTERESIS:
+            return
+        try:
+            ir.async_create_issue(
+                t.hass,
+                DOMAIN,
+                f"{WATER_ISSUE_PREFIX}{t.unique_id}",
+                is_fixable=True,
+                is_persistent=True,
+                severity=ir.IssueSeverity.WARNING,
+                translation_key="water_data_gone" if gone else "water_data_appeared",
+                translation_placeholders={"name": str(t.name)},
+                data={"entity_id": t.entity_id, "name": str(t.name)},
+            )
+        except Exception as err:  # pylint: disable=broad-except
+            _LOGGER.warning("%s - The model reset cannot be offered: %s", t, err)
 
     def _resolve_diagnostic_entity_id(self) -> str | None:
         """Resolve the SmartPI diagnostic sensor entity id from the registry."""

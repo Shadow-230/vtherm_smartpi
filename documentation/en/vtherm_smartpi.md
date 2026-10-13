@@ -104,6 +104,8 @@ The parameters available are the same as for global defaults. Any parameter set 
 
 The options of a per-thermostat entry open a menu: the regulator settings, the zone dependencies (neighbouring zones that exchange heat with this one, through a door or permanently) and, for a linearized valve, the valve curve. How SmartPI learns and uses a neighbour is described in [Zone dependencies and a second heat source](zone_dependencies.md).
 
+The regulator settings include the **heating type** (water radiator by default, water underfloor heating, electric heating mat, fast electric heater). For a water type, SmartPI uses the supply water temperature that the Smart Boiler plugin publishes for the thermostat's circuit, when it is available; without it nothing changes. See [Water input](water_input.md).
+
 ## Radiator valves and curve linearization
 
 This section only applies to thermostats that directly drive a valve, for example a radiator TRV.

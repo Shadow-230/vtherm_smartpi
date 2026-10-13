@@ -98,6 +98,13 @@ window reaction applied, and one entry per neighbour with its learned exchange. 
 block is absent without dependencies. Its fields are listed in
 [Zone dependencies, §9](zone_dependencies.md#9-diagnostics).
 
+## Water input
+
+For a thermostat whose heating type uses water, `live` gains a `water` block: the factor
+applied, its source, the averaged supply water, the last reasons from Smart Boiler, the
+no-heat hold and the "water too cold" flag. Its fields are listed in
+[Water input, §8](water_input.md#8-diagnostics).
+
 ## Consumer paths
 
 Live consumers must read from `attributes.live`. Historical graph consumers

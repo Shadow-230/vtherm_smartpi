@@ -16,7 +16,8 @@
           "smart_pi_deadband_allow_p": "Allow damped P near deadband edge",
           "smart_pi_allow_pwm_cycle_force": "Allow PWM cycle restart on band transitions",
           "smart_pi_debug": "Record full diagnostics (debug)",
-          "smart_pi_enable_valve_linearization": "Enable valve curve linearization"
+          "smart_pi_enable_valve_linearization": "Enable valve curve linearization",
+          "smart_pi_heating_type": "Heating type"
         }
       },
       "thermostat": {
@@ -39,7 +40,8 @@
           "smart_pi_deadband_allow_p": "Allow damped P near deadband edge",
           "smart_pi_allow_pwm_cycle_force": "Allow PWM cycle restart on band transitions",
           "smart_pi_debug": "Record full diagnostics (debug)",
-          "smart_pi_enable_valve_linearization": "Enable valve curve linearization"
+          "smart_pi_enable_valve_linearization": "Enable valve curve linearization",
+          "smart_pi_heating_type": "Heating type"
         }
       },
       "thermostat_valve_curve": {
@@ -75,7 +77,8 @@
           "smart_pi_deadband_allow_p": "Allow damped P near deadband edge",
           "smart_pi_allow_pwm_cycle_force": "Allow PWM cycle restart on band transitions",
           "smart_pi_debug": "Record full diagnostics (debug)",
-          "smart_pi_enable_valve_linearization": "Enable valve curve linearization"
+          "smart_pi_enable_valve_linearization": "Enable valve curve linearization",
+          "smart_pi_heating_type": "Heating type"
         }
       },
       "thermostat_menu": {
@@ -100,7 +103,8 @@
           "smart_pi_deadband_allow_p": "Allow damped P near deadband edge",
           "smart_pi_allow_pwm_cycle_force": "Allow PWM cycle restart on band transitions",
           "smart_pi_debug": "Record full diagnostics (debug)",
-          "smart_pi_enable_valve_linearization": "Enable valve curve linearization"
+          "smart_pi_enable_valve_linearization": "Enable valve curve linearization",
+          "smart_pi_heating_type": "Heating type"
         }
       },
       "dependencies": {
@@ -203,6 +207,44 @@
         "turn_off": "Turn off",
         "frost": "Frost temperature",
         "eco": "Eco temperature"
+      }
+    },
+    "heating_type": {
+      "options": {
+        "radiator": "Water radiator",
+        "floor_water": "Water underfloor heating",
+        "floor_electric": "Electric heating mat",
+        "electric_fast": "Fast electric heater"
+      }
+    }
+  },
+  "issues": {
+    "water_data_appeared": {
+      "title": "Water temperature data are now available for {name}",
+      "fix_flow": {
+        "step": {
+          "confirm": {
+            "title": "Reset the learned model of {name}?",
+            "description": "SmartPI now receives the supply water temperature for this thermostat from Smart Boiler, so its heating power is measured at a reference water temperature. The power learned before does not match these units. Resetting lets SmartPI learn the room again (recommended).",
+            "data": {
+              "reset_model": "Reset the learned model"
+            }
+          }
+        }
+      }
+    },
+    "water_data_gone": {
+      "title": "Water temperature data are no longer available for {name}",
+      "fix_flow": {
+        "step": {
+          "confirm": {
+            "title": "Reset the learned model of {name}?",
+            "description": "Smart Boiler reports that the supply water temperature of this thermostat's circuit is no longer measured, so SmartPI works without it. The power learned at a reference water temperature does not match these units. Resetting lets SmartPI learn the room again (recommended).",
+            "data": {
+              "reset_model": "Reset the learned model"
+            }
+          }
+        }
       }
     }
   }

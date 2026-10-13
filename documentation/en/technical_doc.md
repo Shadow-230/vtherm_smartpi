@@ -16,6 +16,9 @@ Zone dependencies (heat exchanged with neighbouring zones, a second heat source 
 extend the model with known inputs at a single substitution point; they are described in
 [Zone dependencies and a second heat source](zone_dependencies.md).
 
+With water heating, the temperature of the water reaching the emitter (from the Smart Boiler
+plugin) turns the command into power at a reference water; see [Water input](water_input.md).
+
 ---
 
 ## 2. Thermal model and control law
