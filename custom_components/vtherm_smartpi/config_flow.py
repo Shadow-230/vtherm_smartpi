@@ -27,6 +27,7 @@ from .const import (
     CONF_SMART_PI_MAX_VALVE,
     CONF_SMART_PI_MIN_VALVE,
     CONF_SMART_PI_DEPENDENCIES,
+    CONF_SMART_PI_HEATING_TYPE,
     CONF_SMART_PI_RELEASE_TAU_FACTOR,
     CONF_SMART_PI_USE_FF3,
     CONF_SMART_PI_USE_SETPOINT_FILTER,
@@ -34,6 +35,7 @@ from .const import (
     DEFAULT_OPTIONS,
     DOMAIN,
 )
+from .smartpi.const import HEATING_TYPES
 from .smartpi.dependencies import (
     KIND_NEIGHBOUR,
     MODE_ALWAYS,
@@ -160,6 +162,16 @@ def build_main_options_schema(
             CONF_SMART_PI_DEBUG,
             default=defaults[CONF_SMART_PI_DEBUG],
         ): bool,
+        vol.Optional(
+            CONF_SMART_PI_HEATING_TYPE,
+            default=defaults.get(CONF_SMART_PI_HEATING_TYPE, DEFAULT_OPTIONS[CONF_SMART_PI_HEATING_TYPE]),
+        ): selector.SelectSelector(
+            selector.SelectSelectorConfig(
+                options=list(HEATING_TYPES),
+                mode=selector.SelectSelectorMode.DROPDOWN,
+                translation_key="heating_type",
+            )
+        ),
     }
     if include_valve_linearization:
         schema[

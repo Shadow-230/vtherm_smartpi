@@ -494,3 +494,33 @@ SPLIT_DEMAND_MAX = 2.0
 # than its source by this factor has its role reversed.
 SPLIT_SLOW_SOURCE_S = 60 * 60.0
 SPLIT_ROLES_REVERSED_FACTOR = 1.5
+
+# --- Water input (supply water temperature from Smart Boiler) ---
+# Heating types of a SmartPI thermostat. A water type turns the supply water into
+# the emitter power factor phi = (max(T_supply - T_room, 0) / (T_ref - 20)) ** n;
+# the electric types do not use the water. Exponents and reference waters are
+# provisional (radiator 1.3 and 60 degC, floor 1.1 and 45 degC).
+HEATING_RADIATOR = "radiator"
+HEATING_FLOOR_WATER = "floor_water"
+HEATING_FLOOR_ELECTRIC = "floor_electric"
+HEATING_ELECTRIC_FAST = "electric_fast"
+HEATING_TYPES = (HEATING_RADIATOR, HEATING_FLOOR_WATER, HEATING_FLOOR_ELECTRIC, HEATING_ELECTRIC_FAST)
+WATER_EMITTERS: dict[str, tuple[float, float]] = {
+    HEATING_RADIATOR: (1.3, 60.0),
+    HEATING_FLOOR_WATER: (1.1, 45.0),
+}
+WATER_ROOM_REFERENCE_C = 20.0
+# The supply is averaged over this time: burner cycling makes the raw value jump.
+WATER_AVERAGE_S = 15 * 60.0
+# Long-term average of the factor, used while the water is momentarily unknown.
+WATER_LONG_AVERAGE_S = 3 * 86400.0
+# Below this factor the water brings next to no heat (an idle boiler that fires on
+# demand, water near the room): the integral is held, and the command is computed
+# with at least this factor so that the zone can still call for heat.
+WATER_NO_HEAT = 0.05
+# Upper bound of the factor: the controller's power range is 0..1, so water hotter
+# than the reference is taken as the reference (never less heat than without the input).
+WATER_FACTOR_MAX = 1.0
+# No reading at all (or an unknown reason) for this long after data were seen counts
+# as a lasting gap: Smart Boiler removed, or the thermostat no longer one of its zones.
+WATER_NO_DATA_LASTING_S = 24 * 3600.0

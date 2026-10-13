@@ -99,6 +99,8 @@ class _Heater:
     node: int
     gain: float
     power: DelayedPower
+    # Power factor of the emitter, factor(t_s, outdoor_c, temp_c) (water heating); None: 1.
+    factor: Callable[[float, float, float], float] | None = None
 
 
 @dataclass
@@ -107,6 +109,7 @@ class _LaggedHeater:
     gain: float
     power: DelayedPower
     tau_min: float
+    factor: Callable[[float, float, float], float] | None = None
     # Output of the lag, 0..1 of the heater's full power.
     output: float = 0.0
 
@@ -162,11 +165,24 @@ class ThermalNetwork:
         """Couple a node to a prescribed temperature, open always or by schedule."""
         self.boundary_links.append(_BoundaryLink(self.index(name), float(conductance), temperature, schedule))
 
-    def add_heater(self, name: str, gain: float, power: DelayedPower) -> None:
-        self.heaters.append(_Heater(self.index(name), float(gain), power))
+    def add_heater(
+        self,
+        name: str,
+        gain: float,
+        power: DelayedPower,
+        factor: Callable[[float, float, float], float] | None = None,
+    ) -> None:
+        self.heaters.append(_Heater(self.index(name), float(gain), power, factor))
 
-    def add_lagged_heater(self, name: str, gain: float, power: DelayedPower, tau_min: float) -> _LaggedHeater:
-        heater = _LaggedHeater(self.index(name), float(gain), power, float(tau_min))
+    def add_lagged_heater(
+        self,
+        name: str,
+        gain: float,
+        power: DelayedPower,
+        tau_min: float,
+        factor: Callable[[float, float, float], float] | None = None,
+    ) -> _LaggedHeater:
+        heater = _LaggedHeater(self.index(name), float(gain), power, float(tau_min), factor)
         self.lagged_heaters.append(heater)
         return heater
 
@@ -216,8 +232,13 @@ class ThermalNetwork:
         points = sorted(cuts)
         for seg_start, seg_end in zip(points, points[1:]):
             heat = [0.0] * len(self.names)
+            water_heaters = []
             for heater in self.heaters:
-                heat[heater.node] += heater.gain * heater.power.value_at(seg_start)
+                if heater.factor is None:
+                    heat[heater.node] += heater.gain * heater.power.value_at(seg_start)
+                else:
+                    # The water changes within a segment: its factor is taken at each step.
+                    water_heaters.append((heater, heater.power.value_at(seg_start)))
             open_links = [
                 link
                 for link in self.boundary_links
@@ -230,7 +251,14 @@ class ThermalNetwork:
                 mid_s = t_s + 0.5 * step_s
                 boundaries = [(link.node, link.conductance, link.temperature(mid_s)) for link in open_links]
                 step_heat = list(heat)
+                outdoor_mid = outdoor(mid_s)
+                for heater, power in water_heaters:
+                    factor = heater.factor(mid_s, outdoor_mid, self.temperatures[heater.node])
+                    step_heat[heater.node] += heater.gain * power * factor
                 for heater, power in zip(self.lagged_heaters, lagged_power):
-                    step_heat[heater.node] += heater.gain * heater.step(power, step_s / 60.0)
-                self._rk4(step_s / 60.0, outdoor(mid_s), step_heat, boundaries)
+                    output = heater.gain * heater.step(power, step_s / 60.0)
+                    if heater.factor is not None:
+                        output *= heater.factor(mid_s, outdoor_mid, self.temperatures[heater.node])
+                    step_heat[heater.node] += output
+                self._rk4(step_s / 60.0, outdoor_mid, step_heat, boundaries)
                 t_s += step_s

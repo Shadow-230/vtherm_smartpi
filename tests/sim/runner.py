@@ -46,6 +46,7 @@ from custom_components.vtherm_smartpi.hvac_mode import (
 
 from fakes.fake_thermostat_runtime import FakeThermostatRuntime
 
+from .boiler import SimBoiler, SimSmartBoiler
 from .clock import EventQueue, VirtualClock
 from .plant import DelayedPower, Schedule, ThermalNetwork
 from .scheduler import SimActuator, SimCycleScheduler
@@ -173,6 +174,11 @@ class ZoneSpec:
     presets: dict = field(default_factory=lambda: {"frost_temp": 7.0, "eco_temp": 17.0})
     options: dict = field(default_factory=dict)
     source: SourceSpec | None = None
+    # Water heating: the boiler feeding the zone's emitter (None: power independent of water),
+    # the emitter's type for the plant, and whether Smart Boiler publishes the water to SmartPI.
+    boiler: SimBoiler | None = None
+    emitter: str = "radiator"
+    smart_boiler: bool = False
 
 
 @dataclass
@@ -336,6 +342,7 @@ class Simulation:
             ZONE_NODE,
             self.zone.a,
             DelayedPower(self.actuator.history, self.zone.deadtime_min * 60.0),
+            self.zone.boiler.emitter_factor(self.zone.emitter) if self.zone.boiler is not None else None,
         )
         for neighbour in self.zone.neighbours:
             self.network.link_boundary(
@@ -343,6 +350,15 @@ class Simulation:
             )
 
         self.thermostat = SimThermostat(self.zone, self.clock, self.actuator)
+        if self.zone.boiler is not None and self.zone.boiler.on_demand:
+            # The boiler fires while the zone called for heat in the last 20 minutes.
+            history = self.actuator.history
+            self.zone.boiler.demand = lambda t_s: history.on_seconds(t_s - 1200.0, t_s) > 0.0
+        self.smart_boiler: SimSmartBoiler | None = None
+        if self.zone.smart_boiler and self.zone.boiler is not None:
+            self.smart_boiler = SimSmartBoiler(self.clock, self.weather)
+            self.smart_boiler.zones[self.thermostat.entity_id] = self.zone.boiler
+            self.thermostat.hass.data["vtherm_smart_boiler_api"] = self.smart_boiler
         self.scheduler, self.handler = self._attach_handler(self.thermostat, self.actuator, self.zone)
         if known_inputs is not None:
             self.algo.set_known_inputs_provider(lambda: known_inputs(self))

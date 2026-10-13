@@ -92,6 +92,8 @@ from .smartpi.autocalib import AutoCalibTrigger, AutoCalibEvent
 from .smartpi.deadtime_estimator import DeadTimeEstimator
 from .smartpi.ab_estimator import ABEstimator
 from .smartpi.thermal_twin_1r1c import ThermalTwin1R1C
+from .smartpi.water_input import WaterInput, WaterReading, WaterState
+from .smartpi.const import WATER_NO_HEAT
 from .smartpi.diagnostics import build_diagnostics, build_published_diagnostics, build_debug_diagnostics
 from .smartpi.governance import SmartPIGovernance
 from .smartpi.setpoint import SmartPISetpointManager
@@ -154,6 +156,9 @@ from .smartpi.timestamp_utils import (
 from .const import HVAC_OFF_REASON_WINDOW_DETECTION
 
 _LOGGER = logging.getLogger(__name__)
+
+
+WATER_INTEGRAL_HOLD = "no_heat"
 
 
 class SmartPI:
@@ -342,6 +347,16 @@ class SmartPI:
         # Tracking anti-windup diagnostics
         self._last_u_cmd: float = 0.0       # command after [0,1] clamp
         self._last_u_limited: float = 0.0   # after rate-limit and max_on_percent
+        # Water input (documentation/en/water_input.md): the controller works in
+        # power at the reference water; the emitter gets power / factor.
+        self.water = WaterInput()
+        self._water_factor: float = 1.0
+        # Actuator command held while hot water has priority (None: not held).
+        self._water_hold_actuator: float | None = None
+        # The integral is held: hot water, or water bringing next to no heat.
+        self._water_integral_hold: bool = False
+        # The demand exceeded what the water can give at full command.
+        self._water_too_cold: bool = False
         self._last_u_applied: float = 0.0   # candidate output after timing constraints
         self._last_aw_du: float = 0.0       # tracking delta for diagnostics
         self._last_ff_trim_delta: float = 0.0
@@ -1091,7 +1106,7 @@ class SmartPI:
         self._fftrim_observer.complete_applied_cycle(
             now_monotonic=cycle_end_now,
             realized_linear_power=(
-                clamp(float(e_eff), 0.0, 1.0) if e_eff is not None else None
+                clamp(float(e_eff), 0.0, 1.0) * self._water_factor if e_eff is not None else None
             ),
             use_valve_trace=self._valve_mode_enabled,
         )
@@ -1941,12 +1956,101 @@ class SmartPI:
         }
 
     def _to_actuator_power(self, linear_power: float) -> float:
-        """Convert internal linear demand to actuator command."""
-        return self.valve_curve.apply(linear_power)
+        """Convert internal linear demand to actuator command.
+
+        With water data the linear demand is power at the reference water: the
+        emitter needs ``power / factor`` (at most 1). While the water brings no
+        heat the command is held.
+        """
+        if self._water_hold_actuator is not None:
+            # Hot water: no chasing a fully open valve while no heat can come; a
+            # demand of zero (off, satisfied, shed, cut) still gives zero.
+            return self._water_hold_actuator if linear_power > 1e-9 else 0.0
+        return self.valve_curve.apply(self._water_command(linear_power))
+
+    def _water_command(self, linear_power: float) -> float:
+        """Command before the valve curve for a power at the reference water.
+
+        At least ``WATER_NO_HEAT`` is used as the factor: with an idle boiler that
+        fires on demand the water is near the room, and the zone must still be
+        able to call for heat.
+        """
+        if self._water_factor == 1.0:
+            return linear_power
+        return min(1.0, linear_power / max(self._water_factor, WATER_NO_HEAT))
 
     def _to_linear_power(self, actuator_power: float) -> float:
-        """Convert actuator feedback to internal linear demand."""
-        return self.valve_curve.invert(actuator_power)
+        """Convert actuator feedback to internal linear demand (power at the reference water)."""
+        return self.valve_curve.invert(actuator_power) * self._water_factor
+
+    # --- water input --------------------------------------------------------
+
+    def configure_heating_type(self, heating_type: str | None) -> None:
+        """Set the thermostat's heating type (a water type uses Smart Boiler's water data)."""
+        self.water.configure(heating_type)
+        if not self.water.uses_water:
+            self._apply_water_state(WaterState())
+
+    def update_water(self, reading: WaterReading | None, room_c: float | None) -> WaterState:
+        """Apply the water data read for this calculation (None: no data now)."""
+        state = self.water.update(reading, room_c, time.monotonic())
+        self._apply_water_state(state)
+        return state
+
+    def _apply_water_state(self, state: WaterState) -> None:
+        factor = state.factor if state.uses_water else 1.0
+        if state.no_heat:
+            if self._water_hold_actuator is None:
+                self._water_hold_actuator = self._actuator_committed_on_percent
+        else:
+            self._water_hold_actuator = None
+        self._water_integral_hold = state.no_heat or state.low_heat
+        if self._water_integral_hold:
+            # Re-asserted at every calculation: other paths release the hold.
+            if not self.ctl.integral_hold_active:
+                self.ctl.start_integral_hold(WATER_INTEGRAL_HOLD)
+        elif self.ctl.integral_hold_mode == WATER_INTEGRAL_HOLD:
+            self.ctl.clear_integral_hold()
+        if factor != self._water_factor:
+            self._water_factor = factor
+            # The committed command now brings another power: learning and the
+            # dead-time observation follow the power.
+            self._committed_on_percent = self._to_linear_power(self._actuator_committed_on_percent)
+
+    def _deadtime_power(self) -> float:
+        """Applied output for the dead-time estimator: the command step, not its power.
+
+        The estimator times the response to switching the emitter on or off and
+        only accepts strong steps; with water data the power of a full command is
+        the water factor, so it gets the command (0 while hot water takes the heat).
+        """
+        if not self._water_active:
+            return self._committed_on_percent
+        if self._water_hold_actuator is not None:
+            return 0.0
+        return self.valve_curve.invert(self._actuator_committed_on_percent)
+
+    @property
+    def water_factor(self) -> float:
+        """Water factor applied now (1 without water data)."""
+        return self._water_factor
+
+    def water_diagnostics(self) -> dict | None:
+        """The water block of the diagnostics (None for a heating type without water)."""
+        state = self.water.state
+        if not state.uses_water:
+            return None
+        return {
+            "heating_type": self.water.heating_type,
+            "factor": round(self._water_factor, 3),
+            "source": state.source,
+            "supply_avg_c": round(state.supply_avg_c, 1) if state.supply_avg_c is not None else None,
+            "supply_reason": state.supply_reason,
+            "heat_reason": state.heat_reason,
+            "no_heat": state.no_heat,
+            "low_heat": state.low_heat,
+            "water_too_cold": self._water_too_cold,
+        }
 
     def configure_valve_linearization(
         self,
@@ -1969,9 +2073,18 @@ class SmartPI:
 
     def _sync_actuator_committed_on_percent(self) -> None:
         """Refresh the committed actuator command from the linear committed value."""
+        if self._water_active:
+            # The committed command is kept; its power follows the water instead.
+            self._committed_on_percent = self._to_linear_power(self._actuator_committed_on_percent)
+            return
         self._actuator_committed_on_percent = self._to_actuator_power(
             self._committed_on_percent
         )
+
+    @property
+    def _water_active(self) -> bool:
+        """Water data change the mapping between command and power."""
+        return self._water_factor != 1.0 or self._water_hold_actuator is not None
 
     def _set_linear_output(self, linear_power: float) -> None:
         """Set the candidate output in the internal linear command space."""
@@ -1990,6 +2103,17 @@ class SmartPI:
 
     def _commit_current_linear_output(self) -> None:
         """Commit the current linear candidate output and refresh actuator state."""
+        if self._water_active:
+            # With water data the command is the source of truth and the power
+            # delivered is the command times the factor (the conversions are not
+            # inverse below WATER_NO_HEAT, nor while hot water holds the command).
+            self._actuator_committed_on_percent = self._to_actuator_power(self._on_percent)
+            self._committed_on_percent = self._to_linear_power(self._actuator_committed_on_percent)
+            self.u_prev = self._on_percent
+            self._last_u_applied = self._on_percent
+            self._sync_actuator_on_percent()
+            self._last_actuator_applied = self._actuator_committed_on_percent
+            return
         self._committed_on_percent = self._on_percent
         self.u_prev = self._on_percent
         self._last_u_applied = self._on_percent
@@ -2007,6 +2131,8 @@ class SmartPI:
 
     @property
     def committed_on_percent(self) -> float:
+        if self._water_active:
+            return self._actuator_committed_on_percent
         return self._to_actuator_power(self._committed_on_percent)
 
     @property
@@ -2297,21 +2423,27 @@ class SmartPI:
 
         u_final = u_cmd
         cycle_sec = self._cycle_min * 60
-        on_time_sec = u_cmd * cycle_sec
+        # The delays apply to the command the device gets: with water data the
+        # command is the power divided by the water factor.
+        command = self._water_command(u_cmd)
+        on_time_sec = command * cycle_sec
 
         if self._valve_mode_enabled:
             u_floored, adjusted = apply_valve_activation_floor(
                 self.valve_curve,
-                u_cmd,
+                command,
                 self._cycle_min,
                 self._minimal_activation_delay,
             )
             if adjusted:
                 self._last_forced_by_timing = True
-                return min(
+                floored = min(
                     u_floored,
                     self._max_on_percent if self._max_on_percent is not None else 1.0,
                 )
+                if self._water_factor != 1.0:
+                    floored *= max(self._water_factor, WATER_NO_HEAT)
+                return floored
 
         # Case: Switching ON
         if u_prev <= 0.001 and u_cmd > 0.001:
@@ -2665,6 +2797,10 @@ class SmartPI:
         # without dependencies keeps exactly the previous persisted format.
         if self.dependency_state:
             state["dependencies"] = self.dependency_state.save_state()
+        # Likewise the water input, once it has seen water data.
+        water = self.water.save_state()
+        if water["availability"] != "none" or water["long_average"] is not None:
+            state["water"] = water
         return state
 
     def load_state(self, state: dict) -> None:
@@ -2694,6 +2830,7 @@ class SmartPI:
         self.gain_scheduler.load_state(state.get("gs_state", {}))
         self.dependency_state.load_state(state.get("dependencies"))
         self.dependency_model.load()
+        self.water.load_state(state.get("water"))
         self.integral_guard.load_state(state.get("integral_guard_state", {}))
         self.integral_guard.reset()
         self.sp_mgr.clear_runtime_transients()
@@ -3379,13 +3516,14 @@ class SmartPI:
             u_limited = clamp(u_cmd, prev_limited - max_step, prev_limited + max_step)
 
         # SATURATION & FINAL OUTPUT
-        self._set_linear_output(
-            clamp(
-                u_limited,
-                0.0,
-                self._max_on_percent if self._max_on_percent is not None else 1.0,
-            )
-        )
+        upper = self._max_on_percent if self._max_on_percent is not None else 1.0
+        if self._water_hold_actuator is None and self._water_factor < 1.0:
+            # The water caps the power the emitter can give at full command.
+            upper *= max(self._water_factor, WATER_NO_HEAT)
+            self._water_too_cold = u_limited > upper + 1e-9
+        else:
+            self._water_too_cold = False
+        self._set_linear_output(clamp(u_limited, 0.0, upper))
         return self._on_percent
 
     def calculate(  # pylint: disable=keyword-arg-before-vararg
@@ -3587,7 +3725,7 @@ class SmartPI:
                 now=now,
                 tin=t_int_lp,
                 sp=target_temp_filt,
-                u_applied=self._committed_on_percent,
+                u_applied=self._deadtime_power(),
                 max_on_percent=self._max_on_percent if self._max_on_percent is not None else 1.0,
                 is_hysteresis=False,
                 hvac_mode=hvac_mode,
@@ -3658,7 +3796,7 @@ class SmartPI:
                     now=now,
                     tin=t_int_lp,
                     sp=target_temp_filt,
-                    u_applied=self._committed_on_percent,
+                    u_applied=self._deadtime_power(),
                     max_on_percent=self._max_on_percent if self._max_on_percent is not None else 1.0,
                     is_hysteresis=True,
                     hvac_mode=hvac_mode,
@@ -3773,6 +3911,10 @@ class SmartPI:
         # --- 11. PID Compute ---
         # Capture saturation state before compute_pwm updates it (used for SAT_HI exit detection)
         prev_sat_before_compute = self.ctl.last_sat
+        # The water brings no heat: keep the integral held (a deadband edge may
+        # have released the hold since the last water update).
+        if self._water_integral_hold and not self.ctl.integral_hold_active:
+            self.ctl.start_integral_hold(WATER_INTEGRAL_HOLD)
 
         u_cmd = self.ctl.compute_pwm(
             error_i,

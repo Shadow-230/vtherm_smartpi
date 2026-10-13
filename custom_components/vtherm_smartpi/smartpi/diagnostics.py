@@ -439,6 +439,9 @@ def build_published_diagnostics(algo: SmartPI) -> Dict[str, Any]:
     dependencies = algo.dependency_diagnostics()
     if dependencies is not None:
         published["dependencies"] = dependencies
+    water = algo.water_diagnostics()
+    if water is not None:
+        published["water"] = water
     return published
 
 
