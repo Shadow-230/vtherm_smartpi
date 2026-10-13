@@ -33,6 +33,10 @@ like single measurements, a history is published as its median once it holds
 ``COUPLING_MIN_SAMPLES`` values that agree (MAD over median at most
 ``COUPLING_MAX_DISPERSION``). Otherwise k stays unknown and the exchange
 remains in b as today.
+A second heat source is learned the same way: its regressor is the window
+mean of ``x_f`` (its command after its delay and lag, 0..1) and its
+coefficient is ``a_f``, the zone's rate of rise at the source's full power.
+
 Door connections open together whose regressors cannot be told apart
 (condition number of the normalized Gram matrix above ``COUPLING_LS_COND_MAX``)
 get one common coefficient (their total exchange is preserved) and are
@@ -76,6 +80,9 @@ from .const import (
     COUPLING_MAX_DISPERSION,
     COUPLING_MIN_SAMPLES,
     COUPLING_WINDOW_S,
+    SOURCE_A_F_MAX,
+    SOURCE_X_MIN,
+    SOURCE_X_MIN_STD,
 )
 
 OUTLIER_MIN_HISTORY = 5
@@ -123,6 +130,8 @@ class CouplingTick:
     always: frozenset[str] = frozenset()
     # Direct heat from other known inputs (degC/min).
     known_heat: float = 0.0
+    # Heat sources whose coefficient is learned: key -> x_f, negative in cooling.
+    heats: Mapping[str, float] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -133,12 +142,15 @@ class _Sample:
     # Neighbour temperatures, in the order of the window's ids.
     neighbours: tuple[float, ...]
     heat: float
+    # x_f of the learned heat sources, in the order of the window's heat ids.
+    sources: tuple[float, ...] = ()
 
 
 @dataclass
 class _Window:
     ids: tuple[str, ...]
     samples: list[_Sample] = field(default_factory=list)
+    heat_ids: tuple[str, ...] = ()
 
     @property
     def span_s(self) -> float:
@@ -191,11 +203,17 @@ _EXT = "_ext"
 
 
 def _boundary_rows(
-    rows: list[tuple[float, Mapping[str, float]]],
+    rows: list[tuple[float, Mapping[str, float]]], heat_ids: set[str]
 ) -> list[tuple[float, dict[str, float]]]:
     """Rows with each neighbour's regressor replaced by ``T_j - T_ext``."""
     return [
-        (r, {i: (v if i == _EXT else v - x.get(_EXT, 0.0)) for i, v in x.items()})
+        (
+            r,
+            {
+                i: (v if i == _EXT or i in heat_ids else v - x.get(_EXT, 0.0))
+                for i, v in x.items()
+            },
+        )
         for r, x in rows
     ]
 
@@ -277,12 +295,16 @@ def _agreed_median(values) -> float | None:
 
 
 def _well_conditioned(
-    rows: list[tuple[float, Mapping[str, float]]], ids: list[str], centered: bool = False
+    rows: list[tuple[float, Mapping[str, float]]],
+    ids: list[str],
+    centered: bool = False,
+    heat_ids: set[str] = frozenset(),
 ) -> bool:
     """Whether the regressors can be told apart (normalized Gram matrix condition number).
 
     ``centered`` compares their variations around their means only, each of
-    which must reach ``COUPLING_K_MIN_DT`` (standard deviation).
+    which must reach ``COUPLING_K_MIN_DT`` (degC), or ``SOURCE_X_MIN_STD`` for a
+    heat source (standard deviation).
     """
     means = {i: 0.0 for i in ids}
     if centered and rows:
@@ -292,7 +314,10 @@ def _well_conditioned(
     scale = [math.sqrt(gram[i][i]) for i in range(len(ids))]
     if any(value <= 0.0 for value in scale):
         return False
-    if centered and any(value / math.sqrt(len(rows)) < COUPLING_K_MIN_DT for value in scale):
+    if centered and any(
+        value / math.sqrt(len(rows)) < (SOURCE_X_MIN_STD if item_id in heat_ids else COUPLING_K_MIN_DT)
+        for item_id, value in zip(ids, scale)
+    ):
         return False
     normalized = [
         [gram[i][j] / (scale[i] * scale[j]) for j in range(len(ids))] for i in range(len(ids))
@@ -303,9 +328,14 @@ def _well_conditioned(
 
 
 class CouplingEstimator:
-    """Exchange coefficients k of the zone's neighbours, learned from measurement windows."""
+    """Coefficients of the zone's known inputs, learned from measurement windows.
+
+    Exchange coefficients ``k`` of neighbours, and ``a_f`` of heat sources.
+    """
 
     def __init__(self) -> None:
+        # Items whose coefficient is a heat source's a_f rather than an exchange k.
+        self._heat_ids: set[str] = set()
         self._history: dict[str, Deque[float]] = {}
         self._ls_rows: Deque[tuple[float, dict[str, float]]] = deque(maxlen=COUPLING_LS_WINDOW)
         # Rows with b as an unknown: residual without b, regressors include "ext".
@@ -325,6 +355,15 @@ class CouplingEstimator:
         self._power: Deque[tuple[float, float]] = deque()
         # Completed cycles: (start, end, realized power).
         self._realized: Deque[tuple[float, float, float]] = deque()
+
+    def set_heat_ids(self, item_ids: set[str]) -> None:
+        """Declare which items are heat sources (their bounds and regressors differ)."""
+        if set(item_ids) != self._heat_ids:
+            self._heat_ids = set(item_ids)
+            self._solve_shared(fit_joint=False)
+
+    def _max_for(self, item_id: str) -> float:
+        return SOURCE_A_F_MAX if item_id in self._heat_ids else COUPLING_K_MAX
 
     # --- published values -------------------------------------------------
 
@@ -386,7 +425,8 @@ class CouplingEstimator:
         self._solve_shared(fit_joint=False)
 
     def forget_except(self, item_ids: set[str]) -> None:
-        """Drop everything learned about neighbours that are no longer configured."""
+        """Drop everything learned about items that are no longer configured."""
+        self._heat_ids &= set(item_ids)
         for item_id in list(self._history):
             if item_id not in item_ids:
                 del self._history[item_id]
@@ -416,54 +456,60 @@ class CouplingEstimator:
     def update(self, tick: CouplingTick) -> bool:
         """Feed one calculation; return True when a new value was learned."""
         self._record_power(tick)
-        ids = tuple(sorted(tick.connected)) if tick.learning_allowed else ()
+        self._heat_ids.update(tick.heats)
+        allowed = tick.learning_allowed
+        ids = tuple(sorted(tick.connected)) if allowed else ()
+        heat_ids = tuple(sorted(tick.heats)) if allowed else ()
         window = self._window
-        if not ids:
+        if not ids and not heat_ids:
             self._window = None
             return False
-        if window is None or window.ids != ids:
-            self._window = self._new_window(ids, tick)
+        if window is None or window.ids != ids or window.heat_ids != heat_ids:
+            self._window = self._new_window(ids, heat_ids, tick)
             return False
 
         if tick.now_s <= window.samples[-1].t_s:
             return False
-        window.samples.append(self._sample(ids, tick))
+        window.samples.append(self._sample(ids, heat_ids, tick))
 
         if window.span_s < COUPLING_WINDOW_S:
             return False
         learned = self._submit(window, tick)
-        self._window = self._new_window(ids, tick)
+        self._window = self._new_window(ids, heat_ids, tick)
         return learned
 
     @staticmethod
-    def _sample(ids: tuple[str, ...], tick: CouplingTick) -> _Sample:
+    def _sample(ids: tuple[str, ...], heat_ids: tuple[str, ...], tick: CouplingTick) -> _Sample:
         return _Sample(
             t_s=tick.now_s,
             zone_temp=tick.zone_temp,
             ext_temp=tick.ext_temp,
             neighbours=tuple(tick.connected[item_id] for item_id in ids),
             heat=tick.known_heat,
+            sources=tuple(tick.heats[item_id] for item_id in heat_ids),
         )
 
-    def _new_window(self, ids: tuple[str, ...], tick: CouplingTick) -> _Window:
-        return _Window(ids=ids, samples=[self._sample(ids, tick)])
+    def _new_window(self, ids: tuple[str, ...], heat_ids: tuple[str, ...], tick: CouplingTick) -> _Window:
+        return _Window(ids=ids, samples=[self._sample(ids, heat_ids, tick)], heat_ids=heat_ids)
 
     def record_realized_power(
-        self, start_s: float, end_s: float, power: float, switched: bool = False
+        self, start_s: float, end_s: float, power: float, switched: bool = False, level: float = 1.0
     ) -> None:
         """Record the average power a completed cycle delivered over [start_s, end_s].
 
-        A switched actuator delivers it at full power from the start of the cycle.
+        A switched actuator delivers it at its ``level`` (its water factor, 1
+        without water data) from the start of the cycle.
         """
         if end_s <= start_s or not math.isfinite(power):
             return
         power = min(max(power, 0.0), 1.0)
-        if not switched:
+        level = min(max(level, 0.0), 1.0) if math.isfinite(level) else 1.0
+        if not switched or level <= 0.0:
             self._realized.append((start_s, end_s, power))
             return
-        on_end_s = start_s + power * (end_s - start_s)
+        on_end_s = start_s + min(power / level, 1.0) * (end_s - start_s)
         if on_end_s > start_s:
-            self._realized.append((start_s, on_end_s, 1.0))
+            self._realized.append((start_s, on_end_s, level))
         if end_s > on_end_s:
             self._realized.append((on_end_s, end_s, 0.0))
 
@@ -510,6 +556,7 @@ class CouplingEstimator:
         delay = max(tick.deadtime_s, 0.0)
         slope = u = heat = gap_ext = 0.0
         gaps = [0.0] * len(window.ids)
+        sources = [0.0] * len(window.heat_ids)
         for weight, first, second in zip(weights, samples, samples[1:]):
             dt = second.t_s - first.t_s
             slope += weight * (second.zone_temp - first.zone_temp) / dt * 60.0
@@ -523,8 +570,14 @@ class CouplingEstimator:
                     first.zone_temp - first.neighbours[index]
                     + second.zone_temp - second.neighbours[index]
                 )
+            for index in range(len(sources)):
+                sources[index] += weight * 0.5 * (first.sources[index] + second.sources[index])
         x = {item_id: -gap for item_id, gap in zip(window.ids, gaps)}
-        if all(abs(value) < COUPLING_K_MIN_DT for value in x.values()):
+        informative = any(abs(value) >= COUPLING_K_MIN_DT for value in x.values()) or any(
+            abs(value) >= SOURCE_X_MIN for value in sources
+        )
+        x.update(zip(window.heat_ids, sources))
+        if not informative:
             return False
         known = tick.a * u + heat
         if tick.always & set(x):
@@ -542,7 +595,7 @@ class CouplingEstimator:
         return True
 
     def _add_single(self, item_id: str, k_meas: float) -> bool:
-        if not 0.0 < k_meas <= COUPLING_K_MAX:
+        if not 0.0 < k_meas <= self._max_for(item_id):
             return False
         history = self._history.setdefault(item_id, deque(maxlen=COUPLING_HISTORY_SIZE))
         if len(history) >= OUTLIER_MIN_HISTORY:
@@ -569,7 +622,10 @@ class CouplingEstimator:
         if len(rows) < COUPLING_JOINT_MIN_ROWS:
             return
         ids = sorted({item_id for _r, x in rows for item_id in x})
-        separable = _well_conditioned(_boundary_rows(rows), ids, centered=True)
+        heat_ids = self._heat_ids
+        separable = _well_conditioned(
+            _boundary_rows(rows, heat_ids), ids, centered=True, heat_ids=heat_ids
+        )
         fit = _least_squares_with_errors(rows, ids) if separable else None
         if fit is None or not all(
             value > 0.0 and error <= COUPLING_JOINT_MAX_REL_SE * value
@@ -580,7 +636,7 @@ class CouplingEstimator:
         if self._joint_k and self._joint_rows_since_fit < COUPLING_JOINT_FIT_SPACING:
             return
         solution = dict(zip(ids, fit[0]))
-        if any(value > COUPLING_K_MAX for item_id, value in solution.items() if item_id != _EXT):
+        if any(value > self._max_for(item_id) for item_id, value in solution.items() if item_id != _EXT):
             return
         for item_id, value in solution.items():
             if item_id != _EXT:
@@ -594,6 +650,9 @@ class CouplingEstimator:
             return
         ids = sorted({item_id for _r, x in rows for item_id in x})
         if not _well_conditioned(rows, ids):
+            if self._heat_ids & set(ids):
+                # A heat source and an exchange have no common coefficient.
+                return
             # One coefficient shared by all connections: r = k * sum_j x_j.
             sums = [sum(x.values()) for _r, x in rows]
             norm = sum(s * s for s in sums)
@@ -610,5 +669,5 @@ class CouplingEstimator:
         if solution is None:
             return
         for item_id, value in solution.items():
-            if 0.0 < value <= COUPLING_K_MAX:
+            if 0.0 < value <= self._max_for(item_id):
                 self._ls_k[item_id] = value

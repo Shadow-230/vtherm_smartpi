@@ -7,7 +7,12 @@ model that SmartPI identifies.
 
 A lagged heater passes its delayed power through a first-order lag before it
 reaches the node, like an emitter with thermal mass (a heated floor): its
-output follows ``x(t+h) = u + (x(t) - u)*exp(-h/tau)``.
+output follows ``x(t+h) = u + (x(t) - u)*exp(-h/tau)``. A two-stage one passes
+it through two lags of ``tau / 2`` in series, a slab that warms through its
+depth. A water emitter's power factor applies to what enters the lag: the water
+heats the slab, the slab the room.
+
+Two nodes may be linked always or by schedule (a door between two zones).
 """
 
 from __future__ import annotations
@@ -125,6 +130,27 @@ class _LaggedHeater:
 
 
 @dataclass
+class _TwoStageHeater(_LaggedHeater):
+    """Two lags of tau_min / 2 in series: a slab that warms through its depth."""
+
+    inner: float = 0.0
+
+    def step(self, power: float, step_min: float) -> float:
+        half = self.tau_min / 2.0
+        if half <= 0.0:
+            self.inner = self.output = power
+            return power
+        substeps = max(1, int(step_min / 0.5))
+        dt = step_min / substeps
+        total = 0.0
+        for _ in range(substeps):
+            self.inner += (power - self.inner) * (1.0 - math.exp(-dt / half))
+            self.output += (self.inner - self.output) * (1.0 - math.exp(-dt / half))
+            total += self.output
+        return total / substeps
+
+
+@dataclass
 class ThermalNetwork:
     """Nodes linked by conductances, to the outdoors and to delayed heaters."""
 
@@ -136,6 +162,8 @@ class ThermalNetwork:
     boundary_links: list[_BoundaryLink] = field(default_factory=list)
     heaters: list[_Heater] = field(default_factory=list)
     lagged_heaters: list[_LaggedHeater] = field(default_factory=list)
+    # Links between nodes open by schedule, such as a door between two zones.
+    scheduled_links: list[tuple[int, int, float, Schedule]] = field(default_factory=list)
 
     def add_node(self, name: str, temperature: float, capacity: float = 1.0) -> int:
         self.names.append(name)
@@ -149,8 +177,11 @@ class ThermalNetwork:
     def temperature(self, name: str) -> float:
         return self.temperatures[self.index(name)]
 
-    def link(self, first: str, second: str, conductance: float) -> None:
-        self.links.append((self.index(first), self.index(second), float(conductance)))
+    def link(self, first: str, second: str, conductance: float, schedule: Schedule | None = None) -> None:
+        if schedule is None:
+            self.links.append((self.index(first), self.index(second), float(conductance)))
+            return
+        self.scheduled_links.append((self.index(first), self.index(second), float(conductance), schedule))
 
     def link_outdoor(self, name: str, conductance: float) -> None:
         self.outdoor_links.append((self.index(name), float(conductance)))
@@ -181,8 +212,10 @@ class ThermalNetwork:
         power: DelayedPower,
         tau_min: float,
         factor: Callable[[float, float, float], float] | None = None,
+        stages: int = 1,
     ) -> _LaggedHeater:
-        heater = _LaggedHeater(self.index(name), float(gain), power, float(tau_min), factor)
+        kind = _TwoStageHeater if stages == 2 else _LaggedHeater
+        heater = kind(self.index(name), float(gain), power, float(tau_min), factor)
         self.lagged_heaters.append(heater)
         return heater
 
@@ -192,11 +225,12 @@ class ThermalNetwork:
         outdoor_c: float,
         heat: list[float],
         boundaries: list[tuple[int, float, float]] = (),
+        extra_links: list[tuple[int, int, float]] = (),
     ) -> list[float]:
         flows = list(heat)
         for node, conductance, temperature in boundaries:
             flows[node] += conductance * (temperature - temps[node])
-        for first, second, conductance in self.links:
+        for first, second, conductance in (*self.links, *extra_links):
             flow = conductance * (temps[second] - temps[first])
             flows[first] += flow
             flows[second] -= flow
@@ -204,12 +238,12 @@ class ThermalNetwork:
             flows[node] += conductance * (outdoor_c - temps[node])
         return [flow / capacity for flow, capacity in zip(flows, self.capacities)]
 
-    def _rk4(self, step_min: float, outdoor_c: float, heat: list[float], boundaries=()) -> None:
+    def _rk4(self, step_min: float, outdoor_c: float, heat: list[float], boundaries=(), extra=()) -> None:
         temps = self.temperatures
-        k1 = self._derivative(temps, outdoor_c, heat, boundaries)
-        k2 = self._derivative([t + 0.5 * step_min * k for t, k in zip(temps, k1)], outdoor_c, heat, boundaries)
-        k3 = self._derivative([t + 0.5 * step_min * k for t, k in zip(temps, k2)], outdoor_c, heat, boundaries)
-        k4 = self._derivative([t + step_min * k for t, k in zip(temps, k3)], outdoor_c, heat, boundaries)
+        k1 = self._derivative(temps, outdoor_c, heat, boundaries, extra)
+        k2 = self._derivative([t + 0.5 * step_min * k for t, k in zip(temps, k1)], outdoor_c, heat, boundaries, extra)
+        k3 = self._derivative([t + 0.5 * step_min * k for t, k in zip(temps, k2)], outdoor_c, heat, boundaries, extra)
+        k4 = self._derivative([t + step_min * k for t, k in zip(temps, k3)], outdoor_c, heat, boundaries, extra)
         self.temperatures = [
             t + step_min / 6.0 * (a + 2.0 * b + 2.0 * c + d)
             for t, a, b, c, d in zip(temps, k1, k2, k3, k4)
@@ -229,6 +263,8 @@ class ThermalNetwork:
         for link in self.boundary_links:
             if link.schedule is not None:
                 cuts.update(link.schedule.changes(start_s, end_s))
+        for *_nodes, schedule in self.scheduled_links:
+            cuts.update(schedule.changes(start_s, end_s))
         points = sorted(cuts)
         for seg_start, seg_end in zip(points, points[1:]):
             heat = [0.0] * len(self.names)
@@ -245,6 +281,11 @@ class ThermalNetwork:
                 if link.schedule is None or link.schedule.is_open(seg_start)
             ]
             lagged_power = [heater.power.value_at(seg_start) for heater in self.lagged_heaters]
+            extra = [
+                (first, second, conductance)
+                for first, second, conductance, schedule in self.scheduled_links
+                if schedule.is_open(seg_start)
+            ]
             t_s = seg_start
             while t_s < seg_end - 1e-9:
                 step_s = min(MAX_STEP_S, seg_end - t_s)
@@ -256,9 +297,8 @@ class ThermalNetwork:
                     factor = heater.factor(mid_s, outdoor_mid, self.temperatures[heater.node])
                     step_heat[heater.node] += heater.gain * power * factor
                 for heater, power in zip(self.lagged_heaters, lagged_power):
-                    output = heater.gain * heater.step(power, step_s / 60.0)
                     if heater.factor is not None:
-                        output *= heater.factor(mid_s, outdoor_mid, self.temperatures[heater.node])
-                    step_heat[heater.node] += output
-                self._rk4(step_s / 60.0, outdoor_mid, step_heat, boundaries)
+                        power *= heater.factor(mid_s, outdoor_mid, self.temperatures[heater.node])
+                    step_heat[heater.node] += heater.gain * heater.step(power, step_s / 60.0)
+                self._rk4(step_s / 60.0, outdoor_mid, step_heat, boundaries, extra)
                 t_s += step_s

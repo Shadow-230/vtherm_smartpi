@@ -90,15 +90,46 @@ class SourceHeat:
         self._state = 0.0
 
     def record(self, now_s: float, command: float) -> None:
-        """Note the command the source applies from ``now_s`` on."""
+        """Note the command the source applies from ``now_s`` on.
+
+        It replaces whatever was planned from ``now_s`` on, such as the end of a
+        cycle that has been cut short.
+        """
         command = min(max(float(command), 0.0), 1.0)
-        if self._commands and now_s < self._commands[-1][0]:
-            return
+        while self._commands and self._commands[-1][0] >= now_s:
+            self._commands.pop()
         if self._commands and self._commands[-1][1] == command:
             return
         if self._state_s is None:
             self._state_s = now_s
         self._commands.append((now_s, command))
+
+    def record_cycle(
+        self, start_s: float, on_s: float, duration_s: float, power: float, switched: bool, level: float = 1.0
+    ) -> None:
+        """Note a cycle starting at ``start_s``.
+
+        A switched actuator runs at its ``level`` (its water factor, 1 without
+        water data) for ``on_s`` from the start of the cycle; a valve holds
+        ``power`` for the whole cycle.
+        """
+        if not switched:
+            self.record(start_s, power)
+            return
+        self.record(start_s, level if on_s > 0.0 else 0.0)
+        if 0.0 < on_s < duration_s:
+            self.record(start_s + on_s, 0.0)
+
+    def save_state(self) -> dict:
+        return {"x_f": self._state}
+
+    def load_state(self, state: dict, now_s: float) -> None:
+        """Resume from a saved ``x_f``, as if it had been reached at ``now_s`` with the source off."""
+        value = state.get("x_f") if isinstance(state, dict) else None
+        if isinstance(value, (int, float)) and math.isfinite(value):
+            self.reset()
+            self._state = min(max(float(value), 0.0), 1.0)
+            self._state_s = now_s
 
     def value(self, now_s: float) -> float:
         """``x_f`` at ``now_s``."""
@@ -111,6 +142,20 @@ class SourceHeat:
         state_s, state = self._evolve(self._state_s, self._state, now_s + max(0.0, offset_s))
         del state_s
         return state
+
+    def forecast(self, now_s: float, offsets_s: list[float], command: float) -> list[float]:
+        """``x_f`` expected at each offset after ``now_s`` if the source applies
+        ``command`` from ``now_s`` on, after the commands already on the way."""
+        trial = SourceHeat(self._response)
+        trial._commands = deque(self._commands)
+        trial._state_s, trial._state = self._state_s, self._state
+        trial._advance(now_s)
+        trial.record(now_s, command)
+        values = []
+        for offset_s in sorted(offsets_s):
+            trial._advance(now_s + max(0.0, offset_s))
+            values.append(trial._state)
+        return values
 
     def _command_at(self, t_s: float) -> float:
         """Command in effect at ``t_s`` (0 before the first one)."""

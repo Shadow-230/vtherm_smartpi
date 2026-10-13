@@ -145,3 +145,55 @@ async def test_zone_presets_are_read_from_the_thermostat_state(hass) -> None:
     readings = _readings(thermostat)
     assert readings.presets == {"frost_temp": 7.0, "eco_temp": 17.5}
     assert readings.temp_range == (7.0, 30.0)
+
+
+def _source_item(entity: str) -> dict:
+    return {
+        "id": "s1",
+        "kind": "source",
+        "entity": entity,
+        "split_rule": "lead_band",
+        "lead_band_percent": 20,
+        "lead_emitter": "radiator",
+        "source_emitter": "floor_water",
+    }
+
+
+async def test_the_source_is_attached_through_its_registry_id(hass, monkeypatch) -> None:
+    """The lead finds its source by registry id, publishes its command, and reads its cycles."""
+    registry = er.async_get(hass)
+    floor = registry.async_get_or_create("climate", VT_DOMAIN, "vt-floor", suggested_object_id="floor")
+    handler, thermostat = _handler(hass, [_source_item(floor.id)])
+    link = handler._source_link()
+
+    assert link.lead_of("vt-floor") == thermostat.unique_id
+    assert thermostat.prop_algorithm.dependency_model.has_source
+
+    thermostat.vtherm_hvac_mode = "heat"
+    monkeypatch.setattr(type(thermostat.prop_algorithm), "source_command", property(lambda _: 0.4))
+    handler._publish_source_command()
+    now_s = __import__("time").monotonic()
+    assert link.command_for("vt-floor", now_s, 900.0, "heat") == 0.4
+    assert not link.lead_silent("vt-floor", now_s + 899.0, 900.0)
+    observation = _readings(thermostat).source
+    assert (observation.item_id, observation.active, observation.cycles) == ("s1", False, ())
+
+    link.set_active("vt-floor", True, __import__("time").monotonic())
+    observation = _readings(thermostat).source
+    assert observation.active
+    assert observation.entity_id == "climate.floor"
+
+
+async def test_a_source_that_cannot_be_found_or_already_works_elsewhere_is_not_attached(hass) -> None:
+    registry = er.async_get(hass)
+    floor = registry.async_get_or_create("climate", VT_DOMAIN, "vt-floor", suggested_object_id="floor")
+    missing, _ = _handler(hass, [_source_item("0123456789abcdef")])
+    assert missing._source_unique_id is None
+
+    first, first_thermostat = _handler(hass, [_source_item(floor.id)])
+    second, _ = _handler(hass, [_source_item(floor.id)])
+    second._thermostat.unique_id = "other-lead"
+    second._attach_source()
+
+    assert second._source_unique_id is None
+    assert first._source_link().lead_of("vt-floor") == first_thermostat.unique_id

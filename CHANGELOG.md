@@ -4,6 +4,25 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+- Add a zone with two heat sources: the zone thermostat (main source) names a second
+  VTherm with SmartPI as its additional source, for example a heated floor next to a
+  radiator. The main source's SmartPI regulates; the additional source applies its
+  commands with its own cycle, delays and water data.
+  A joint fit of the zone learns the losses, both sources, the main source's delay,
+  the additional source's time scale and the neighbours' exchanges, apart for heating
+  and cooling; while SmartPI learns, the additional source works in learning blocks,
+  and SmartPI starts from the fit and keeps its model. Afterwards an allocation loop moves the
+  additional source towards the split rule (`together`, `source_first`, `lead_band`),
+  it answers the zone's error, and a predictive brake keeps its heat on the way from
+  overshooting the setpoint. While the zone recovers from a setback, the main source
+  works as if alone until it is about to reach its setpoint. A main source that stops publishing hands the zone to the
+  additional source's own SmartPI until it is back; switched off, it keeps telling its
+  source so.
+  Documented in `documentation/en/zone_dependencies.md`, section 6; the options form
+  comes next.
+- Raise the bound of the known heat's shift of the reference temperature to 40 °C, and
+  record switched cycles at their water factor in the exchange learning.
+
 - Add the water input: a heating type in the regulator settings (water radiator by
   default, water underfloor heating, electric mat, fast electric). For a water type,
   SmartPI reads the supply water of the thermostat's circuit from the Smart Boiler

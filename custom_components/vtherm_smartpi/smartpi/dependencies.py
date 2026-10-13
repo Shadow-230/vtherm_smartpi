@@ -9,8 +9,12 @@ structural validation and the learned state kept per item.
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, field
 from typing import Any, Iterable
+
+from .source_model import EMITTER_CUSTOM, EMITTERS
+from .split import RULES
 
 KIND_NEIGHBOUR = "neighbour"
 KIND_SOURCE = "source"
@@ -30,6 +34,17 @@ KEY_ENTITY = "entity"
 KEY_MODE = "mode"
 KEY_DOOR_SENSORS = "door_sensors"
 KEY_NEIGHBOUR_WINDOW_ACTION = "neighbour_window_action"
+# Second source: the rule and its parameters (percent), and both emitters.
+KEY_SPLIT_RULE = "split_rule"
+KEY_SPLIT_RATIO = "split_ratio"
+KEY_SOURCE_ALONE = "source_alone_percent"
+KEY_LEAD_BAND = "lead_band_percent"
+KEY_LEAD_EMITTER = "lead_emitter"
+KEY_LEAD_LAG_MIN = "lead_lag_min"
+KEY_LEAD_TAU_MIN = "lead_tau_min"
+KEY_SOURCE_EMITTER = "source_emitter"
+KEY_SOURCE_LAG_MIN = "source_lag_min"
+KEY_SOURCE_TAU_MIN = "source_tau_min"
 
 ERROR_MISSING_ID = "missing_id"
 ERROR_DUPLICATE_ID = "duplicate_id"
@@ -42,6 +57,11 @@ ERROR_DOOR_MODE_WITHOUT_SENSOR = "door_mode_without_sensor"
 ERROR_SHARED_DOOR_SENSOR = "shared_door_sensor"
 ERROR_UNKNOWN_WINDOW_ACTION = "unknown_window_action"
 ERROR_SECOND_SOURCE = "second_source"
+ERROR_SOURCE_IS_NEIGHBOUR = "source_is_neighbour"
+ERROR_UNKNOWN_SPLIT_RULE = "unknown_split_rule"
+ERROR_INVALID_SPLIT_PARAMETER = "invalid_split_parameter"
+ERROR_UNKNOWN_EMITTER = "unknown_emitter"
+ERROR_CUSTOM_EMITTER_WITHOUT_RESPONSE = "custom_emitter_without_response"
 
 DEPENDENCY_STATE_VERSION = 1
 
@@ -132,6 +152,39 @@ def dump_dependencies(items: Iterable[DependencyItem]) -> list[dict[str, Any]]:
     return stored
 
 
+def _number(value: Any) -> float | None:
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
+        return None
+    return float(value)
+
+
+def _source_issues(item: DependencyItem) -> list[str]:
+    """Problems of a source item's rule and emitters."""
+    extra = item.extra
+    issues = []
+    if extra.get(KEY_SPLIT_RULE) not in RULES:
+        issues.append(ERROR_UNKNOWN_SPLIT_RULE)
+    ratio = _number(extra.get(KEY_SPLIT_RATIO, 100))
+    alone = _number(extra.get(KEY_SOURCE_ALONE, 50))
+    band = _number(extra.get(KEY_LEAD_BAND, 20))
+    if ratio is None or ratio <= 0.0 or alone is None or not 0.0 <= alone <= 100.0:
+        issues.append(ERROR_INVALID_SPLIT_PARAMETER)
+    elif band is None or not 0.0 <= band <= 100.0:
+        issues.append(ERROR_INVALID_SPLIT_PARAMETER)
+    for emitter_key, lag_key, tau_key in (
+        (KEY_LEAD_EMITTER, KEY_LEAD_LAG_MIN, KEY_LEAD_TAU_MIN),
+        (KEY_SOURCE_EMITTER, KEY_SOURCE_LAG_MIN, KEY_SOURCE_TAU_MIN),
+    ):
+        emitter = extra.get(emitter_key)
+        if emitter not in EMITTERS:
+            issues.append(ERROR_UNKNOWN_EMITTER)
+        elif emitter == EMITTER_CUSTOM:
+            lag, tau = _number(extra.get(lag_key)), _number(extra.get(tau_key))
+            if lag is None or tau is None or lag < 0.0 or tau < 0.0:
+                issues.append(ERROR_CUSTOM_EMITTER_WITHOUT_RESPONSE)
+    return issues
+
+
 def validate_dependencies(
     items: Iterable[DependencyItem], own_entity: str | None = None
 ) -> list[ValidationIssue]:
@@ -146,6 +199,8 @@ def validate_dependencies(
     neighbour_entities: set[str] = set()
     door_sensor_owner: dict[str, str] = {}
     sources = 0
+    items = list(items)
+    source_entities = {item.entity for item in items if item.is_source and item.entity}
 
     for item in items:
         if not item.item_id:
@@ -166,8 +221,11 @@ def validate_dependencies(
             sources += 1
             if sources > 1:
                 issues.append(ValidationIssue(ERROR_SECOND_SOURCE, item.item_id))
+            issues.extend(ValidationIssue(code, item.item_id) for code in _source_issues(item))
             continue
 
+        if item.entity and item.entity in source_entities:
+            issues.append(ValidationIssue(ERROR_SOURCE_IS_NEIGHBOUR, item.item_id))
         if item.entity:
             if item.entity in neighbour_entities:
                 issues.append(ValidationIssue(ERROR_DUPLICATE_NEIGHBOUR, item.item_id))

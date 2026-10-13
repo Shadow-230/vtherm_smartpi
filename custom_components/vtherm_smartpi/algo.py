@@ -45,7 +45,7 @@ import logging
 import time
 from dataclasses import replace
 from datetime import datetime
-from math import exp
+from math import exp, isfinite
 from typing import Any, Callable, Dict, Optional
 
 from .hvac_mode import (
@@ -93,7 +93,12 @@ from .smartpi.deadtime_estimator import DeadTimeEstimator
 from .smartpi.ab_estimator import ABEstimator
 from .smartpi.thermal_twin_1r1c import ThermalTwin1R1C
 from .smartpi.water_input import WaterInput, WaterReading, WaterState
-from .smartpi.const import WATER_NO_HEAT
+from .smartpi.const import (
+    AB_CONFIDENCE_MIN_SAMPLES_A,
+    AB_CONFIDENCE_MIN_SAMPLES_B,
+    WATER_NO_HEAT,
+    ZONE_FIT_MODEL_SAMPLES_A,
+)
 from .smartpi.diagnostics import build_diagnostics, build_published_diagnostics, build_debug_diagnostics
 from .smartpi.governance import SmartPIGovernance
 from .smartpi.setpoint import SmartPISetpointManager
@@ -417,6 +422,8 @@ class SmartPI:
         self._learning_gate: str | None = None
         self.dependency_state = DependencyState()
         self.dependency_model = DependencyModel(self.dependency_state)
+        # Working as another thermostat's second source: its lead and command.
+        self._executive: dict[str, Any] | None = None
 
         # --- FFv2: trim bias + AB confidence ---
         self._ff_trim: FFTrim = FFTrim()
@@ -1028,6 +1035,7 @@ class SmartPI:
                     cycle_end_now,
                     self._to_linear_power(clamp(float(e_eff), 0.0, 1.0)),
                     switched=not self._valve_mode_enabled,
+                    level=self._water_factor,
                 )
 
         self._record_completed_fftrim_power(
@@ -1811,6 +1819,7 @@ class SmartPI:
         hvac_mode: VThermHvacMode | None,
         off_reason: str | None = None,
         power_shedding: bool = False,
+        target_temp: float | None = None,
     ) -> None:
         """Read the known model inputs of this calculation.
 
@@ -1834,11 +1843,18 @@ class SmartPI:
                             a=self.est.a,
                             b=self.est.b,
                             deadtime_s=deadtime_s if deadtime_reliable else None,
-                            model_reliable=self.phase == SmartPIPhase.STABLE,
+                            model_reliable=self._model_learned(),
                             hvac_mode=hvac_mode,
                             learning_allowed=self._dependency_learning_allowed(
                                 now_monotonic, hvac_mode, off_reason, power_shedding
                             ),
+                            learning_phase=self.phase == SmartPIPhase.HYSTERESIS,
+                            calibrating=self.calibration_mgr.is_calibrating,
+                            lead_demand=self._lead_demand(),
+                            lead_output=self._lead_output_share(),
+                            target_temp=target_temp,
+                            lead_power_cap=min(self._max_on_linear(), self.source_power_cap),
+                            lead_cycle_s=float(self._cycle_min) * 60.0,
                         ),
                     )
                 else:
@@ -1848,6 +1864,7 @@ class SmartPI:
                 _LOGGER.exception("%s - Reading the known model inputs failed", self._name)
                 inputs = None
         self._known_inputs = inputs
+        self._apply_zone_fit(hvac_mode)
 
         gate = inputs.learning_gate if inputs is not None else None
         if (gate is None) != (self._learning_gate is None):
@@ -1856,6 +1873,119 @@ class SmartPI:
             self.learn_win.reset()
             self.dt_est.reset_observation(self._committed_on_percent)
         self._learning_gate = gate
+
+    def _apply_zone_fit(self, hvac_mode: VThermHvacMode | None) -> None:
+        """A zone with two sources: SmartPI starts from the zone's joint fit and keeps it.
+
+        The joint fit learns a and b with both sources at work, on 30-min windows
+        and a regression over days; SmartPI's own windows, closed a few minutes
+        after a sensor step, measure a slow cooling about half as fast as it is
+        with 0.1 degC sensors. Once the fit is published SmartPI uses its a and b.
+
+        The fit's windows also stand for SmartPI's own as evidence: its time
+        constant comes from the fit's b, and its counts of learned samples are
+        at least what its reliability checks ask for. Otherwise the feed-forward
+        would stay at the share of its warm-up reached before the fit (SmartPI
+        rarely learns at a steady setpoint), the integral would carry the load,
+        and the gains would follow SmartPI's own b.
+        """
+        seed = self.dependency_model.pending_seed
+        if seed is not None:
+            self.dependency_model.pending_seed = None
+            if self.phase == SmartPIPhase.HYSTERESIS:
+                seed_a, seed_b = seed
+                self.est.a, self.est.b = seed_a, seed_b
+                self.est.a_meas_hist.clear()
+                self.est.b_meas_hist.clear()
+                self.est.a_meas_hist.extend([seed_a] * AB_MIN_SAMPLES_A)
+                self.est.b_meas_hist.extend([seed_b] * AB_MIN_SAMPLES_B)
+        self._hold_zone_fit(hvac_mode)
+
+    def _hold_zone_fit(self, hvac_mode: VThermHvacMode | None) -> None:
+        """Out of its learning phase, SmartPI keeps the zone fit's model (see _apply_zone_fit).
+
+        Also applied right after SmartPI's own learning step, so that a window of
+        its own closing in this calculation does not move a or b for one cycle.
+        """
+        if self.phase == SmartPIPhase.HYSTERESIS:
+            return
+        fit = self.dependency_model.zone_fit(hvac_mode)
+        if fit is not None:
+            sign = -1.0 if hvac_mode == VThermHvacMode_COOL else 1.0
+            est = self.est
+            est.a, est.b = sign * fit.a, fit.b
+            est._b_hat_hist.clear()
+            est._b_hat_hist.extend([fit.b] * est._b_hat_hist.maxlen)
+            est.learn_ok_count_a = max(est.learn_ok_count_a, AB_CONFIDENCE_MIN_SAMPLES_A, ZONE_FIT_MODEL_SAMPLES_A)
+            est.learn_ok_count_b = max(est.learn_ok_count_b, AB_CONFIDENCE_MIN_SAMPLES_B)
+            est.learn_ok_count = max(est.learn_ok_count, self.ff_warmup_ok_count)
+
+    def _model_learned(self) -> bool:
+        """SmartPI holds the samples of a and b that end its learning phase."""
+        return len(self.est.a_meas_hist) >= AB_MIN_SAMPLES_A and len(self.est.b_meas_hist) >= AB_MIN_SAMPLES_B
+
+    def _max_on_linear(self) -> float:
+        return self._max_on_percent if self._max_on_percent is not None else 1.0
+
+    def _lead_output_share(self) -> float:
+        """The actuator command as a share of the most it can be (VTherm's maximum on-percent,
+        the valve curve's top, the water): 1 when the lead is at its limit."""
+        full = self._to_actuator_power(self._max_on_linear())
+        if full <= 1e-6:
+            return 0.0
+        return min(max(self.on_percent / full, 0.0), 1.0)
+
+    def _lead_demand(self) -> float | None:
+        """The controller's steady demand at the previous calculation, before its 0..1 limits.
+
+        Feed-forward plus integral: the load the lead carries once the error is
+        gone. The proportional part only answers the current error, such as a
+        setpoint change, and would make the source chase transients.
+        """
+        demand = self.ctl.u_ff + self.ctl.u_i
+        return demand if isfinite(demand) else None
+
+    def configure_source(self, settings) -> None:
+        """Set the zone's second source (``SourceSettings``), or None without one."""
+        self.dependency_model.configure_source(settings)
+
+    @property
+    def source_command(self) -> float | None:
+        """Command for the zone's second source from this calculation's inputs.
+
+        None without a source, and when the inputs could not be read: the
+        source then gets nothing rather than an old command.
+        """
+        inputs = self._known_inputs
+        return inputs.source_command if inputs is not None else None
+
+    @property
+    def is_executive(self) -> bool:
+        """This thermostat works as another's second source."""
+        return self._executive is not None
+
+    def enter_source_role(self, lead: str) -> None:
+        """Work as ``lead``'s second source: apply its command, regulate and learn nothing."""
+        self._executive = {"lead": lead, "command": 0.0}
+
+    def set_source_command(self, command: float) -> None:
+        if self._executive is not None:
+            self._executive["command"] = clamp(float(command), 0.0, 1.0)
+            self._set_linear_output(self._executive["command"])
+            # Applied at once: a hot-water hold keeps this command, not an older one.
+            self._actuator_committed_on_percent = self._actuator_on_percent
+
+    def leave_source_role(self) -> None:
+        self._executive = None
+
+    @property
+    def source_power_cap(self) -> float:
+        """Most power a full command gives now, as power at the reference water.
+
+        The water factor, at least ``WATER_NO_HEAT`` (the command floor); 1
+        without water data. A lead uses it to forecast its source's heat.
+        """
+        return min(1.0, max(self._water_factor, WATER_NO_HEAT))
 
     def _dependency_learning_allowed(
         self,
@@ -1938,8 +2068,14 @@ class SmartPI:
 
     def dependency_diagnostics(self) -> Dict[str, Any] | None:
         """Model inputs of the configured dependencies, or None when there are none."""
+        if self._executive is not None:
+            return {
+                "role": "second_source",
+                "lead": self._executive["lead"],
+                "command": round(self._executive["command"], 3),
+            }
         inputs = self._known_inputs
-        if inputs is None or not inputs.status:
+        if inputs is None or (not inputs.status and inputs.source is None):
             return None
         model = self._effective_model
         return {
@@ -1953,6 +2089,7 @@ class SmartPI:
             "learning_gate": self._learning_gate,
             "neighbour_window_action": inputs.control_action,
             "items": [dict(status) for status in inputs.status],
+            **({"second_source": dict(inputs.source)} if inputs.source is not None else {}),
         }
 
     def _to_actuator_power(self, linear_power: float) -> float:
@@ -3571,9 +3708,17 @@ class SmartPI:
 
         now = time.monotonic()
 
+        # --- Working as another thermostat's second source ---
+        # Versatile Thermostat keeps calling the algorithm on each measurement
+        # and may send its output straight to a valve: the output is the lead's
+        # command, and nothing is regulated or learned.
+        if self._executive is not None:
+            self._set_linear_output(self._executive["command"])
+            return
+
         # --- Known model inputs and the reaction to a neighbour's open window ---
         self._read_known_inputs(
-            now, current_temp, ext_current_temp, hvac_mode, off_reason, power_shedding
+            now, current_temp, ext_current_temp, hvac_mode, off_reason, power_shedding, target_temp
         )
         target_temp, hvac_mode, off_reason = self._apply_neighbour_window_action(
             target_temp, hvac_mode, off_reason
@@ -3743,6 +3888,7 @@ class SmartPI:
                 target_temp=target_temp,
                 known_rate=effective_model.known_rate(t_int_clean),
             )
+            self._hold_zone_fit(hvac_mode)
 
         # Calibration state machine
         if self.calibration_mgr.is_calibrating and self.calibration_mgr.calibration_start_time is not None:

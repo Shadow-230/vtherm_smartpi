@@ -121,25 +121,46 @@ class AllocationLoop:
         self.timing = timing
         self.command = _unit(command)
         self.lead_average: float | None = None
+        self.applied: float | None = None
         self._last_s: float | None = None
 
     def reset(self, command: float = 0.0) -> None:
         self.command = _unit(command)
         self.lead_average = None
+        self.applied = None
+        self._last_s = None
+
+    def pause(self) -> None:
+        """The loop does not run for a while: it keeps its command and average, and
+        does not integrate over the pause when it runs again."""
         self._last_s = None
 
     def error(self) -> float:
         """Current error of the loop, ``average(D) - f(Z)``."""
         if self.lead_average is None:
             return 0.0
-        return self.lead_average - self.rule.lead_target(self.command)
+        applied = self.command if self.applied is None else self.applied
+        return self.lead_average - self.rule.lead_target(applied)
 
-    def update(self, now_s: float, lead_demand: float) -> float:
-        """Feed the lead's demand (before its 0..1 limits) at ``now_s``; return the source command."""
+    def update(
+        self,
+        now_s: float,
+        lead_demand: float,
+        hold_up: bool = False,
+        hold_down: bool = False,
+        applied: float | None = None,
+    ) -> float:
+        """Feed the lead's demand (before its 0..1 limits) at ``now_s``; return the source command.
+
+        ``hold_up`` and ``hold_down`` stop the source from moving in that
+        direction, for example up while the zone is already too warm.
+        """
         lead_demand = min(max(float(lead_demand), SPLIT_DEMAND_MIN), SPLIT_DEMAND_MAX)
+        self.applied = None if applied is None else _unit(applied)
         if self._last_s is None or self.lead_average is None:
             self._last_s = now_s
-            self.lead_average = lead_demand
+            if self.lead_average is None:
+                self.lead_average = lead_demand
             return self.command
         dt = now_s - self._last_s
         if dt <= 0.0:
@@ -150,6 +171,8 @@ class AllocationLoop:
         rate = self.error() / self.timing.time_constant_s
         limit = self.timing.max_rate_per_s
         rate = min(max(rate, -limit), limit)
+        if (rate > 0.0 and hold_up) or (rate < 0.0 and hold_down):
+            rate = 0.0
         self.command = _unit(self.command + rate * dt)
         return self.command
 

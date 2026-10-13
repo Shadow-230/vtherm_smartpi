@@ -15,6 +15,7 @@ from dataclasses import dataclass, field
 from typing import Any, Iterable, Mapping
 
 from .dependencies import MODE_ALWAYS, MODE_DOOR, DependencyItem
+from .source_link import SourceCycle
 
 STATE_ON = "on"
 _UNAVAILABLE_STATES = {None, "unavailable", "unknown"}
@@ -127,10 +128,26 @@ class NeighbourObservation:
 
 
 @dataclass(frozen=True)
+class SourceObservation:
+    """The zone's second source as the lead sees it at one calculation."""
+
+    item_id: str
+    entity_id: str | None
+    # The source runs in its executive role, applying the lead's commands.
+    active: bool
+    # Cycles the source started since the lead last read them.
+    cycles: tuple[SourceCycle, ...] = ()
+    # Most power the source can give at full command, from its own water data
+    # (1 without them): its water factor, at least WATER_NO_HEAT.
+    power_cap: float = 1.0
+
+
+@dataclass(frozen=True)
 class DependencyReadings:
     """Everything the dependency layer read for one calculation."""
 
     neighbours: tuple[NeighbourObservation, ...] = ()
+    source: SourceObservation | None = None
     # Preset temperatures of the zone thermostat, e.g. {"frost_temp": 7.0, "eco_temp": 17.0}.
     presets: Mapping[str, float] = field(default_factory=dict)
     # Minimum and maximum temperature of the zone thermostat, when known.

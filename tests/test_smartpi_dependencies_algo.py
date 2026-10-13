@@ -360,3 +360,87 @@ async def test_completed_cycles_report_their_realized_power(monkeypatch) -> None
         (end - 300.0, end - 150.0, 1.0),
         (end - 150.0, end, 0.0),
     ]
+
+
+async def test_the_allocation_follows_the_steady_demand_of_the_lead(monkeypatch) -> None:
+    """Feed-forward plus integral: the proportional answer to the current error is left out."""
+    algo = Simulation(monkeypatch, _zone(neighbours=())).algo
+    algo.ctl.u_ff, algo.ctl.u_p, algo.ctl.u_i, algo.ctl.u_pi = 0.3, 0.5, 0.1, 0.6
+
+    assert algo._lead_demand() == pytest.approx(0.4)
+
+
+async def test_a_configured_source_shows_in_the_diagnostics(monkeypatch) -> None:
+    from custom_components.vtherm_smartpi.smartpi.dependencies import KIND_SOURCE, DependencyItem
+    from custom_components.vtherm_smartpi.smartpi.dependency_inputs import DependencyReadings, SourceObservation
+    from custom_components.vtherm_smartpi.smartpi.source_settings import SourceSettings
+
+    sim = Simulation(monkeypatch, _zone(neighbours=()), OUTDOOR)
+    algo = sim.algo
+    algo.configure_source(
+        SourceSettings.from_item(
+            DependencyItem(item_id="s1", kind=KIND_SOURCE, entity="reg", extra={"split_rule": "together"})
+        )
+    )
+    algo.set_known_inputs_provider(
+        lambda: DependencyReadings(source=SourceObservation("s1", "climate.floor", active=True))
+    )
+    await sim.run_for(0.2)
+
+    block = build_published_diagnostics(algo)["dependencies"]
+    assert block["second_source"]["rule"] == "together"
+    # While SmartPI learns, the additional source works too (learning blocks).
+    assert block["second_source"]["mode"] == "learn"
+    assert algo.source_command == 1.0
+    assert block["second_source"]["zone_fit"]["published"] is False
+
+
+async def test_a_failing_dependency_layer_gives_the_source_nothing(monkeypatch) -> None:
+    """The last command must not be refreshed when the inputs cannot be read."""
+    from custom_components.vtherm_smartpi.smartpi.dependencies import KIND_SOURCE, DependencyItem
+    from custom_components.vtherm_smartpi.smartpi.dependency_inputs import DependencyReadings, SourceObservation
+    from custom_components.vtherm_smartpi.smartpi.source_settings import SourceSettings
+
+    sim = Simulation(monkeypatch, _zone(neighbours=()), OUTDOOR)
+    algo = sim.algo
+    algo.configure_source(
+        SourceSettings.from_item(DependencyItem(item_id="s1", kind=KIND_SOURCE, entity="reg", extra={"split_rule": "together"}))
+    )
+    algo.dependency_model._source.command = 0.8
+    algo.set_known_inputs_provider(lambda: DependencyReadings(source=SourceObservation("s1", None, active=True)))
+    monkeypatch.setattr(algo.dependency_model, "update", lambda readings, ctx: (_ for _ in ()).throw(RuntimeError("boom")))
+    await sim.run_for(0.1)
+
+    assert algo.source_command is None
+
+
+async def test_smartpi_holds_the_zone_fit_and_its_evidence(monkeypatch) -> None:
+    """With the zone's fit published, SmartPI's a, b, time constant and feed-forward warm-up come from it."""
+    from custom_components.vtherm_smartpi.smartpi.dependencies import KIND_SOURCE, DependencyItem
+    from custom_components.vtherm_smartpi.smartpi.source_settings import SourceSettings
+    from custom_components.vtherm_smartpi.smartpi.zone_fit import ZoneFitResult
+
+    from helpers import force_smartpi_stable_mode
+
+    algo = Simulation(monkeypatch, _zone(neighbours=()), OUTDOOR).algo
+    algo.configure_source(
+        SourceSettings.from_item(DependencyItem(item_id="s1", kind=KIND_SOURCE, entity="reg", extra={"split_rule": "together"}))
+    )
+    force_smartpi_stable_mode(algo)
+    algo.est.learn_ok_count = 3
+    algo._apply_zone_fit(VThermHvacMode_HEAT)
+    assert algo.est.learn_ok_count == 3
+
+    algo.dependency_model._source.fits["heat"].result = ZoneFitResult(0.025, 0.0012, 0.02, 0.001, 4, 50.0)
+    algo._apply_zone_fit(VThermHvacMode_HEAT)
+    tau = algo.est.tau_reliability()
+    assert (algo.est.a, algo.est.b) == (0.025, 0.0012)
+    assert tau.reliable
+    assert tau.tau_min == pytest.approx(1.0 / 0.0012)
+    assert algo.est.learn_ok_count >= algo.ff_warmup_ok_count
+    assert algo.est.learn_ok_count_a >= 10
+
+    # In cooling the heating fit does not apply.
+    algo.est.a = -0.02
+    algo._apply_zone_fit(VThermHvacMode_COOL)
+    assert algo.est.a == -0.02
