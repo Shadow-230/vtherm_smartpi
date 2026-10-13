@@ -197,3 +197,122 @@ async def test_a_source_that_cannot_be_found_or_already_works_elsewhere_is_not_a
 
     assert second._source_unique_id is None
     assert first._source_link().lead_of("vt-floor") == first_thermostat.unique_id
+
+
+async def test_the_zone_reads_both_heating_types_from_the_entries(hass) -> None:
+    """The source item's emitters follow the heating types set in the two thermostats' entries."""
+    from pytest_homeassistant_custom_component.common import MockConfigEntry
+
+    from custom_components.vtherm_smartpi.const import (
+        CONF_SMART_PI_HEATING_TYPE,
+        CONF_TARGET_VTHERM,
+        DEFAULT_OPTIONS,
+        DOMAIN,
+    )
+
+    registry = er.async_get(hass)
+    floor = registry.async_get_or_create("climate", VT_DOMAIN, "vt-floor", suggested_object_id="floor")
+    MockConfigEntry(
+        domain=DOMAIN,
+        unique_id=f"{DOMAIN}-vt-floor",
+        data={CONF_TARGET_VTHERM: "vt-floor", **DEFAULT_OPTIONS},
+        options={CONF_TARGET_VTHERM: "vt-floor", **DEFAULT_OPTIONS, CONF_SMART_PI_HEATING_TYPE: "floor_electric"},
+    ).add_to_hass(hass)
+    stale = {**_source_item(floor.id), "lead_emitter": "floor_water", "source_emitter": "radiator"}
+    thermostat = FakeThermostatRuntime()
+    thermostat.hass = hass
+    thermostat.entry_infos = {CONF_SMART_PI_DEPENDENCIES: [stale], CONF_SMART_PI_HEATING_TYPE: "electric_fast"}
+    handler = SmartPIHandler(thermostat)
+    handler.init_algorithm()
+
+    settings = handler._source_settings
+    assert (settings.lead_emitter, settings.source_emitter) == ("electric_fast", "floor_electric")
+
+    custom = {**_source_item(floor.id), "source_emitter": "custom", "source_lag_min": 40, "source_tau_min": 200}
+    thermostat.entry_infos = {CONF_SMART_PI_DEPENDENCIES: [custom]}
+    handler.init_algorithm()
+    assert handler._source_settings.source_emitter == "custom"
+    assert handler._source_settings.source.lag_s == 2400.0
+
+
+async def test_a_reset_asked_by_the_zone_form_is_applied_once(hass, monkeypatch) -> None:
+    from custom_components.vtherm_smartpi.const import CONF_SMART_PI_RESET_TOKEN
+
+    handler, thermostat = _handler(hass, [])
+    algo = thermostat.prop_algorithm
+    resets = []
+    monkeypatch.setattr(algo, "reset_learning", lambda: resets.append(1))
+    thermostat.entry_infos = {CONF_SMART_PI_RESET_TOKEN: "t1"}
+
+    handler._apply_reset_request()
+    handler._apply_reset_request()
+    assert resets == [1]
+    assert algo.save_state()["dependency_reset_token"] == "t1"
+
+    thermostat.entry_infos = {CONF_SMART_PI_RESET_TOKEN: "t2"}
+    handler._apply_reset_request()
+    assert resets == [1, 1]
+
+
+async def test_a_source_without_its_own_entry_follows_the_global_heating_type(hass) -> None:
+    from pytest_homeassistant_custom_component.common import MockConfigEntry
+
+    from custom_components.vtherm_smartpi.const import CONF_SMART_PI_HEATING_TYPE, DEFAULT_OPTIONS, DOMAIN
+
+    registry = er.async_get(hass)
+    floor = registry.async_get_or_create("climate", VT_DOMAIN, "vt-floor", suggested_object_id="floor")
+    MockConfigEntry(
+        domain=DOMAIN, unique_id=DOMAIN, data={**DEFAULT_OPTIONS, CONF_SMART_PI_HEATING_TYPE: "floor_water"}
+    ).add_to_hass(hass)
+    handler, _ = _handler(hass, [{**_source_item(floor.id), "source_emitter": "radiator"}])
+    assert handler._source_settings.source_emitter == "floor_water"
+
+
+async def test_the_reset_token_survives_a_restart(hass, monkeypatch) -> None:
+    from custom_components.vtherm_smartpi.const import CONF_SMART_PI_RESET_TOKEN
+
+    handler, thermostat = _handler(hass, [])
+    thermostat.entry_infos = {CONF_SMART_PI_RESET_TOKEN: "t1"}
+    handler._apply_reset_request()
+    saved = thermostat.prop_algorithm.save_state()
+
+    restarted, again = _handler(hass, [])
+    again.entry_infos = {CONF_SMART_PI_RESET_TOKEN: "t1"}
+    again.prop_algorithm.load_state(saved)
+    resets = []
+    monkeypatch.setattr(again.prop_algorithm, "reset_learning", lambda: resets.append(1))
+    restarted._apply_reset_request()
+    assert resets == []
+
+
+async def test_a_master_without_these_two_thermostats_is_reported(hass, caplog) -> None:
+    from pytest_homeassistant_custom_component.common import MockConfigEntry
+
+    registry = er.async_get(hass)
+    floor = registry.async_get_or_create("climate", VT_DOMAIN, "vt-floor", suggested_object_id="floor")
+    other = registry.async_get_or_create("climate", VT_DOMAIN, "vt-other", suggested_object_id="other")
+    vt_entry = MockConfigEntry(domain="test_vtherm", data={"underlying_entity_ids": [other.entity_id, floor.entity_id]})
+    vt_entry.add_to_hass(hass)
+    master = registry.async_get_or_create("climate", VT_DOMAIN, "vt-master", suggested_object_id="master", config_entry=vt_entry)
+
+    _handler(hass, [{**_source_item(floor.id), "zone_master": master.id}])
+    assert "no longer has exactly this thermostat" in caplog.text
+
+
+async def test_a_source_entry_change_reloads_its_zone_s_main_too(hass) -> None:
+    from pytest_homeassistant_custom_component.common import MockConfigEntry
+
+    from custom_components.vtherm_smartpi import _zone_mains_of
+    from custom_components.vtherm_smartpi.const import CONF_TARGET_VTHERM, DEFAULT_OPTIONS, DOMAIN
+
+    registry = er.async_get(hass)
+    floor = registry.async_get_or_create("climate", VT_DOMAIN, "vt-floor", suggested_object_id="floor")
+    MockConfigEntry(
+        domain=DOMAIN,
+        unique_id=f"{DOMAIN}-vt-radiator",
+        data={CONF_TARGET_VTHERM: "vt-radiator", **DEFAULT_OPTIONS},
+        options={CONF_TARGET_VTHERM: "vt-radiator", **DEFAULT_OPTIONS, CONF_SMART_PI_DEPENDENCIES: [_source_item(floor.id)]},
+    ).add_to_hass(hass)
+
+    assert _zone_mains_of(hass, "vt-floor") == ["vt-radiator"]
+    assert _zone_mains_of(hass, "vt-radiator") == []

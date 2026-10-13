@@ -424,6 +424,9 @@ class SmartPI:
         self.dependency_model = DependencyModel(self.dependency_state)
         # Working as another thermostat's second source: its lead and command.
         self._executive: dict[str, Any] | None = None
+        # Last reset of the learned model asked by a change of the zone (kept
+        # across resets, so that it is applied once).
+        self.applied_reset_token: str | None = None
 
         # --- FFv2: trim bias + AB confidence ---
         self._ff_trim: FFTrim = FFTrim()
@@ -2934,6 +2937,8 @@ class SmartPI:
         # without dependencies keeps exactly the previous persisted format.
         if self.dependency_state:
             state["dependencies"] = self.dependency_state.save_state()
+        if self.applied_reset_token is not None:
+            state["dependency_reset_token"] = self.applied_reset_token
         # Likewise the water input, once it has seen water data.
         water = self.water.save_state()
         if water["availability"] != "none" or water["long_average"] is not None:
@@ -2966,6 +2971,8 @@ class SmartPI:
         self.calibration_mgr.load_state(state.get("cal_state", {}))
         self.gain_scheduler.load_state(state.get("gs_state", {}))
         self.dependency_state.load_state(state.get("dependencies"))
+        token = state.get("dependency_reset_token")
+        self.applied_reset_token = token if isinstance(token, str) else None
         self.dependency_model.load()
         self.water.load_state(state.get("water"))
         self.integral_guard.load_state(state.get("integral_guard_state", {}))

@@ -6,7 +6,7 @@ import uuid
 from typing import Any
 
 import voluptuous as vol
-from homeassistant.config_entries import ConfigFlow, OptionsFlow
+from homeassistant.config_entries import SOURCE_IMPORT, ConfigFlow, OptionsFlow
 from homeassistant.helpers import selector
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
@@ -26,18 +26,33 @@ from .const import (
     CONF_SMART_PI_KNEE_VALVE,
     CONF_SMART_PI_MAX_VALVE,
     CONF_SMART_PI_MIN_VALVE,
+    CONF_PROP_FUNCTION,
     CONF_SMART_PI_DEPENDENCIES,
     CONF_SMART_PI_HEATING_TYPE,
     CONF_SMART_PI_RELEASE_TAU_FACTOR,
+    CONF_SMART_PI_RESET_TOKEN,
     CONF_SMART_PI_USE_FF3,
     CONF_SMART_PI_USE_SETPOINT_FILTER,
     CONF_TARGET_VTHERM,
     DEFAULT_OPTIONS,
     DOMAIN,
+    PROP_FUNCTION_SMART_PI,
 )
 from .smartpi.const import HEATING_TYPES
 from .smartpi.dependencies import (
+    KEY_LEAD_BAND,
+    KEY_LEAD_EMITTER,
+    KEY_LEAD_LAG_MIN,
+    KEY_LEAD_TAU_MIN,
+    KEY_SOURCE_ALONE,
+    KEY_SOURCE_EMITTER,
+    KEY_SOURCE_LAG_MIN,
+    KEY_SOURCE_TAU_MIN,
+    KEY_SPLIT_RATIO,
+    KEY_SPLIT_RULE,
+    KEY_ZONE_MASTER,
     KIND_NEIGHBOUR,
+    KIND_SOURCE,
     MODE_ALWAYS,
     MODE_DOOR,
     NEIGHBOUR_MODES,
@@ -47,6 +62,15 @@ from .smartpi.dependencies import (
     dump_dependencies,
     parse_dependencies,
     validate_dependencies,
+)
+from .smartpi.source_model import EMITTER_CUSTOM, SourceResponse
+from .smartpi.split import (
+    REASON_SLOW_SOURCE,
+    RULE_LEAD_BAND,
+    RULE_SOURCE_FIRST,
+    RULE_TOGETHER,
+    RULES,
+    recommend,
 )
 
 ERROR_INVALID_VALVE_CURVE = "invalid_valve_curve"
@@ -65,6 +89,27 @@ THERMOSTAT_TYPE_CLIMATE = "thermostat_over_climate"
 AUTO_REGULATION_VALVE = "auto_regulation_valve"
 CONF_THERMOSTAT_TYPE_KEY = "thermostat_type"
 CONF_AUTO_REGULATION_MODE_KEY = "auto_regulation_mode"
+# Versatile Thermostat's keys read by the zone form.
+VT_UNDERLYING_LIST = "underlying_entity_ids"
+VT_TEMP_SENSOR = "temperature_sensor_entity_id"
+VT_AUTO_REGULATION_NONE = "auto_regulation_none"
+
+FIELD_MASTER = "master"
+FIELD_MAIN_SOURCE = "main_source"
+FIELD_CUSTOM_RESPONSE = "custom_response"
+FIELD_RESET_MODEL = "reset_model"
+# The rule's parameter, in percent, by rule: key, default, minimum, maximum.
+_RULE_PARAMETER = {
+    RULE_TOGETHER: (KEY_SPLIT_RATIO, 100.0, 10.0, 1000.0),
+    RULE_SOURCE_FIRST: (KEY_SOURCE_ALONE, 50.0, 0.0, 100.0),
+    RULE_LEAD_BAND: (KEY_LEAD_BAND, 20.0, 0.0, 100.0),
+}
+# What the parameter means, by rule, for the zone form.
+_RULE_HINT = {
+    RULE_TOGETHER: "{other} works at this percentage of {main}'s command (100 %: both alike).",
+    RULE_SOURCE_FIRST: "{other} works alone up to this command; above it {main} joins and both reach 100 % together.",
+    RULE_LEAD_BAND: "{other} settles so that {main}'s average command stays at this percentage, a margin for quick corrections.",
+}
 
 
 def build_main_options_schema(
@@ -464,6 +509,30 @@ class SmartPIConfigFlow(ConfigFlow, domain=DOMAIN):
             data_schema=build_valve_curve_schema(_schema_defaults(data)),
         )
 
+    async def async_step_import(self, import_data: dict[str, Any]):
+        """Create the entry of a thermostat that joins a zone with two heat sources.
+
+        It starts from the values the thermostat ran with: the global defaults.
+        """
+        target_unique_id = import_data[CONF_TARGET_VTHERM]
+        await self.async_set_unique_id(f"{DOMAIN}-{target_unique_id}")
+        self._abort_if_unique_id_configured()
+        data = dict(DEFAULT_OPTIONS)
+        global_entry = next(
+            (entry for entry in self._async_current_entries() if entry.unique_id == DOMAIN), None
+        )
+        if global_entry is not None:
+            data.update(global_entry.data)
+            data.update(global_entry.options)
+        data.pop(CONF_SMART_PI_DEPENDENCIES, None)
+        data[CONF_TARGET_VTHERM] = target_unique_id
+        registry = er.async_get(self.hass)
+        entity_id = registry.async_get_entity_id(CLIMATE_DOMAIN, VT_DOMAIN, target_unique_id)
+        state = self.hass.states.get(entity_id) if entity_id else None
+        return self.async_create_entry(
+            title=state.name if state is not None else (entity_id or target_unique_id), data=data
+        )
+
     @staticmethod
     def async_get_options_flow(config_entry):
         """Return the options flow handler."""
@@ -481,6 +550,15 @@ class SmartPIOptionsFlow(OptionsFlow):
         self._neighbour_entity: er.RegistryEntry | None = None
         self._pending_item: DependencyItem | None = None
         self._pending_warnings: list[str] = []
+        # The zone being configured: its master and two members (registry entries), the choices so far.
+        self._zone_master: er.RegistryEntry | None = None
+        self._zone_members: list[er.RegistryEntry] = []
+        self._zone_pending: dict[str, Any] = {}
+        self._zone_item: DependencyItem | None = None
+        self._zone_main: er.RegistryEntry | None = None
+        self._zone_snapshot: tuple = ()
+        self._pending_items: list[DependencyItem] = []
+        self._pending_base: str = ""
 
     def _is_valve_target_entry(self) -> bool:
         """Return whether the edited entry targets a valve thermostat."""
@@ -506,15 +584,22 @@ class SmartPIOptionsFlow(OptionsFlow):
         return options
 
     async def async_step_init(self, user_input: dict[str, Any] | None = None):
-        """Open the options: a menu for a thermostat entry, the settings form for the defaults."""
+        """Open the options: a menu for a thermostat entry, the settings form for the defaults.
+
+        A thermostat that works as the additional source of a zone shows where
+        the zone is configured and only the settings it still uses.
+        """
         if self._config_entry.data.get(CONF_TARGET_VTHERM) is None:
             return await self._async_settings_form("init", user_input)
+        own = self._target_registry_entry()
+        if self._main_naming(own.id if own is not None else None) is not None:
+            return await self.async_step_source_role()
         return await self.async_step_thermostat_menu()
 
     async def async_step_thermostat_menu(self, user_input: dict[str, Any] | None = None):
         """Offer the option groups of a thermostat entry."""
         del user_input
-        menu_options = ["settings", "dependencies"]
+        menu_options = ["settings", "zone", "dependencies"]
         if self._is_valve_target_entry() and self._current_options().get(
             CONF_SMART_PI_ENABLE_VALVE_LINEARIZATION
         ):
@@ -552,6 +637,10 @@ class SmartPIOptionsFlow(OptionsFlow):
             ),
         )
 
+    def _neighbour_items(self) -> list[DependencyItem]:
+        """The neighbours: the zone's second source is configured in its own form."""
+        return [item for item in self._dependency_items() if item.is_neighbour]
+
     def _dependency_label(self, item: DependencyItem) -> str:
         """Return a readable label: the kind and the current entity id of the item."""
         entity_id = er.async_resolve_entity_id(er.async_get(self.hass), item.entity)
@@ -578,11 +667,10 @@ class SmartPIOptionsFlow(OptionsFlow):
     async def async_step_dependencies(self, user_input: dict[str, Any] | None = None):
         """Offer to add a neighbouring zone, or to edit or remove a dependency."""
         del user_input
-        items = self._dependency_items()
+        items = self._neighbour_items()
         menu_options = ["neighbour_add"]
-        if any(item.is_neighbour for item in items):
-            menu_options.append("dependency_edit")
         if items:
+            menu_options.append("dependency_edit")
             menu_options.append("dependency_remove")
         listing = "\n".join(f"- {self._dependency_label(item)}" for item in items) or "-"
         return self.async_show_menu(
@@ -593,12 +681,14 @@ class SmartPIOptionsFlow(OptionsFlow):
 
     async def async_step_dependency_remove(self, user_input: dict[str, Any] | None = None):
         """Remove the selected dependencies."""
-        items = self._dependency_items()
+        items = self._neighbour_items()
         if user_input is not None:
             removed = set(user_input.get(FIELD_REMOVE_DEPENDENCIES, []))
             if not removed:
                 return self.async_abort(reason=ABORT_DEPENDENCIES_UNCHANGED)
-            return self._save_dependencies([item for item in items if item.item_id not in removed])
+            return self._finish(
+                [item for item in self._dependency_items() if item.item_id not in removed], True
+            )
         return self.async_show_form(
             step_id="dependency_remove",
             data_schema=vol.Schema(
@@ -652,6 +742,12 @@ class SmartPIOptionsFlow(OptionsFlow):
                 errors[FIELD_NEIGHBOUR] = "self_reference"
             elif any(i.is_neighbour and i.entity == entry.id for i in self._dependency_items()):
                 errors[FIELD_NEIGHBOUR] = "duplicate_neighbour"
+            elif any(i.is_source and i.entity == entry.id for i in self._dependency_items()):
+                errors[FIELD_NEIGHBOUR] = "source_is_neighbour"
+            elif any(
+                i.is_source and i.extra.get(KEY_ZONE_MASTER) == entry.id for i in self._dependency_items()
+            ):
+                errors[FIELD_NEIGHBOUR] = "master_is_neighbour"
             else:
                 self._editing = None
                 self._neighbour_entity = entry
@@ -879,7 +975,501 @@ class SmartPIOptionsFlow(OptionsFlow):
         replaced = [item if existing.item_id == replaced_id else existing for existing in items]
         if not any(existing.item_id == replaced_id for existing in items):
             replaced.append(item)
-        return self._save_dependencies(replaced)
+        # A new connection (added, another mode or other doors) changes what was learned.
+        affects_learning = self._editing is None or self._editing.item_id != item.item_id
+        return self._finish(replaced, affects_learning)
+
+    def _finish(self, items: list[DependencyItem], affects_learning: bool):
+        """Save the dependency list, asking first about the learned model when the change affects it."""
+        if not affects_learning:
+            return self._save_dependencies(items)
+        self._pending_items = items
+        self._pending_base = repr(self._current_options().get(CONF_SMART_PI_DEPENDENCIES))
+        return self.async_show_form(
+            step_id="model_reset",
+            data_schema=vol.Schema({vol.Required(FIELD_RESET_MODEL, default=True): bool}),
+        )
+
+    async def async_step_model_reset(self, user_input: dict[str, Any] | None = None):
+        """Reset the zone's learned model with the change of its neighbours, as recommended."""
+        if user_input is None:
+            return self._finish(self._pending_items, True)
+        if repr(self._current_options().get(CONF_SMART_PI_DEPENDENCIES)) != self._pending_base:
+            return self.async_abort(reason="zone_changed")
+        return self._save_items(self._pending_items, reset=bool(user_input.get(FIELD_RESET_MODEL)))
+
+    # --- zone with two heat sources ---------------------------------------
+
+    def _smartpi_entries(self) -> list:
+        return [
+            entry
+            for entry in self.hass.config_entries.async_entries(DOMAIN)
+            if entry.data.get(CONF_TARGET_VTHERM)
+        ]
+
+    @staticmethod
+    def _entry_options(entry) -> dict[str, Any]:
+        options = dict(DEFAULT_OPTIONS)
+        options.update(entry.options or entry.data)
+        return options
+
+    def _entry_items(self, entry) -> list[DependencyItem]:
+        return parse_dependencies(self._entry_options(entry).get(CONF_SMART_PI_DEPENDENCIES))
+
+    def _entry_of(self, unique_id: str | None):
+        """The SmartPI entry of a thermostat, by its unique id."""
+        return next(
+            (entry for entry in self._smartpi_entries() if entry.data.get(CONF_TARGET_VTHERM) == unique_id),
+            None,
+        )
+
+    def _main_naming(self, registry_id: str | None):
+        """The SmartPI entry, other than this one, whose zone has ``registry_id`` as its additional source."""
+        if registry_id is None:
+            return None
+        for entry in self._smartpi_entries():
+            if entry.entry_id == self._config_entry.entry_id:
+                continue
+            if any(item.is_source and item.entity == registry_id for item in self._entry_items(entry)):
+                return entry
+        return None
+
+    def _zone_signature(self, members: list[er.RegistryEntry]) -> tuple:
+        """What the zone form relies on: the dependency lists of this entry and of the members' entries."""
+        entries = {self._config_entry.entry_id: self._config_entry}
+        for member in members:
+            entry = self._entry_of(member.unique_id)
+            if entry is not None:
+                entries[entry.entry_id] = entry
+        return tuple(
+            (entry_id, repr(self._entry_options(entry).get(CONF_SMART_PI_DEPENDENCIES)))
+            for entry_id, entry in sorted(entries.items())
+        )
+
+    def _zone_changed(self) -> bool:
+        """Another form changed the zone, or the master's devices changed, since this form read them."""
+        error, members = self._master_error(self._zone_master)
+        if error is not None or {m.id for m in members} != {m.id for m in self._zone_members}:
+            return True
+        return self._zone_signature(self._zone_members) != self._zone_snapshot
+
+    def _zone_source_item(self) -> DependencyItem | None:
+        return next((item for item in self._dependency_items() if item.is_source), None)
+
+    def _vt_config(self, entry: er.RegistryEntry | None) -> dict[str, Any]:
+        """Versatile Thermostat's configuration of a climate entity."""
+        if entry is None or entry.config_entry_id is None:
+            return {}
+        vt_entry = self.hass.config_entries.async_get_entry(entry.config_entry_id)
+        if vt_entry is None:
+            return {}
+        return {**vt_entry.data, **vt_entry.options}
+
+    def _heating_type(self, member: er.RegistryEntry) -> str:
+        """The heating type set in a thermostat's SmartPI entry (else the defaults')."""
+        entry = self._entry_of(member.unique_id)
+        if entry is None:
+            entry = next(
+                (e for e in self.hass.config_entries.async_entries(DOMAIN) if e.unique_id == DOMAIN), None
+            )
+        options = self._entry_options(entry) if entry is not None else dict(DEFAULT_OPTIONS)
+        heating_type = options.get(CONF_SMART_PI_HEATING_TYPE)
+        return heating_type if heating_type in HEATING_TYPES else DEFAULT_OPTIONS[CONF_SMART_PI_HEATING_TYPE]
+
+    def _masters(self) -> list[er.RegistryEntry]:
+        """Versatile Thermostat over_climate thermostats with this thermostat among their devices."""
+        own = self._target_registry_entry()
+        if own is None:
+            return []
+        registry = er.async_get(self.hass)
+        masters = []
+        for entry in registry.entities.values():
+            if entry.domain != CLIMATE_DOMAIN or entry.platform != VT_DOMAIN or entry.id == own.id:
+                continue
+            config = self._vt_config(entry)
+            if config.get(CONF_THERMOSTAT_TYPE_KEY) != THERMOSTAT_TYPE_CLIMATE:
+                continue
+            if own.entity_id in (config.get(VT_UNDERLYING_LIST) or []):
+                masters.append(entry)
+        return sorted(masters, key=lambda entry: entry.entity_id)
+
+    def _master_error(self, master: er.RegistryEntry) -> tuple[str | None, list[er.RegistryEntry]]:
+        """Why the master cannot carry a zone with two heat sources, and its two devices."""
+        config = self._vt_config(master)
+        if config.get(CONF_AUTO_REGULATION_MODE_KEY, VT_AUTO_REGULATION_NONE) != VT_AUTO_REGULATION_NONE:
+            return "master_auto_regulation", []
+        registry = er.async_get(self.hass)
+        devices = config.get(VT_UNDERLYING_LIST) or []
+        members = [registry.async_get(entity_id) for entity_id in devices]
+        if len(set(devices)) != 2 or len(devices) != 2 or any(member is None for member in members):
+            return "master_not_two_devices", []
+        for member in members:
+            if member.platform != VT_DOMAIN or self._vt_config(member).get(CONF_PROP_FUNCTION) != PROP_FUNCTION_SMART_PI:
+                return "member_without_smartpi", []
+        sensors = {self._vt_config(member).get(VT_TEMP_SENSOR) for member in members}
+        if len(sensors) != 1 or None in sensors:
+            return "members_not_one_sensor", []
+        for member in members:
+            naming = self._main_naming(member.id)
+            if naming is not None:
+                return "member_in_another_zone", []
+            entry = self._entry_of(member.unique_id)
+            if entry is not None and entry.entry_id != self._config_entry.entry_id:
+                if any(
+                    item.is_source and item.entity not in {m.id for m in members}
+                    for item in self._entry_items(entry)
+                ):
+                    return "member_in_another_zone", []
+        return None, members
+
+    async def async_step_zone(self, user_input: dict[str, Any] | None = None):
+        """The zone this thermostat heats with a second one: set it up, change it or remove it."""
+        del user_input
+        item = self._zone_source_item()
+        if item is None:
+            return await self.async_step_zone_master()
+        registry = er.async_get(self.hass)
+        other = registry.async_get(item.entity)
+        master = registry.async_get(item.extra.get(KEY_ZONE_MASTER, "")) if item.extra.get(KEY_ZONE_MASTER) else None
+        return self.async_show_menu(
+            step_id="zone",
+            menu_options=["zone_master", "zone_remove"],
+            description_placeholders={
+                "master": master.entity_id if master is not None else "-",
+                "source": other.entity_id if other is not None else item.entity,
+                "rule": str(item.extra.get(KEY_SPLIT_RULE, "-")),
+            },
+        )
+
+    async def async_step_zone_master(self, user_input: dict[str, Any] | None = None):
+        """Choose the master thermostat whose two devices heat the zone."""
+        masters = self._masters()
+        if not masters:
+            return self.async_abort(reason="no_master")
+        errors: dict[str, str] = {}
+        current = self._zone_source_item()
+        default = None
+        if current is not None:
+            master = er.async_get(self.hass).async_get(current.extra.get(KEY_ZONE_MASTER, ""))
+            default = master.entity_id if master is not None else None
+        if user_input is not None:
+            master = er.async_get(self.hass).async_get(user_input[FIELD_MASTER])
+            error, members = self._master_error(master) if master is not None else ("master_not_two_devices", [])
+            if error is None:
+                self._zone_master, self._zone_members = master, members
+                self._zone_pending = {}
+                self._zone_snapshot = self._zone_signature(members)
+                return await self.async_step_zone_sources()
+            errors[FIELD_MASTER] = error
+            default = user_input[FIELD_MASTER]
+        options = [entry.entity_id for entry in masters]
+        return self.async_show_form(
+            step_id="zone_master",
+            data_schema=vol.Schema(
+                {
+                    vol.Required(FIELD_MASTER, default=default or options[0]): selector.SelectSelector(
+                        selector.SelectSelectorConfig(options=options, mode=selector.SelectSelectorMode.LIST)
+                    )
+                }
+            ),
+            errors=errors,
+        )
+
+    def _response_of(self, member: er.RegistryEntry) -> SourceResponse:
+        return SourceResponse.for_emitter(self._heating_type(member))
+
+    def _faster_first(self) -> list[er.RegistryEntry]:
+        """The two members, the faster to respond first: the recommended main source."""
+        return sorted(self._zone_members, key=lambda member: self._response_of(member).settle_s)
+
+    async def async_step_zone_sources(self, user_input: dict[str, Any] | None = None):
+        """Source 1 and Source 2, which of them is the main source, and the split rule."""
+        members = self._zone_members
+        current = self._zone_source_item()
+        own = self._target_registry_entry()
+        if user_input is not None:
+            self._zone_pending.update(user_input)
+            return await self.async_step_zone_parameter()
+        faster = self._faster_first()
+        main_default = faster[0].entity_id
+        if current is not None and own is not None and current.entity in {m.id for m in members}:
+            main_default = own.entity_id
+        main = next(m for m in members if m.entity_id == main_default)
+        other = next(m for m in members if m.id != main.id)
+        recommendation = recommend(self._response_of(main), self._response_of(other))
+        rule_default = recommendation.rule.rule
+        if current is not None and current.extra.get(KEY_SPLIT_RULE) in RULES:
+            rule_default = current.extra[KEY_SPLIT_RULE]
+        custom_default = current is not None and EMITTER_CUSTOM in (
+            current.extra.get(KEY_LEAD_EMITTER),
+            current.extra.get(KEY_SOURCE_EMITTER),
+        )
+        recommended = recommend(self._response_of(faster[0]), self._response_of(faster[1]))
+        if recommended.reason == REASON_SLOW_SOURCE:
+            text = (
+                f"Recommended: {faster[0].entity_id} as the main source with the rule lead_band: the slower "
+                f"{faster[1].entity_id} carries the base load and the main source keeps a margin to correct quickly."
+            )
+        elif self._response_of(faster[0]).settle_s < self._response_of(faster[1]).settle_s:
+            text = (
+                f"Recommended: the rule together; both respond at a similar speed. The main source "
+                f"corrects quickly: {faster[0].entity_id} responds a little faster."
+            )
+        else:
+            text = "Recommended: the rule together; both respond at the same speed, either may be the main source."
+        return self.async_show_form(
+            step_id="zone_sources",
+            data_schema=vol.Schema(
+                {
+                    vol.Required(FIELD_MAIN_SOURCE, default=main_default): selector.SelectSelector(
+                        selector.SelectSelectorConfig(
+                            options=[member.entity_id for member in members],
+                            mode=selector.SelectSelectorMode.LIST,
+                        )
+                    ),
+                    vol.Required(KEY_SPLIT_RULE, default=rule_default): selector.SelectSelector(
+                        selector.SelectSelectorConfig(options=list(RULES), translation_key="split_rule")
+                    ),
+                    vol.Required(FIELD_CUSTOM_RESPONSE, default=custom_default): bool,
+                }
+            ),
+            description_placeholders={
+                "master": self._zone_master.entity_id,
+                "source_1": members[0].entity_id,
+                "source_1_type": self._heating_type(members[0]),
+                "source_2": members[1].entity_id,
+                "source_2_type": self._heating_type(members[1]),
+                "recommendation": text,
+            },
+        )
+
+    async def async_step_zone_parameter(self, user_input: dict[str, Any] | None = None):
+        """The rule's parameter and, if asked for, each source's delay and lag."""
+        pending = self._zone_pending
+        members = self._zone_members
+        main = next(m for m in members if m.entity_id == pending[FIELD_MAIN_SOURCE])
+        other = next(m for m in members if m.id != main.id)
+        rule = pending[KEY_SPLIT_RULE]
+        key, default, low, high = _RULE_PARAMETER[rule]
+        current = self._zone_source_item()
+        same_pair = current is not None and current.entity == other.id
+        if user_input is not None:
+            pending.update(user_input)
+            return await self._async_store_zone(main, other)
+        percent = selector.NumberSelector(
+            selector.NumberSelectorConfig(
+                min=low, max=high, step=1, mode=selector.NumberSelectorMode.BOX, unit_of_measurement="%"
+            )
+        )
+        stored = current.extra.get(key) if same_pair else None
+        schema: dict[Any, Any] = {vol.Required(key, default=stored if stored is not None else default): percent}
+        if pending.get(FIELD_CUSTOM_RESPONSE):
+            minutes = selector.NumberSelector(
+                selector.NumberSelectorConfig(
+                    min=0, max=600, step=1, mode=selector.NumberSelectorMode.BOX, unit_of_measurement="min"
+                )
+            )
+            for member, lag_key, tau_key in ((main, KEY_LEAD_LAG_MIN, KEY_LEAD_TAU_MIN), (other, KEY_SOURCE_LAG_MIN, KEY_SOURCE_TAU_MIN)):
+                response = self._response_of(member)
+                lag = current.extra.get(lag_key) if same_pair and current.extra.get(lag_key) is not None else round(response.lag_s / 60.0)
+                tau = current.extra.get(tau_key) if same_pair and current.extra.get(tau_key) is not None else round(response.tau_s / 60.0)
+                schema[vol.Required(lag_key, default=lag)] = minutes
+                schema[vol.Required(tau_key, default=tau)] = minutes
+        hint = _RULE_HINT[rule].format(main=main.entity_id, other=other.entity_id)
+        if recommend(self._response_of(main), self._response_of(other)).roles_reversed:
+            hint += (
+                f" Warning: the main source {main.entity_id} responds more slowly than {other.entity_id}; "
+                "quick corrections belong to the faster device."
+            )
+        return self.async_show_form(
+            step_id="zone_parameter",
+            data_schema=vol.Schema(schema),
+            description_placeholders={"main": main.entity_id, "source": other.entity_id, "hint": hint},
+        )
+
+    def _build_zone_item(self, main: er.RegistryEntry, other: er.RegistryEntry) -> DependencyItem:
+        pending = self._zone_pending
+        rule = pending[KEY_SPLIT_RULE]
+        parameter = _RULE_PARAMETER[rule][0]
+        extra: dict[str, Any] = {
+            KEY_ZONE_MASTER: self._zone_master.id,
+            KEY_SPLIT_RULE: rule,
+            parameter: pending[parameter],
+        }
+        for member, emitter_key, lag_key, tau_key in (
+            (main, KEY_LEAD_EMITTER, KEY_LEAD_LAG_MIN, KEY_LEAD_TAU_MIN),
+            (other, KEY_SOURCE_EMITTER, KEY_SOURCE_LAG_MIN, KEY_SOURCE_TAU_MIN),
+        ):
+            if pending.get(FIELD_CUSTOM_RESPONSE):
+                extra[emitter_key] = EMITTER_CUSTOM
+                extra[lag_key] = pending[lag_key]
+                extra[tau_key] = pending[tau_key]
+            else:
+                # The heating types of the thermostats' entries; the handler reads them again at start.
+                extra[emitter_key] = self._heating_type(member)
+        current = self._zone_source_item()
+        same_pair = current is not None and current.entity == other.id
+        return DependencyItem(
+            item_id=current.item_id if same_pair else uuid.uuid4().hex,
+            kind=KIND_SOURCE,
+            entity=other.id,
+            extra=extra,
+        )
+
+    async def _async_store_zone(self, main: er.RegistryEntry, other: er.RegistryEntry):
+        """Ask about the learned model when the change affects it, then save."""
+        item = self._build_zone_item(main, other)
+        own = self._target_registry_entry()
+        current = self._zone_source_item()
+        response_keys = (KEY_LEAD_EMITTER, KEY_LEAD_LAG_MIN, KEY_LEAD_TAU_MIN, KEY_SOURCE_EMITTER, KEY_SOURCE_LAG_MIN, KEY_SOURCE_TAU_MIN)
+        affects_learning = (
+            current is None
+            or own is None
+            or main.id != own.id
+            or current.entity != item.entity
+            or any(
+                self._effective(current, main, other).get(key) != item.extra.get(key) for key in response_keys
+            )
+        )
+        self._zone_item, self._zone_main = item, main
+        if affects_learning:
+            return await self.async_step_zone_reset()
+        return await self._async_save_zone(reset=False)
+
+    def _effective(self, item: DependencyItem, main: er.RegistryEntry, other: er.RegistryEntry) -> dict[str, Any]:
+        """A stored zone item as it runs now: emitters that are not custom follow the
+        heating types the thermostats' entries set today, as the handler reads them."""
+        extra = dict(item.extra)
+        for member, key in ((main, KEY_LEAD_EMITTER), (other, KEY_SOURCE_EMITTER)):
+            if extra.get(key) != EMITTER_CUSTOM:
+                extra[key] = self._heating_type(member)
+        return extra
+
+    async def async_step_zone_reset(self, user_input: dict[str, Any] | None = None):
+        """Reset the zone's learned model with the change, as recommended."""
+        if user_input is not None:
+            if self._zone_item is None:
+                return await self._async_remove_zone(reset=bool(user_input.get(FIELD_RESET_MODEL)))
+            return await self._async_save_zone(reset=bool(user_input.get(FIELD_RESET_MODEL)))
+        return self.async_show_form(
+            step_id="zone_reset",
+            data_schema=vol.Schema({vol.Required(FIELD_RESET_MODEL, default=True): bool}),
+        )
+
+    async def _async_entry_for(self, member: er.RegistryEntry):
+        """The SmartPI entry of a zone member, created from the defaults if it has none."""
+        entry = self._entry_of(member.unique_id)
+        if entry is None:
+            await self.hass.config_entries.flow.async_init(
+                DOMAIN, context={"source": SOURCE_IMPORT}, data={CONF_TARGET_VTHERM: member.unique_id}
+            )
+            entry = self._entry_of(member.unique_id)
+        return entry
+
+    async def _async_save_zone(self, reset: bool):
+        """Store the zone in the main source's entry; the other member gets an entry if it has none.
+
+        Choosing the other thermostat as the main source moves the zone, with
+        its neighbours, to that thermostat's entry.
+        """
+        if self._zone_changed():
+            return self.async_abort(reason="zone_changed")
+        item, main = self._zone_item, self._zone_main
+        own = self._target_registry_entry()
+        other_member = next(m for m in self._zone_members if m.id != main.id)
+        await self._async_entry_for(other_member)
+        own_items = self._dependency_items()
+        if own is not None and main.id == own.id:
+            items = [
+                existing
+                for existing in own_items
+                if not existing.is_source and existing.entity not in {item.entity, self._zone_master.id}
+            ]
+            items.append(item)
+            if validate_dependencies(items, own.id):
+                return self.async_abort(reason="zone_move_conflict")
+            return self._save_items(items, reset)
+        # The zone moves to the other thermostat's entry.
+        target = await self._async_entry_for(main)
+        if target is None:
+            return self.async_abort(reason="main_entry_missing")
+        zone_entities = {main.id, item.entity}
+        moved = [existing for existing in own_items if existing.is_neighbour and existing.entity not in zone_entities]
+        moved_sensors = {sensor for existing in moved for sensor in existing.door_sensors}
+        # The moved neighbours win over the new main's own ones that clash with them.
+        kept = [
+            existing
+            for existing in self._entry_items(target)
+            if existing.is_neighbour
+            and existing.entity not in zone_entities
+            and existing.entity not in {m.entity for m in moved}
+            and not moved_sensors.intersection(existing.door_sensors)
+        ]
+        merged = [*kept, *moved, item]
+        if validate_dependencies(merged, main.id):
+            return self.async_abort(reason="zone_move_conflict")
+        target_options = self._entry_options(target)
+        target_options[CONF_SMART_PI_DEPENDENCIES] = dump_dependencies(merged)
+        if reset:
+            target_options[CONF_SMART_PI_RESET_TOKEN] = uuid.uuid4().hex
+        self.hass.config_entries.async_update_entry(target, options=target_options)
+        return self._save_items([], reset=False)
+
+    async def async_step_zone_remove(self, user_input: dict[str, Any] | None = None):
+        """Remove the zone: this thermostat regulates alone again, the other one too."""
+        del user_input
+        self._zone_item = None
+        self._pending_base = repr(self._current_options().get(CONF_SMART_PI_DEPENDENCIES))
+        return await self.async_step_zone_reset()
+
+    async def _async_remove_zone(self, reset: bool):
+        if repr(self._current_options().get(CONF_SMART_PI_DEPENDENCIES)) != self._pending_base:
+            return self.async_abort(reason="zone_changed")
+        items = [existing for existing in self._dependency_items() if not existing.is_source]
+        return self._save_items(items, reset)
+
+    def _save_items(self, items: list[DependencyItem], reset: bool):
+        """Save this entry's dependency list (and a reset request)."""
+        data = self._current_options()
+        data[CONF_SMART_PI_DEPENDENCIES] = dump_dependencies(items)
+        if reset:
+            data[CONF_SMART_PI_RESET_TOKEN] = uuid.uuid4().hex
+        return self.async_create_entry(title="", data=data)
+
+    async def async_step_source_role(self, user_input: dict[str, Any] | None = None):
+        """A thermostat working as a zone's additional source: its delays, cycle restart and heating type."""
+        defaults = self._current_options()
+        is_valve_target = self._is_valve_target_entry()
+        if user_input is not None:
+            data = dict(defaults)
+            data.update(user_input)
+            self._pending_options_data = data
+            if is_valve_target and user_input.get(CONF_SMART_PI_ENABLE_VALVE_LINEARIZATION):
+                return self.async_show_form(step_id="valve_curve", data_schema=build_valve_curve_schema(data))
+            return self.async_create_entry(title="", data=data)
+        own = self._target_registry_entry()
+        main = self._main_naming(own.id if own is not None else None)
+        # What still applies while it follows the main source: its cycle's delays, its
+        # heating type (its water factor and the zone's response) and its valve curve.
+        kept = (
+            CONF_MINIMAL_ACTIVATION_DELAY,
+            CONF_MINIMAL_DEACTIVATION_DELAY,
+            CONF_SMART_PI_HEATING_TYPE,
+            CONF_SMART_PI_ENABLE_VALVE_LINEARIZATION,
+        )
+        return self.async_show_form(
+            step_id="source_role",
+            data_schema=vol.Schema(
+                {
+                    key: value
+                    for key, value in build_main_options_schema(
+                        defaults, include_valve_linearization=is_valve_target
+                    ).schema.items()
+                    if getattr(key, "schema", key) in kept
+                }
+            ),
+            description_placeholders={"main": main.title if main is not None else "-"},
+        )
 
     async def async_step_valve_curve(self, user_input: dict[str, Any] | None = None):
         """Handle the options valve curve flow."""

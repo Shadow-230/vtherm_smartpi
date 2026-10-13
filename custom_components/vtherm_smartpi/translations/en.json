@@ -85,6 +85,7 @@
         "title": "SmartPI thermostat options",
         "menu_options": {
           "settings": "Regulator settings",
+          "zone": "Zone with two heat sources",
           "dependencies": "Zone dependencies",
           "valve_curve": "Valve curve"
         }
@@ -161,6 +162,71 @@
           "smart_pi_knee_valve": "Valve opening at knee",
           "smart_pi_max_valve": "Maximum valve opening"
         }
+      },
+      "zone": {
+        "title": "Zone with two heat sources",
+        "description": "This thermostat is the main source of a zone.\n\nMaster thermostat: {master}\nAdditional source: {source}\nSplit rule: {rule}",
+        "menu_options": {
+          "zone_master": "Change the zone",
+          "zone_remove": "Remove the zone"
+        }
+      },
+      "zone_master": {
+        "title": "Zone with two heat sources: master thermostat",
+        "description": "A zone heated by two thermostats with SmartPI (for example a radiator and an underfloor loop) is set up from its master thermostat: a Versatile Thermostat over climate whose two devices are these thermostats. The master holds the setpoint, presets, schedule, mode and windows of the zone and passes them to both.\n\nThe master must have self-regulation off and exactly two devices, both Versatile Thermostats with SmartPI, measuring the zone with the same temperature sensor, and neither may already belong to another zone. Recommended on the master: a long safety delay (its safety mode switches both devices off) and a small regulation threshold step.",
+        "data": {
+          "master": "Master thermostat"
+        }
+      },
+      "zone_sources": {
+        "title": "Zone with two heat sources: sources and split",
+        "description": "Master thermostat: {master}\n\nSource 1: {source_1} ({source_1_type})\nSource 2: {source_2} ({source_2_type})\n\nThe main source's SmartPI regulates the zone; the other source follows the split rule from one common model of the zone. Heating types come from each thermostat's own entry.\n\n{recommendation}",
+        "data": {
+          "main_source": "Main source",
+          "split_rule": "Split rule",
+          "custom_response": "Set each source's delay and lag"
+        },
+        "data_description": {
+          "main_source": "The source that corrects quickly; usually the faster one.",
+          "custom_response": "Otherwise the heating types give the starting values, which the zone then learns."
+        }
+      },
+      "zone_parameter": {
+        "title": "Zone with two heat sources: rule parameter",
+        "description": "Main source: {main}\nAdditional source: {source}\n\n{hint}",
+        "data": {
+          "split_ratio": "Additional source's command (% of the main source's)",
+          "source_alone_percent": "Additional source alone up to (%)",
+          "lead_band_percent": "Main source's band (%)",
+          "lead_lag_min": "Main source: delay",
+          "lead_tau_min": "Main source: lag",
+          "source_lag_min": "Additional source: delay",
+          "source_tau_min": "Additional source: lag"
+        }
+      },
+      "zone_reset": {
+        "title": "Reset the zone's learned model",
+        "description": "This change affects what the zone has learned: a source added, removed or swapped, the main source changed, or a custom response changed. Resetting clears SmartPI's whole learned model of the main source (its a, b, dead times and the zone's fit) so that it learns again from the start; it is recommended.",
+        "data": {
+          "reset_model": "Reset the zone's learned model"
+        }
+      },
+      "source_role": {
+        "title": "Additional source of a zone",
+        "description": "This thermostat works as the additional source of the zone set up in {main}: it applies the commands of that zone's main source, and its own regulation and learning are paused. The zone's settings are in that entry. Here are the settings that still apply: its cycle's delays, its heating type and, for a valve, its curve. Its other regulator settings keep their values and apply only when it regulates on its own because the main source has gone silent.",
+        "data": {
+          "minimal_activation_delay": "Minimal activation delay",
+          "minimal_deactivation_delay": "Minimal deactivation delay",
+          "smart_pi_heating_type": "Heating type",
+          "smart_pi_enable_valve_linearization": "Enable valve curve linearization"
+        }
+      },
+      "model_reset": {
+        "title": "Reset the zone's learned model",
+        "description": "This change affects what the zone has learned: a neighbour added or removed, or its connection changed. Resetting clears SmartPI's whole learned model of this thermostat so that it learns again from the start; it is recommended.",
+        "data": {
+          "reset_model": "Reset the zone's learned model"
+        }
       }
     },
     "error": {
@@ -170,11 +236,22 @@
       "duplicate_neighbour": "This neighbour is already on the list.",
       "door_mode_without_sensor": "The door connection needs at least one door sensor.",
       "shared_door_sensor": "This door sensor already belongs to another neighbour of this zone.",
-      "window_sensor_rejected": "Window sensors stay in the window detection of Versatile Thermostat; choose door sensors."
+      "window_sensor_rejected": "Window sensors stay in the window detection of Versatile Thermostat; choose door sensors.",
+      "master_auto_regulation": "Turn self-regulation off on the master thermostat: SmartPI regulates the zone in its devices.",
+      "master_not_two_devices": "The master thermostat must have exactly two devices.",
+      "member_without_smartpi": "Both devices of the master must be Versatile Thermostats using SmartPI.",
+      "members_not_one_sensor": "Both devices must measure the zone with the same temperature sensor.",
+      "member_in_another_zone": "One of the devices already belongs to another zone with two heat sources.",
+      "source_is_neighbour": "This thermostat is the zone's additional source; it heats the same zone and cannot be its neighbour.",
+      "master_is_neighbour": "This thermostat is the zone's master; it measures the same zone and cannot be its neighbour."
     },
     "abort": {
       "dependencies_unchanged": "No dependency was selected, nothing changed.",
-      "neighbour_missing": "The neighbour entity no longer exists; remove it from the list."
+      "neighbour_missing": "The neighbour entity no longer exists; remove it from the list.",
+      "no_master": "No Versatile Thermostat over climate has this thermostat among its devices. Create the zone's master thermostat first, with this thermostat and the zone's second thermostat as its devices.",
+      "main_entry_missing": "The SmartPI entry of the main source could not be created.",
+      "zone_changed": "The zone changed while this form was open (in another form, or the master's devices). Open the form again.",
+      "zone_move_conflict": "The neighbours of the two thermostats cannot be merged (the same door sensor or neighbour twice). Remove the conflicting neighbour first."
     }
   },
   "services": {
@@ -215,6 +292,13 @@
         "floor_water": "Water underfloor heating",
         "floor_electric": "Electric heating mat",
         "electric_fast": "Fast electric heater"
+      }
+    },
+    "split_rule": {
+      "options": {
+        "together": "Together (common percentage)",
+        "source_first": "Additional source first",
+        "lead_band": "Main source in a band"
       }
     }
   },

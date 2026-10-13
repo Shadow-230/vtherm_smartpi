@@ -17,6 +17,12 @@ from custom_components.vtherm_smartpi.const import (
 
 VT_DOMAIN = "versatile_thermostat"
 
+async def _through_reset(hass, result, reset: bool = True):
+    """A changed connection offers to reset the learned model before saving."""
+    assert result["step_id"] == "model_reset"
+    return await hass.config_entries.options.async_configure(result["flow_id"], {"reset_model": reset})
+
+
 
 def _neighbour(item_id: str, entity: str) -> dict:
     return {
@@ -60,7 +66,7 @@ async def test_thermostat_entry_opens_a_menu(hass) -> None:
     result = await hass.config_entries.options.async_init(entry.entry_id)
 
     assert result["type"] == FlowResultType.MENU
-    assert result["menu_options"] == ["settings", "dependencies"]
+    assert result["menu_options"] == ["settings", "zone", "dependencies"]
 
 
 async def test_global_entry_keeps_the_settings_form(hass) -> None:
@@ -116,6 +122,7 @@ async def test_dependency_list_shows_items_and_removes_the_selected_ones(hass) -
 
     result = await hass.config_entries.options.async_configure(result["flow_id"], {"remove": ["n1"]})
 
+    result = await _through_reset(hass, result)
     assert result["type"] == FlowResultType.CREATE_ENTRY
     assert entry.options[CONF_SMART_PI_DEPENDENCIES] == [_neighbour("n2", kitchen.id)]
 
@@ -166,4 +173,4 @@ async def test_valve_curve_is_offered_only_with_linearization(hass, monkeypatch)
     result = await hass.config_entries.options.async_init(entry.entry_id)
 
     assert result["type"] == FlowResultType.MENU
-    assert result["menu_options"] == ["settings", "dependencies"]
+    assert result["menu_options"] == ["settings", "zone", "dependencies"]

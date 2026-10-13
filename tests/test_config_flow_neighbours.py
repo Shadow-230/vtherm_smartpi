@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from homeassistant.data_entry_flow import FlowResultType
 from homeassistant.helpers import area_registry as ar
 from homeassistant.helpers import entity_registry as er
@@ -15,6 +17,12 @@ from custom_components.vtherm_smartpi.const import (
 )
 
 VT_DOMAIN = "versatile_thermostat"
+
+async def _through_reset(hass, result, reset: bool = True):
+    """A changed connection offers to reset the learned model before saving."""
+    assert result["step_id"] == "model_reset"
+    return await hass.config_entries.options.async_configure(result["flow_id"], {"reset_model": reset})
+
 
 
 def _schema_keys(schema) -> set[str]:
@@ -88,6 +96,7 @@ async def test_thermostat_neighbour_with_suggested_door(hass) -> None:
         {"mode": "door", "door_sensors": [door.entity_id], "neighbour_window_action": "frost"},
     )
 
+    result = await _through_reset(hass, result)
     assert result["type"] == FlowResultType.CREATE_ENTRY
     (stored,) = entry.options[CONF_SMART_PI_DEPENDENCIES]
     assert stored["kind"] == "neighbour"
@@ -141,6 +150,7 @@ async def test_sensor_neighbour_has_no_window_reaction(hass) -> None:
 
     result = await hass.config_entries.options.async_configure(result["flow_id"], {"mode": "always", "door_sensors": []})
 
+    result = await _through_reset(hass, result)
     assert result["type"] == FlowResultType.CREATE_ENTRY
     assert entry.options[CONF_SMART_PI_DEPENDENCIES][0]["neighbour_window_action"] == "nothing"
 
@@ -168,6 +178,7 @@ async def test_neighbour_errors(hass) -> None:
     result = await hass.config_entries.options.async_configure(
         result["flow_id"], {"mode": "door", "door_sensors": [door.entity_id]}
     )
+    result = await _through_reset(hass, result)
     assert result["type"] == FlowResultType.CREATE_ENTRY
 
 
@@ -190,6 +201,7 @@ async def test_warnings_ask_for_confirmation(hass) -> None:
     assert "Automatic window detection" in warnings
 
     result = await hass.config_entries.options.async_configure(result["flow_id"], {})
+    result = await _through_reset(hass, result)
     assert result["type"] == FlowResultType.CREATE_ENTRY
     assert len(entry.options[CONF_SMART_PI_DEPENDENCIES]) == 1
 
@@ -233,7 +245,22 @@ async def test_edit_of_the_connection_starts_learning_again(hass) -> None:
         hass, entry, "n1", {"mode": "always", "door_sensors": [], "neighbour_window_action": "eco"}
     )
 
+    result = await _through_reset(hass, result)
     assert result["type"] == FlowResultType.CREATE_ENTRY
     (stored,) = entry.options[CONF_SMART_PI_DEPENDENCIES]
     assert stored["id"] != "n1"
     assert (stored["mode"], stored["door_sensors"]) == ("always", [])
+
+
+@pytest.mark.parametrize("reset", [True, False])
+async def test_a_new_neighbour_offers_to_reset_the_learned_model(hass, reset) -> None:
+    from custom_components.vtherm_smartpi.const import CONF_SMART_PI_RESET_TOKEN
+
+    _living, _hall, sensor, _door, _window = _setup(hass)
+    entry = _entry(hass)
+    result = await _add(hass, entry, sensor.entity_id)
+    result = await hass.config_entries.options.async_configure(result["flow_id"], {"mode": "always", "door_sensors": []})
+    result = await _through_reset(hass, result, reset)
+
+    assert result["type"] == FlowResultType.CREATE_ENTRY
+    assert (CONF_SMART_PI_RESET_TOKEN in entry.options) is reset

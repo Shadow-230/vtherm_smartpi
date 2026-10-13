@@ -4,6 +4,19 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+- Add the options form of a zone with two heat sources: "Zone with two heat sources"
+  in the menu of a thermostat entry sets the zone up from its master thermostat (a
+  Versatile Thermostat over climate whose two devices are SmartPI thermostats), checks
+  it (self-regulation off, two SmartPI devices, one temperature sensor, not in another
+  zone), and offers Source 1 and Source 2 with the main source, the split rule
+  recommended for their heating types and its parameter. The zone is saved in the main
+  source's entry; the other thermostat gets an entry if it has none, and its options
+  show the zone and only the settings it still uses. Changing the main source moves the
+  zone with its neighbours. Changes that affect what the zone has learned, including
+  neighbour changes, offer to reset the learned model. Saving the additional source's
+  entry restarts the zone's main source too, and the main source warns at start when
+  the master no longer has exactly these two thermostats.
+
 - Add a zone with two heat sources: the zone thermostat (main source) names a second
   VTherm with SmartPI as its additional source, for example a heated floor next to a
   radiator. The main source's SmartPI regulates; the additional source applies its
