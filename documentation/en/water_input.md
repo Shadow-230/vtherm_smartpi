@@ -326,10 +326,26 @@ test forces for a time window.
   turns it into its own command with its factor and reports its cycles, switched ones at their
   factor, and its power cap to the main source. See
   [Zone dependencies and a second heat source, §6.2 and §6.7](zone_dependencies.md#6-a-second-heat-source).
-- **Short cycling with an on-demand boiler** (to watch in the field): with cold water a small
-  demand gives a large command; once the water is warm the command shrinks to `power / φ`. If
-  Smart Boiler only fires above a valve-opening threshold, the boiler could stop and start
-  again. The simulator's boiler fires on any demand and cannot show it.
+- **A boiler start threshold** (Versatile Thermostat's central boiler, or Smart Boiler, set to fire
+  only above a total power or a valve opening, with the zone count off): a zone whose demand stays
+  below it calls for heat that does not come, and nothing tells SmartPI why. Its command is
+  counted as power from the device's power in Versatile Thermostat (2000 W at 20 % is 400 W, under
+  a 600 W threshold).
+  - Without water data SmartPI takes its command for heat: windows with the valve open and no
+    heat can lower its `a`, and the integral and the feed-forward trim rise until the command
+    crosses the threshold; the boiler then fires in short bursts. In a trial simulation outside the
+    test suite (one zone needing a 20 % opening) a 35 % threshold gave about 5 starts per hour and
+    twice the integral, and with 70 % the zone stayed 0.2 to 0.7 degC below its setpoint for 30 h.
+  - With water data the cooling water lowers `φ` within the 15-min average, so learning stops
+    counting the missing heat; but the command `power / φ` then rises above the threshold and falls
+    back once the water is warm: about 10 starts per hour with 2-min burns at a 35 % threshold.
+  - `heat_available` false (`flame_off`) cannot tell this apart from an ordinary burner pause. A
+    start hysteresis on the boiler's side removed the cycling in the same simulation (0.7 starts
+    per hour, 68-min burns). A reason from Smart Boiler for "held below the start threshold", with
+    low-load firing on its side, would let SmartPI hold its integral and keep its command: open, to
+    be decided together with Smart Boiler.
+  - With a single active zone enough to fire the boiler (the default count of 1), none of this
+    happens.
 - **Dead time with an on-demand boiler**: an "on" step made with cold water includes the
   boiler's warm-up in the dead time SmartPI measures.
 - **The model reset is offered as a Home Assistant repair**: a change of the water data
