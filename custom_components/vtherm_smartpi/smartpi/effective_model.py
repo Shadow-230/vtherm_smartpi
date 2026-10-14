@@ -83,8 +83,10 @@ class KnownInputs:
     # Reason to pause the learning of a, b and dead times, or None.
     learning_gate: str | None = None
     # Loss coefficient fitted together with the exchanges, used by the control
-    # law instead of the learned b when the learned b has absorbed them.
+    # law instead of the learned b when the learned b has absorbed them; it
+    # enters with the share of its exchanges already in the control law.
     loss_coefficient: float | None = None
+    loss_weight: float = 1.0
     # Reaction to an open window at a connected neighbour ("turn_off", "frost",
     # "eco"), and the setpoint it imposes for "frost" and "eco".
     control_action: str | None = None
@@ -95,6 +97,19 @@ class KnownInputs:
     source_command: float | None = None
     # Diagnostics of the second source.
     source: Mapping[str, Any] | None = None
+
+    def loss(self, learned_b: float) -> float | None:
+        """The loss term replacing the learned b, or None.
+
+        The learned b holds the exchanges of always-connected neighbours; the
+        fitted coefficient does not. While their exchanges fade in, the loss
+        moves from the learned b to the fitted one with the same share, so that
+        b_eff does not step.
+        """
+        if self.loss_coefficient is None or self.loss_coefficient <= 0.0:
+            return None
+        weight = min(max(self.loss_weight, 0.0), 1.0)
+        return learned_b + weight * (self.loss_coefficient - learned_b)
 
 
 @dataclass(frozen=True)
@@ -145,8 +160,9 @@ def compose(
             heats.append((item.key, rate))
     if not exchanges and not heats:
         return identity
-    if exchanges and inputs.loss_coefficient is not None and inputs.loss_coefficient > 0.0:
-        loss = inputs.loss_coefficient
+    fitted_loss = inputs.loss(b) if exchanges else None
+    if fitted_loss is not None and fitted_loss > 0.0:
+        loss = fitted_loss
 
     b_eff = loss + sum(conductance for _key, conductance, _t in exchanges)
     if b_eff < KNOWN_INPUTS_B_EFF_MIN:

@@ -4,6 +4,16 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+- Fix the fade-in of known exchanges. Always-connected neighbours enter together once
+  each is known, and the loss fitted without them replaces SmartPI's b at the pace
+  their exchanges enter, so the feed-forward no longer dips for an hour when they are
+  published (nor drops a neighbour still unknown). In a zone with two sources their k
+  from the fit is in the model at once, like the fit's b. A zone's fit known before a
+  restart puts the neighbours' k it gives, and the source's a_f of both HVAC modes,
+  fully in the model at once.
+- The zone form no longer asks for the main source's delay and lag, which nothing
+  used (the zone's fit learns its delay), and offers the reset only when the
+  additional source's delay or lag really changes.
 - Add the options form of a zone with two heat sources: "Zone with two heat sources"
   in the menu of a thermostat entry sets the zone up from its master thermostat (a
   Versatile Thermostat over climate whose two devices are SmartPI thermostats), checks

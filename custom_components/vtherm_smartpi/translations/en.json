@@ -184,11 +184,11 @@
         "data": {
           "main_source": "Main source",
           "split_rule": "Split rule",
-          "custom_response": "Set each source's delay and lag"
+          "custom_response": "Set the additional source's delay and lag"
         },
         "data_description": {
           "main_source": "The source that corrects quickly; usually the faster one.",
-          "custom_response": "Otherwise the heating types give the starting values, which the zone then learns."
+          "custom_response": "Otherwise its heating type gives the starting values, which the zone then learns. The main source's delay is learned by the zone."
         }
       },
       "zone_parameter": {
@@ -198,15 +198,13 @@
           "split_ratio": "Additional source's command (% of the main source's)",
           "source_alone_percent": "Additional source alone up to (%)",
           "lead_band_percent": "Main source's band (%)",
-          "lead_lag_min": "Main source: delay",
-          "lead_tau_min": "Main source: lag",
           "source_lag_min": "Additional source: delay",
           "source_tau_min": "Additional source: lag"
         }
       },
       "zone_reset": {
         "title": "Reset the zone's learned model",
-        "description": "This change affects what the zone has learned: a source added, removed or swapped, the main source changed, or a custom response changed. Resetting clears SmartPI's whole learned model of the main source (its a, b, dead times and the zone's fit) so that it learns again from the start; it is recommended.",
+        "description": "This change affects what the zone has learned: a source added, removed or swapped, the main source changed, or the additional source's custom response changed. Resetting clears SmartPI's whole learned model of the main source (its a, b, dead times and the zone's fit) so that it learns again from the start; it is recommended.",
         "data": {
           "reset_model": "Reset the zone's learned model"
         }

@@ -1799,9 +1799,10 @@ class SmartPI:
         """Integral time base for the gains, shortened by the active heat exchanges.
 
         The learned time constant 1/b gains the exchange conductances; a direct
-        heat input does not change the zone dynamics. With an always-connected
-        neighbour the learned b already holds its exchange, so the base is the
-        loss coefficient fitted without it.
+        heat input does not change the zone dynamics. With always-connected
+        neighbours the learned b already holds their exchanges, so the base moves
+        to the loss coefficient fitted without them as they fade in
+        (KnownInputs.loss).
         """
         model = self._effective_model
         if model is None or not model.active or not tau_info.reliable or tau_info.tau_min <= 0.0:
@@ -1810,7 +1811,7 @@ class SmartPI:
         if conductance <= 0.0:
             return tau_info.tau_min
         inputs = self._known_inputs
-        loss = inputs.loss_coefficient if inputs is not None else None
+        loss = inputs.loss(1.0 / tau_info.tau_min) if inputs is not None else None
         base = loss if loss is not None and loss > 0.0 else 1.0 / tau_info.tau_min
         return 1.0 / (base + conductance)
 

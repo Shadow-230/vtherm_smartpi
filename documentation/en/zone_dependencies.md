@@ -78,8 +78,14 @@ coefficient and its outdoor temperature:
   setpoint and the outdoors: in the feed-forward `b` cancels out (`b/a · q/b = q/a`), and a bound
   below the shift a floor needs in cold weather counted less floor heat than there was
   (section 6.8).
-- With an always-connected neighbour whose exchange SmartPI's `b` has absorbed, the loss
-  term uses the coefficient fitted without it (section 5.4).
+- With always-connected neighbours, whose exchanges SmartPI's `b` has absorbed, the loss term
+  moves to the coefficient `b_fit` fitted without them (section 5.4) at the pace their exchanges
+  enter the model:
+
+        loss = b + w·(b_fit − b),   w = Σ_i w_i·k_i / Σ_i k_i
+
+  where `w_i` is the share of each always-connected exchange already in the model (section 2.3).
+  With `b = b_fit + Σ k_i`, `b_eff = loss + Σ w_i·k_i` stays equal to `b` while they fade in.
 - Every input has a value now and may carry a trajectory over a horizon; the control law
   composes only the value now. The predictive brake of a zone with two sources predicts the
   additional source's heat itself (section 6.6).
@@ -91,7 +97,7 @@ coefficient and its outdoor temperature:
 | Part of SmartPI | Uses |
 |---|---|
 | FF1 (`k_ff = b/a`), FF3, setpoint trajectory, thermal twin, near band, FF trim windows | `b_eff`, `T_ref` |
-| Integral time of the gains | `Ti = 1 / (b + Σ g)`, with the fitted loss for always-connected neighbours |
+| Integral time of the gains | `Ti = 1 / (loss + Σ g)`, with `loss` as in section 2.2 (`1/tau` without always-connected neighbours) |
 | Learning of `a`, `b` and dead times, governance, safety | raw `b` and `T_ext`; each learning window is corrected by the rate the known inputs add (`known_rate`) |
 
 Learning on raw data keeps SmartPI's own parameters meaning what they meant before; the
@@ -101,8 +107,13 @@ correction removes the part of the measured slope that known inputs explain.
 source's `a_f` is published, its effect acts on the zone as an unknown disturbance, which the
 controller's integral has absorbed. Folding it into the model at once would step the
 feed-forward and make the zone dip or overshoot while the integral unwinds. It therefore
-enters over `KNOWN_INPUT_FADE_S`. A coefficient already known before a restart is fully in
-the model at once.
+enters over `KNOWN_INPUT_FADE_S`. Always-connected neighbours are different, since SmartPI's `b`
+holds their exchanges: they enter together, once each of them is known, and the fitted loss
+replaces SmartPI's `b` at the same pace (section 2.2), so `b_eff` does not step down and climb
+back. In a zone with two sources the fit's `b`, which replaces SmartPI's at once, leaves them
+out, so their `k` from the fit is in the model at once. A coefficient already known before a
+restart is fully in the model at once: a neighbour's own `k`, the `k` the zone's fit of the
+HVAC mode in use gives, and the source's `a_f` of either HVAC mode.
 
 ## 3. Components
 
@@ -294,9 +305,9 @@ the buffer (`COUPLING_JOINT_WINDOW` windows) counts only when:
 
 A separable fit adds `k` and its `b` to a history at most every `COUPLING_JOINT_FIT_SPACING`
 new windows, so that agreeing fits do not merely repeat the same data. The history is
-published like a door's. The control law then uses the fitted `b` as its loss term,
-including in the integral time. Until then nothing is published and the zone runs as without
-the neighbour.
+published like a door's. Once every connected always-neighbour has its `k`, the control law
+moves its loss term to the fitted `b` as the exchanges fade in (section 2.2), including in the
+integral time. Until then none of them enters and the zone runs as without them.
 
 ### 5.5 A window at a connected neighbour
 
@@ -411,10 +422,10 @@ assumed to hold after that.
   power at 45 degC while switched on (room at 20 degC). The main source's own cycles are recorded
   the same way.
 - **Each device's type is the heating type of its own SmartPI entry**; the zone form can set a
-  custom response for both instead. The type gives the starting values below. At run time only the
-  additional source's response is used, as the start of its candidates; the main source's delay
-  comes from the zone's fit (section 6.4), and its type serves the form's recommendation and the
-  diagnostics (`lead_emitter`).
+  custom delay and lag for the additional source instead. The type gives the starting values below;
+  at run time only the additional source's response is used, as the start of its candidates. The
+  main source's delay comes from the zone's fit (section 6.4), and its type serves the form's
+  recommendation and the diagnostics (`lead_emitter`).
 
 | Emitter type | `L_f` (min) | `tau_f` (min) |
 |---|---|---|
@@ -873,7 +884,7 @@ in the neighbour forms):
 
 | Change | Shows the reset step |
 |---|---|
-| a zone set up or removed, its additional source swapped, the main source changed, a custom response changed | yes |
+| a zone set up or removed, its additional source swapped, the main source changed, the additional source's custom response changed | yes |
 | a neighbour added or removed, its mode or door sensors changed | yes |
 | the split rule or its parameter, a window reaction, the activation delays and other regulator settings | no |
 
@@ -918,8 +929,9 @@ In the main source's state, the zone's source item keeps:
 | `k_history`, `cool` | the neighbours' windows' own estimate of the source's heat, which only keeps it out of their `k` |
 
 A restart resumes where the zone was: a fit published before it is fully in the control law at
-once. The fit's sums are saved from its first window, published or not: about 16 KB of SmartPI's
-saved state per HVAC mode, 26 KB with one neighbour and 38 KB with two.
+once, the source's `a_f` of either HVAC mode and the neighbours' `k` the fit of the HVAC mode in
+use gives (section 2.3). The fit's sums are saved from its first window, published or not: about
+16 KB of SmartPI's saved state per HVAC mode, 26 KB with one neighbour and 38 KB with two.
 
 - SmartPI's saved state also keeps the last reset token it applied (`dependency_reset_token`,
   section 7).
@@ -980,7 +992,7 @@ flowchart TD
     MA --> MV{Valid?}
     MV -- no --> MA
     MV -- yes --> SO[Source 1, Source 2: main source, split rule, custom response]
-    SO --> PA[Rule parameter, with each source's delay and lag if custom]
+    SO --> PA[Rule parameter, with the additional source's delay and lag if custom]
     PA --> AF{Affects what was learned?}
     AF -- yes --> RS[Reset the zone's learned model?]
     AF -- no --> SV[Save in the main source's entry]
@@ -1013,11 +1025,13 @@ flowchart TD
   their own entries (the form does not ask for them). In the same step: the **main source**, the
   one whose SmartPI regulates and corrects quickly, chosen by hand with the faster device as the
   default; the split rule, with the rule recommended for the two heating types (section 6.3); and
-  whether to set each source's delay and lag instead of starting from the heating types.
+  whether to set the additional source's delay and lag instead of starting from its heating type.
+  The main source's delay is not asked: the zone's fit learns it (section 6.4). A zone saved with
+  the main source's own delay and lag, by an earlier version, keeps them unused.
 - **Parameter.** The rule's parameter with what it means for these two thermostats (`together`
   10 to 1000 %, `source_first` and `lead_band` 0 to 100 %), a warning when the main source's heating
-  type responds more slowly than the other one's, and the delays and lags if asked for (0 to
-  600 min).
+  type responds more slowly than the other one's, and the additional source's delay and lag if asked
+  for (0 to 600 min).
 - **Where it is saved.** In the main source's entry, as its `source` item with the master
   (`zone_master`); the zone's neighbours and doors are in the same entry. The other thermostat's
   entry stores nothing about the zone: it finds its role in the main source's entry. A thermostat
@@ -1071,9 +1085,10 @@ flowchart TD
 `smart_pi_dependencies`. A neighbour item holds `id`, `kind`, `entity` (registry identifier),
 `mode`, `door_sensors` and `neighbour_window_action`; the zone's source item holds `id`, `kind`,
 `entity`, `zone_master`, `split_rule` with its parameter (`split_ratio`, `source_alone_percent` or
-`lead_band_percent`), `lead_emitter` and `source_emitter` (the entries' heating types, read again at
-start, or `custom`) and, for a custom response, `lead_lag_min`, `lead_tau_min`, `source_lag_min` and
-`source_tau_min`.
+`lead_band_percent`), `lead_emitter` (the main entry's heating type) and `source_emitter` (the
+additional entry's heating type, read again at start, or `custom`) and, for a custom response,
+`source_lag_min` and `source_tau_min`. A zone saved by an earlier version may also hold
+`lead_lag_min` and `lead_tau_min`, which nothing uses.
 
 ## 11. Testing
 

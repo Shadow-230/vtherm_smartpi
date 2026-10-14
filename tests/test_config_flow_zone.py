@@ -234,24 +234,85 @@ async def test_changing_only_the_rule_keeps_the_learned_model(hass) -> None:
     assert (item["id"], item["lead_band_percent"]) == (item_id, 30)
 
 
-async def test_a_custom_response_is_set_for_each_source(hass) -> None:
+async def test_a_custom_response_is_set_for_the_additional_source_only(hass) -> None:
+    """The main source's delay comes from the zone's fit: the form does not ask for it."""
     radiator, floor, master, entry, _ = _zone(hass)
     result = await _open_zone(hass, entry)
     result = await _configure(hass, result, {"master": master.entity_id})
     result = await _configure(
         hass, result, {"main_source": radiator.entity_id, "split_rule": "lead_band", "custom_response": True}
     )
-    assert {"lead_lag_min", "lead_tau_min", "source_lag_min", "source_tau_min"} <= _fields(result)
+    assert {"source_lag_min", "source_tau_min"} <= _fields(result)
+    assert not {"lead_lag_min", "lead_tau_min"} & _fields(result)
     assert (_default(result, "source_lag_min"), _default(result, "source_tau_min")) == (30, 180)
-    result = await _configure(
-        hass,
-        result,
-        {"lead_band_percent": 20, "lead_lag_min": 5, "lead_tau_min": 20, "source_lag_min": 45, "source_tau_min": 240},
-    )
+    result = await _configure(hass, result, {"lead_band_percent": 20, "source_lag_min": 45, "source_tau_min": 240})
     result = await _configure(hass, result, {"reset_model": True})
 
     item = _source_item(entry)
     assert (item["source_emitter"], item["source_lag_min"], item["source_tau_min"]) == ("custom", 45, 240)
+    assert item["lead_emitter"] == "radiator"
+    assert "lead_lag_min" not in item and "lead_tau_min" not in item
+
+
+async def test_an_older_custom_main_response_does_not_offer_a_reset_when_only_the_parameter_changes(hass) -> None:
+    """A zone saved with the main source's own delay and lag, which nothing used: dropping them
+    changes nothing the zone learned."""
+    radiator, floor, master, entry, _ = _zone(hass)
+    hass.config_entries.async_update_entry(
+        entry,
+        options={
+            **entry.options,
+            CONF_SMART_PI_DEPENDENCIES: [
+                {"id": "s1", "kind": "source", "entity": floor.id, "split_rule": "lead_band", "lead_band_percent": 20,
+                 "lead_emitter": "custom", "lead_lag_min": 5, "lead_tau_min": 20, "source_emitter": "floor_water",
+                 "zone_master": master.id}
+            ],
+        },
+    )
+
+    result = await _open_zone(hass, entry)
+    result = await _configure(hass, result, {"next_step_id": "zone_master"})
+    result = await _configure(hass, result, {"master": master.entity_id})
+    assert _default(result, "custom_response") is False
+    result = await _configure(
+        hass, result, {"main_source": radiator.entity_id, "split_rule": "lead_band", "custom_response": False}
+    )
+    result = await _configure(hass, result, {"lead_band_percent": 30})
+
+    assert result["type"] == FlowResultType.CREATE_ENTRY
+    item = _source_item(entry)
+    assert (item["id"], item["lead_band_percent"], item["lead_emitter"]) == ("s1", 30, "radiator")
+
+
+async def test_a_custom_response_equal_to_the_heating_type_s_does_not_offer_a_reset(hass) -> None:
+    """The zone learned with the same delay and lag: its fits are kept, as at run time."""
+    radiator, floor, master, entry, _ = _zone(hass)
+    result = await _open_zone(hass, entry)
+    result = await _configure(hass, result, {"master": master.entity_id})
+    result = await _configure(
+        hass, result, {"main_source": radiator.entity_id, "split_rule": "lead_band", "custom_response": False}
+    )
+    result = await _configure(hass, result, {"lead_band_percent": 20})
+    result = await _configure(hass, result, {"reset_model": False})
+
+    result = await _open_zone(hass, entry)
+    result = await _configure(hass, result, {"next_step_id": "zone_master"})
+    result = await _configure(hass, result, {"master": master.entity_id})
+    result = await _configure(
+        hass, result, {"main_source": radiator.entity_id, "split_rule": "lead_band", "custom_response": True}
+    )
+    result = await _configure(hass, result, {"lead_band_percent": 20, "source_lag_min": 30, "source_tau_min": 180})
+    assert result["type"] == FlowResultType.CREATE_ENTRY
+
+    result = await _open_zone(hass, entry)
+    result = await _configure(hass, result, {"next_step_id": "zone_master"})
+    result = await _configure(hass, result, {"master": master.entity_id})
+    assert _default(result, "custom_response") is True
+    result = await _configure(
+        hass, result, {"main_source": radiator.entity_id, "split_rule": "lead_band", "custom_response": True}
+    )
+    result = await _configure(hass, result, {"lead_band_percent": 20, "source_lag_min": 45, "source_tau_min": 180})
+    assert result["step_id"] == "zone_reset"
 
 
 async def test_removing_the_zone_lets_both_regulate_alone(hass) -> None:

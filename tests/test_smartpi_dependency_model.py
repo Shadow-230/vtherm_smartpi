@@ -259,6 +259,51 @@ def test_always_connection_state_survives_a_restart() -> None:
     assert inputs.status[0]["k_samples"] == 3
 
 
+def test_the_fitted_loss_enters_with_its_always_connected_exchange() -> None:
+    """SmartPI's b holds the exchange until it is known; the fitted loss replaces it at the
+    pace the exchange fades in, so b_eff does not step down and climb back."""
+    from custom_components.vtherm_smartpi.smartpi.const import KNOWN_INPUT_FADE_S
+    from custom_components.vtherm_smartpi.smartpi.effective_model import compose
+
+    model = DependencyModel(DependencyState())
+    model._coupling.load_shared(
+        {"joint_rows": [[-0.016, {"hall": 1.0, "_ext": -15.0}]] * 3, "joint_k": {"hall": [0.0015] * 8}, "joint_b": [0.001] * 8}
+    )
+    learned_b = 0.0025  # the loss 0.001 and the exchange 0.0015 together
+
+    weights = []
+    for now_s in (0.0, KNOWN_INPUT_FADE_S / 4, KNOWN_INPUT_FADE_S / 2, 2 * KNOWN_INPUT_FADE_S):
+        inputs = _update(model, _neighbour(mode="always"), now_s=now_s)
+        weights.append(inputs.loss_weight)
+        assert compose(learned_b, 5.0, inputs).b == pytest.approx(learned_b)
+
+    assert weights == pytest.approx([0.0, 0.25, 0.5, 1.0])
+    assert compose(learned_b, 5.0, inputs).ext_temp == pytest.approx((0.001 * 5.0 + 0.0015 * 16.0) / learned_b)
+
+
+def test_always_connected_neighbours_enter_together_once_each_is_known() -> None:
+    """SmartPI's b holds both exchanges: one known alone stays out, so neither is dropped nor
+    counted twice; once both are known they fade in together and b_eff does not step."""
+    from custom_components.vtherm_smartpi.smartpi.const import KNOWN_INPUT_FADE_S
+    from custom_components.vtherm_smartpi.smartpi.effective_model import compose
+
+    model = DependencyModel(DependencyState())
+    hall = _neighbour("hall", mode="always", temperature=16.0)
+    bed = _neighbour("bed", mode="always", temperature=18.0)
+    learned_b = 0.0035  # the loss 0.001 and both exchanges, 0.0015 and 0.001
+    model._coupling.load_shared({"joint_k": {"hall": [0.0015] * 8}, "joint_b": [0.001] * 8})
+
+    one_known = _update(model, hall, bed, now_s=0.0)
+    assert one_known.exchanges == () and one_known.loss_coefficient is None
+
+    model._coupling.load_shared({"joint_k": {"hall": [0.0015] * 8, "bed": [0.001] * 8}, "joint_b": [0.001] * 8})
+    for now_s in (600.0, 600.0 + KNOWN_INPUT_FADE_S / 2, 600.0 + 2 * KNOWN_INPUT_FADE_S):
+        inputs = _update(model, hall, bed, now_s=now_s)
+        assert compose(learned_b, 5.0, inputs).b == pytest.approx(learned_b)
+    assert inputs.loss_weight == 1.0
+    assert sorted(e.conductance for e in inputs.exchanges) == pytest.approx([0.001, 0.0015])
+
+
 def test_unreadable_saved_state_is_dropped() -> None:
     state = DependencyState()
     state.for_item("hall")["k_history"] = [0.002] * 8

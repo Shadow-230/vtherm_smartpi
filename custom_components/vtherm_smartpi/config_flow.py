@@ -42,8 +42,6 @@ from .smartpi.const import HEATING_TYPES
 from .smartpi.dependencies import (
     KEY_LEAD_BAND,
     KEY_LEAD_EMITTER,
-    KEY_LEAD_LAG_MIN,
-    KEY_LEAD_TAU_MIN,
     KEY_SOURCE_ALONE,
     KEY_SOURCE_EMITTER,
     KEY_SOURCE_LAG_MIN,
@@ -537,6 +535,17 @@ class SmartPIConfigFlow(ConfigFlow, domain=DOMAIN):
     def async_get_options_flow(config_entry):
         """Return the options flow handler."""
         return SmartPIOptionsFlow(config_entry)
+
+
+def _source_response(extra: dict[str, Any]) -> tuple[float, float] | None:
+    """The additional source's delay and lag a zone item gives, in seconds (None if invalid)."""
+    try:
+        response = SourceResponse.for_emitter(
+            extra.get(KEY_SOURCE_EMITTER), extra.get(KEY_SOURCE_LAG_MIN), extra.get(KEY_SOURCE_TAU_MIN)
+        )
+    except (KeyError, TypeError, ValueError):
+        return None
+    return round(response.lag_s), round(response.tau_s)
 
 
 class SmartPIOptionsFlow(OptionsFlow):
@@ -1200,10 +1209,9 @@ class SmartPIOptionsFlow(OptionsFlow):
         rule_default = recommendation.rule.rule
         if current is not None and current.extra.get(KEY_SPLIT_RULE) in RULES:
             rule_default = current.extra[KEY_SPLIT_RULE]
-        custom_default = current is not None and EMITTER_CUSTOM in (
-            current.extra.get(KEY_LEAD_EMITTER),
-            current.extra.get(KEY_SOURCE_EMITTER),
-        )
+        # Only the additional source's response can be custom (an older zone may still
+        # hold the main source's, which nothing uses).
+        custom_default = current is not None and current.extra.get(KEY_SOURCE_EMITTER) == EMITTER_CUSTOM
         recommended = recommend(self._response_of(faster[0]), self._response_of(faster[1]))
         if recommended.reason == REASON_SLOW_SOURCE:
             text = (
@@ -1244,7 +1252,10 @@ class SmartPIOptionsFlow(OptionsFlow):
         )
 
     async def async_step_zone_parameter(self, user_input: dict[str, Any] | None = None):
-        """The rule's parameter and, if asked for, each source's delay and lag."""
+        """The rule's parameter and, if asked for, the additional source's delay and lag.
+
+        The main source's delay is not asked: the zone's fit learns it from a grid.
+        """
         pending = self._zone_pending
         members = self._zone_members
         main = next(m for m in members if m.entity_id == pending[FIELD_MAIN_SOURCE])
@@ -1269,12 +1280,10 @@ class SmartPIOptionsFlow(OptionsFlow):
                     min=0, max=600, step=1, mode=selector.NumberSelectorMode.BOX, unit_of_measurement="min"
                 )
             )
-            for member, lag_key, tau_key in ((main, KEY_LEAD_LAG_MIN, KEY_LEAD_TAU_MIN), (other, KEY_SOURCE_LAG_MIN, KEY_SOURCE_TAU_MIN)):
-                response = self._response_of(member)
-                lag = current.extra.get(lag_key) if same_pair and current.extra.get(lag_key) is not None else round(response.lag_s / 60.0)
-                tau = current.extra.get(tau_key) if same_pair and current.extra.get(tau_key) is not None else round(response.tau_s / 60.0)
-                schema[vol.Required(lag_key, default=lag)] = minutes
-                schema[vol.Required(tau_key, default=tau)] = minutes
+            response = self._response_of(other)
+            for key, start_s in ((KEY_SOURCE_LAG_MIN, response.lag_s), (KEY_SOURCE_TAU_MIN, response.tau_s)):
+                value = current.extra.get(key) if same_pair and current.extra.get(key) is not None else round(start_s / 60.0)
+                schema[vol.Required(key, default=value)] = minutes
         hint = _RULE_HINT[rule].format(main=main.entity_id, other=other.entity_id)
         if recommend(self._response_of(main), self._response_of(other)).roles_reversed:
             hint += (
@@ -1296,17 +1305,16 @@ class SmartPIOptionsFlow(OptionsFlow):
             KEY_SPLIT_RULE: rule,
             parameter: pending[parameter],
         }
-        for member, emitter_key, lag_key, tau_key in (
-            (main, KEY_LEAD_EMITTER, KEY_LEAD_LAG_MIN, KEY_LEAD_TAU_MIN),
-            (other, KEY_SOURCE_EMITTER, KEY_SOURCE_LAG_MIN, KEY_SOURCE_TAU_MIN),
-        ):
-            if pending.get(FIELD_CUSTOM_RESPONSE):
-                extra[emitter_key] = EMITTER_CUSTOM
-                extra[lag_key] = pending[lag_key]
-                extra[tau_key] = pending[tau_key]
-            else:
-                # The heating types of the thermostats' entries; the handler reads them again at start.
-                extra[emitter_key] = self._heating_type(member)
+        # The heating types of the thermostats' entries; the handler reads them again at
+        # start. Only the additional source's response may be custom: it starts the
+        # candidates of its time scale, while the main source's delay comes from the fit.
+        extra[KEY_LEAD_EMITTER] = self._heating_type(main)
+        if pending.get(FIELD_CUSTOM_RESPONSE):
+            extra[KEY_SOURCE_EMITTER] = EMITTER_CUSTOM
+            extra[KEY_SOURCE_LAG_MIN] = pending[KEY_SOURCE_LAG_MIN]
+            extra[KEY_SOURCE_TAU_MIN] = pending[KEY_SOURCE_TAU_MIN]
+        else:
+            extra[KEY_SOURCE_EMITTER] = self._heating_type(other)
         current = self._zone_source_item()
         same_pair = current is not None and current.entity == other.id
         return DependencyItem(
@@ -1321,15 +1329,14 @@ class SmartPIOptionsFlow(OptionsFlow):
         item = self._build_zone_item(main, other)
         own = self._target_registry_entry()
         current = self._zone_source_item()
-        response_keys = (KEY_LEAD_EMITTER, KEY_LEAD_LAG_MIN, KEY_LEAD_TAU_MIN, KEY_SOURCE_EMITTER, KEY_SOURCE_LAG_MIN, KEY_SOURCE_TAU_MIN)
+        # Only the additional source's response shapes what the zone learns, and the
+        # learned fits are kept when its delay and lag stay the same (as at run time).
         affects_learning = (
             current is None
             or own is None
             or main.id != own.id
             or current.entity != item.entity
-            or any(
-                self._effective(current, main, other).get(key) != item.extra.get(key) for key in response_keys
-            )
+            or _source_response(self._effective(current, main, other)) != _source_response(item.extra)
         )
         self._zone_item, self._zone_main = item, main
         if affects_learning:
