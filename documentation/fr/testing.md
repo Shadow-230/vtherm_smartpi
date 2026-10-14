@@ -1,8 +1,8 @@
 # Tests
 
 Ce document rassemble tous les tests de ce fork : comment les lancer, le simulateur que la plupart
-d'entre eux utilisent, chaque scénario de simulation et ce qu'il doit montrer, et les autres tests,
-classés par fonction. Les fonctions elles-mêmes sont décrites dans la
+d'entre eux utilisent, chaque scénario de simulation et ce qu'il doit montrer, les autres tests,
+classés par fonction, et les tests QAS sur un vrai Home Assistant. Les fonctions elles-mêmes sont décrites dans la
 [documentation technique](technical_doc.md),
 [Dépendances entre zones et deuxième source de chaleur](zone_dependencies.md) et
 [Entrée eau](water_input.md). Les tests propres à l'auteur ne changent pas et tournent avec ceux-ci.
@@ -14,6 +14,7 @@ classés par fonction. Les fonctions elles-mêmes sont décrites dans la
 3. [Scénarios de simulation](#3-scénarios-de-simulation)
 4. [Tests par fonction](#4-tests-par-fonction)
 5. [Limites](#5-limites)
+6. [QAS sur un vrai Home Assistant](#6-qas-sur-un-vrai-home-assistant)
 
 ## 1. Lancer les tests
 
@@ -256,4 +257,212 @@ Les résultats sont dans [Entrée eau, §4.4](water_input.md#44-résultats-simul
   de la flamme, et la durée minimale de combustion) n'est pas modélisée au-delà de ce dont les
   scénarios ci-dessus ont besoin.
 - **VTherm est copié, pas exécuté,** dans le simulateur. L'ensemble long vérifie la copie par
-  rapport au code de VTherm lui-même, parce que la branche principale de VTherm peut changer.
+  rapport au code de VTherm lui-même, parce que la branche principale de VTherm peut changer. Les
+  tests QAS (section 6) font tourner le vrai VTherm.
+
+## 6. QAS sur un vrai Home Assistant
+
+Les tests ci-dessus font tourner SmartPI dans le processus de test, sur une copie de l'ordonnanceur
+de Versatile Thermostat. Ils vérifient la physique, l'apprentissage et les règles de répartition,
+mais pas ce que seul un vrai Home Assistant montre. Les tests QAS (QAS : quality assurance,
+l'assurance qualité ; c'est la branche `qas` qu'ils testent) le font, sur un banc de test de huit
+instances Home Assistant (le projet séparé `ha-testbed`) :
+
+- le vrai Versatile Thermostat 10.5.1, avec sa chaudière centrale, son gestionnaire de puissance et
+  sa détection de fenêtre, deux thermostats reliés par Home Assistant et un maître over_climate ;
+- les formulaires dans Home Assistant, le registre des entités et ses pièces (areas) ;
+- l'état sauvegardé dans `.storage`, après de vrais redémarrages ;
+- le Recorder, le journal de bord (logbook) et les avis de réparation.
+
+Les tests QAS sont lancés par la session de test du banc, jamais par la session qui écrit le code,
+et toujours sur un seul commit de la branche `qas`. Ce dépôt contient le paquet de tests : le
+simulateur, les aides, les configurations, les scripts de mise en place, le lanceur (runner) et ce
+catalogue.
+
+### 6.1 Le paquet de tests
+
+Tout est sous `tests/qas/`. Aucun fichier n'y est nommé `test_*.py`, donc le `pytest tests/` de la CI
+ne le lance pas : le lanceur a besoin du `lib/` du banc.
+
+| Chemin | Ce que c'est |
+|---|---|
+| `custom_components/smartpi_room_sim/` | le simulateur de pièces sous forme d'intégration Home Assistant : pièces, chauffages, vannes, une chaudière, portes, fenêtres et l'extérieur. Sa physique (`physics.py`) est le même fichier que celui qu'utilise le simulateur dans le processus de test : `tests/sim/plant.py` le charge |
+| `custom_components/smartpi_qas_helpers/` | des aides réservées aux tests, qui agissent à l'intérieur du SmartPI en marche : déclencher un événement AutoCalib, rendre silencieuse la source principale d'une zone, charger un état appris, lister les événements déclenchés |
+| `roles.py` | les huit rôles en un seul endroit : pièces, thermostats, entrées SmartPI et options de base |
+| `config/<role>.yaml` | le `configuration.yaml` de chaque rôle, écrit par `config/build.py` à partir de `roles.py` |
+| `setup/setup_role.py` | met en place une instance par l'API, par étapes (`setup/stages.py`), puis la redémarre |
+| `run.py`, `scenarios/` | le lanceur et les scénarios, sur le `lib/harness.py` du banc |
+| `compare.py` | compare ce que deux instances ont mesuré (QB1, QE5) |
+| `README.md` | comment le lancer, en bref |
+
+**Le simulateur.** Une pièce a des déperditions vers l'extérieur `b` et une capacité thermique. Un
+chauffage a un gain `a`, un retard et une inertie d'émetteur (un étage, ou deux pour une dalle). Les
+pièces sont reliées en permanence ou par une porte, et une fenêtre relie une pièce à l'extérieur.
+Un émetteur à eau ne chauffe qu'avec l'eau de la chaudière : il se réchauffe vers 60 °C tant que
+l'interrupteur de la chaudière est allumé, et refroidit jusqu'à 12 °C (sous la température des
+pièces) tant qu'il est éteint. Les capteurs de température arrondissent à 0.1 ou 0.01 °C et ne sont
+écrits que quand leur valeur change. Des services fixent la température d'une pièce, d'un coup ou
+progressivement, déplacent la moyenne extérieure, ouvrent ou ferment une porte ou une fenêtre, font
+qu'un appareil ne répond plus (il garde son état, et peut aussi devenir indisponible), et
+réinitialisent les entrées. Tous les identifiants d'entités commencent par `smartpi_room_sim_` : rien
+ne vient d'une vraie maison.
+
+### 6.2 Les rôles des instances
+
+| Inst. | Rôle | Ce qu'elle contient |
+|---|---|---|
+| 1 | `base` | le salon : VTherm over_switch avec SmartPI, sans extension ; un grenier non chauffé (un capteur pour QB3) |
+| 2 | `neighbours` | la cuisine (SmartPI), avec comme voisins le couloir derrière une porte (TPI, avec un capteur de fenêtre) et la salle à manger toujours ouverte (TPI) |
+| 3 | `zone` | le séjour : un radiateur (source principale) et un plancher (source additionnelle) sous le maître `Lounge` (over_climate, autorégulation désactivée) ; des thermostats de réserve pour QE1 |
+| 4 | `zone-ref` | le même séjour avec deux SmartPI indépendants (la comparaison pour QE5) |
+| 5 | `zone-valve` | la pièce de travail : le plancher est une vanne (over_valve) ; le gestionnaire de puissance de VTherm |
+| 6 | `central-boiler` | la chaudière centrale de VTherm (seuil de puissance 2500 W) : la chambre (2000 W) ne peut pas la démarrer seule, le bureau (3000 W) le peut |
+| 7 | `ref-0.4.0` | le jumeau de l'instance 1 sur la version 0.4.0 de l'auteur, mise à jour plus tard vers `qas`, puis ramenée en arrière |
+| 8 | `electric` | les types de chauffage électriques (un tapis chauffant électrique, un radiateur électrique rapide) ; les relances |
+
+Chaque VTherm a un délai de sécurité de 1440 min : un capteur qui n'écrit que quand sa valeur change
+garde une même valeur plus longtemps que les 60 min par défaut de VTherm, et VTherm le prendrait
+pour un capteur en panne.
+
+### 6.3 Déploiement et lancement
+
+La session de test du banc suit son propre `docs/workflow.md`. Pour ce paquet :
+
+1. **Préparer** (stage) ce dépôt au commit de `qas` à tester, et Versatile Thermostat au tag de sa
+   dernière version publiée (10.5.1 au 2026-10-14).
+2. **Déployer** chaque instance avec son rôle :
+
+       bin/deploy.sh --instance N --stage stage/vtherm_smartpi \
+           --components stage/vtherm_smartpi/tests/qas/custom_components \
+           --components stage/versatile_thermostat/custom_components \
+           --config stage/vtherm_smartpi/tests/qas/config/<role>.yaml
+
+3. **La mettre en place** par l'API (les entrées de VTherm, les pièces, les seuils de la chaudière et
+   la puissance maximale, les entrées de SmartPI, les options de base), puis la redémarrer :
+
+       HA_INSTANCE=N python stage/vtherm_smartpi/tests/qas/setup/setup_role.py
+
+   Les étapes, dans l'ordre : `vtherm` (la configuration centrale de VTherm, l'entrée de valeurs par
+   défaut de SmartPI, les thermostats, puis les maîtres), `areas`, `inputs`, `smartpi` (une entrée
+   par thermostat SmartPI) et `options`. Chaque étape saute ce qui existe déjà ; `--stage` en lance
+   une seule.
+4. **Lancer** des scénarios, ou `M` pour l'ensemble minimal du rôle :
+
+       HA_INSTANCE=N python stage/vtherm_smartpi/tests/qas/run.py M
+       HA_INSTANCE=N python stage/vtherm_smartpi/tests/qas/run.py QD5      # detached: 72 h
+
+   `run.py --list` affiche les scénarios. Chacun ne tourne qu'à partir de la base de son rôle (ses
+   entrées SmartPI et leurs options ; les voisins et la zone sont comparés par ce qu'ils signifient,
+   pas par les identifiants que donnent les formulaires). Entre deux scénarios, les entrées du
+   simulateur et les thermostats reviennent à la base.
+5. **Comparer** les paires : `python stage/vtherm_smartpi/tests/qas/compare.py qb1` (instances 1 et
+   7) et `compare.py qe5` (instances 3 et 4), depuis le dossier du banc.
+
+**L'instance 7** passe de 0.4.0 à `qas`, puis revient. Le banc déploie le fork en 0.4.0 (51db763)
+avec `--ref`, et les composants du paquet de tests depuis une copie de travail (checkout) de `qas` :
+
+    QB1 / QB1s  →  QB2a (or QB2l after QB1)  →  deploy qas  →  QB2  →  QB3a  →  deploy 0.4.0  →  QB3
+
+### 6.4 Durées
+
+Un scénario attend ce que SmartPI fait après ses propres délais, plus une marge de deux calculs. Le
+lanceur lit les délais dans l'extension préparée (`smartpi/const.py` et `smartpi/source_model.py`) :
+
+| Quoi | Durée |
+|---|---|
+| un calcul | 60 s |
+| le cycle de VTherm | 10 min |
+| après la fermeture d'une porte, l'apprentissage attend | 10 min |
+| le délai de grâce de la chaudière | 15 min, plus le cycle pour un appareil tout-ou-rien |
+| la stabilisation d'un émetteur (le retard plus trois fois l'inertie) | radiateur 65 min, plancher à eau 570 min |
+| une source principale silencieuse | 15 min |
+| la détection de fenêtre de VTherm | 30 s |
+
+Le simulateur avance toutes les 7 s et la température extérieure oscille sur 2838 s : aucune période
+du simulateur n'est un multiple des 60 s de SmartPI ni du cycle. Les températures des pièces changent
+en rampes (progressivement).
+
+### 6.5 Le catalogue
+
+« Détaché » : plus de deux heures, donc le banc le lance en arrière-plan. « Minimum » : dans
+l'ensemble minimal, lancé après chaque changement. L'ensemble « avec Smart Boiler » est prévu : la
+façon de tester avec Smart Boiler (la vraie extension à une version donnée, ou un remplaçant de son
+interface réservé aux tests) reste à décider, et rien n'en est construit.
+
+| ID | Ce qu'il vérifie | Instance et rôle | Durée | Détaché | Jumeau dans le processus de test | Minimum | Ensemble |
+|---|---|---|---|---|---|---|---|
+| QA1 | Après le redémarrage de la mise en place, chaque entrée SmartPI et VTherm est chargée, ni SmartPI ni VTherm n'écrit d'avertissement ou d'erreur dans le journal, chaque thermostat SmartPI a ses diagnostics, et rien de Smart Boiler n'est présent. | 1 `base`, 8 `electric` | 15 min | non | test_factory.py | oui | sans Smart Boiler |
+| QA2 | Enregistrer sans changement les réglages d'une entrée de thermostat passe par le menu d'options sans étape de remise à zéro, garde les options enregistrées, et recharge l'entrée une seule fois, sans boucle. | 1 `base` | 15 min | non | test_config_flow_dependencies.py | oui | sans Smart Boiler |
+| QA3 | Les quatre services de SmartPI fonctionnent sur VTherm 10.5.1, et un apprentissage en pause reste en pause après un redémarrage. | 1 `base` | 30 min | non | test_services.py | non | sans Smart Boiler |
+| QA4 | Les événements AutoCalib portent l'entité climate du thermostat dans entity_id et son nom dans name, et ni le Recorder ni le journal de bord ne signale un identifiant d'entité invalide. | 1 `base` | 60 min | non | test_smartpi_autocalib_events.py | oui | sans Smart Boiler |
+| QA5 | Deux redémarrages gardent l'état appris (le modèle, ses compteurs et le jeton de remise à zéro appliqué), et un jeton de remise à zéro n'est pas appliqué une deuxième fois. | 1 `base` | 20 min | non | test_algo_persistence.py | oui | sans Smart Boiler |
+| QA6 | Un type de chauffage à eau montre le bloc water avec la source none et le facteur 1, et pas de bloc boiler sans la chaudière centrale de VTherm ; un type électrique ne montre ni l'un ni l'autre ; et rien n'est écrit dans le journal à chaque appel de régulation. | 1 `base`, 8 `electric` | 20 min | non | test_smartpi_water_handler.py, test_smartpi_boiler_handler.py | oui | sans Smart Boiler |
+| QB1 | Pendant 48 h, la pièce jumelle apprend et régule ; l'instance garde a, b et son erreur moyenne de 24 à 48 h, et compare.py qb1 réussit quand les a et b de l'instance qas sont à ±10 % de ceux de 0.4.0 et que son erreur moyenne est au plus 0.03 °C au-dessus. | 1 `base`, 7 `ref-0.4.0` | 48 h | oui | test_smartpi_regression_no_dependencies.py, test_smartpi_sim_baseline.py | non | sans Smart Boiler |
+| QB1s | Pendant 45 minutes, la pièce jumelle régule et rien n'enregistre d'erreur dans le journal, et l'instance garde ce que lit compare.py qb1s (les deux instances en régulation, les phases nommées). Variante courte de QB1. | 1 `base`, 7 `ref-0.4.0` | 45 min | non | test_smartpi_sim_baseline.py | oui | sans Smart Boiler |
+| QB2a | Sur 0.4.0, avant la mise à jour : l'état de SmartPI est l'état appris préparé pour le test (fixture), sauvegardé par 0.4.0 elle-même avec l'apprentissage en pause, et son modèle est gardé pour QB2. | 7 `ref-0.4.0` | 10 min | non | test_algo_persistence.py | oui | sans Smart Boiler |
+| QB2 | Après la mise à jour de 0.4.0 vers qas, l'état sauvegardé par 0.4.0 est chargé sans changement, aucun avertissement sur son format n'est écrit dans le journal, rien n'est remis à zéro, et le menu d'options de l'ancienne entrée fonctionne. | 7 `ref-0.4.0` | 30 min | non | test_algo_persistence.py | oui | sans Smart Boiler |
+| QB3a | Sur qas, avant de revenir à 0.4.0 : un voisin (le capteur du grenier) est ajouté à l'entrée, l'apprentissage est mis en pause et le modèle est gardé pour QB3 ; cela est laissé en place exprès. | 7 `ref-0.4.0` | 10 min | non | — | non | sans Smart Boiler |
+| QB3 | De retour sur 0.4.0 avec un voisin configuré, l'entrée se charge sans erreur, et l'état aussi ; enregistrer les options dans 0.4.0 supprime les clés du fork, un point déjà connu. | 7 `ref-0.4.0` | 30 min | non | — | non | sans Smart Boiler |
+| QB2l | Sur 0.4.0 après QB1, avant la mise à jour : le modèle que 0.4.0 a appris elle-même est gardé pour QB2 avec l'apprentissage en pause, sans état de départ chargé. | 7 `ref-0.4.0` | 5 min | non | test_algo_persistence.py | non | sans Smart Boiler |
+| QC1 | Pour un thermostat que sert la chaudière centrale de VTherm, le bloc boiler indique la source vtherm_central_boiler, et son champ called suit le capteur binaire de la chaudière centrale. | 6 `central-boiler` | 30 min | non | test_smartpi_boiler_handler.py | oui | sans Smart Boiler |
+| QC2 | La petite zone, qui appelle seule sous les seuils, passe en emitter_cooling après le délai de grâce, en held après le temps de stabilisation de son émetteur sans apprendre a, en emitter_warming dès que la grande zone démarre la chaudière, et revient à l'apprentissage normal un temps de stabilisation plus tard. | 6 `central-boiler` | 2.5 h | oui | test_smartpi_boiler_call.py, test_smartpi_boiler_algo.py | non | sans Smart Boiler |
+| QC2s | La petite zone, qui appelle seule sous les seuils, passe en emitter_cooling après le délai de grâce et en held après le temps de stabilisation de son émetteur sans apprendre a, puis en emitter_warming dès que la grande zone démarre la chaudière. Variante courte de QC2, QC4. | 6 `central-boiler` | 95 min | non | test_smartpi_boiler_call.py, test_smartpi_boiler_algo.py | oui | sans Smart Boiler |
+| QC3 | Sans le capteur binaire de la chaudière centrale (désactivé), SmartPI ne lit aucun appel de la chaudière et apprend comme avant, sans écrire d'erreur dans le journal ; le capteur revient ensuite. | 6 `central-boiler` | 20 min | non | test_smartpi_boiler_handler.py | oui | sans Smart Boiler |
+| QC4 | Chaque jour de 2:00 à 8:00, la grande zone reste éteinte, donc la petite zone appelle sans la chaudière ; après 48 h, le a qu'elle a appris est dans 0.85–1.2 du vrai a de son radiateur. | 6 `central-boiler` | 48 h | oui | B1 (test_smartpi_sim_boiler_call.py) | non | sans Smart Boiler |
+| QD1 | Les formulaires des voisins montrent chaque erreur et chaque avertissement, suggèrent le capteur de porte des pièces (areas) des deux zones, modifient et suppriment avec leur étape de remise à zéro, et s'arrêtent avec neighbour_missing, dependencies_unchanged et zone_changed. | 2 `neighbours` | 45 min | non | test_config_flow_neighbours.py | oui | sans Smart Boiler |
+| QD2 | Une remise à zéro choisie dans un formulaire de voisin remet à zéro le modèle de la cuisine une seule fois, et le redémarrage suivant ne le remet pas de nouveau à zéro. | 2 `neighbours` | 20 min | non | test_smartpi_dependencies_handler.py | oui | sans Smart Boiler |
+| QD3 | Un voisin indisponible, ou en mode none, ne joue aucun rôle : sa connexion est inactive et le modèle de la cuisine n'a aucune entrée connue venant de lui. | 2 `neighbours` | 30 min | non | N1, N4 | oui | sans Smart Boiler |
+| QD4 | Porte ouverte, la fenêtre ouverte du couloir fait réagir la cuisine comme le dit son réglage (rien, arrêt, hors-gel, éco), sans apprendre aucun k pendant ce temps, et la cuisine revient à la normale une fois la fenêtre et la porte fermées. | 2 `neighbours` | 60 min | non | N6 | oui | sans Smart Boiler |
+| QD5 | Avec la porte ouverte chaque jour 7–9, 12–13:30 et 18–22 pendant 72 h, la cuisine apprend le k du couloir à ±25 % du vrai échange, et aucun temps mort pendant que la porte est ouverte. | 2 `neighbours` | 72 h | oui | N2, N5 | non | sans Smart Boiler |
+| QD5s | Ouverte deux fois pendant 8 minutes, la porte met en pause l'apprentissage de la cuisine (door_open, puis door_settling) et aucun temps mort n'est appris pendant qu'elle est ouverte. Variante courte de QD5. | 2 `neighbours` | 40 min | non | N2 | oui | sans Smart Boiler |
+| QD6 | Avec la salle à manger toujours ouverte et sa température qui fait des sauts d'elle-même pendant 72 h, la cuisine apprend son k à ±20 % du vrai échange, ou l'affiche comme « impossible à distinguer ». | 2 `neighbours` | 72 h | oui | N3 | non | sans Smart Boiler |
+| QD6s | Quand la température de la salle à manger toujours ouverte fait un saut, la cuisine la garde connectée sans mettre son apprentissage en pause, et n'écrit aucune erreur dans le journal. Variante courte de QD6. | 2 `neighbours` | 30 min | non | N3 | oui | sans Smart Boiler |
+| QE1 | Le formulaire de zone refuse chaque mauvais maître, crée l'entrée manquante d'un appareil en ne redémarrant que ce thermostat, déplace vers la source principale une zone configurée depuis la source additionnelle, s'arrête avec zone_changed, et supprime la zone. | 3 `zone` | 60 min | non | test_config_flow_zone.py | oui | sans Smart Boiler |
+| QE2 | Dans la zone en marche, la source additionnelle n'apprend rien et applique la commande de la source principale, et changer son type de chauffage redémarre la source principale. | 3 `zone` | 60 min | non | test_smartpi_sim_second_source.py | oui | sans Smart Boiler |
+| QE3 | Quand la source principale devient silencieuse, la source additionnelle régule seule la zone après 15 minutes, la pièce restant au-dessus de 19.3 °C, et suit de nouveau la source principale dès qu'elle revient. | 3 `zone` | 60 min | non | Z6 | oui | sans Smart Boiler |
+| QE4 | Quand les appareils du maître changent dans VTherm, SmartPI écrit un avertissement dans le journal au démarrage et la zone continue de fonctionner. | 3 `zone` | 15 min | non | test_smartpi_dependencies_handler.py | oui | sans Smart Boiler |
+| QE5 | Pendant 48 h, la zone publie son modèle avant environ 30 h, régule au plus 0.05 °C moins bien que la paire indépendante, le plancher donne plus de 20 % de la chaleur, et un redémarrage à 36 h garde le modèle ; compare.py qe5 en juge. | 3 `zone`, 4 `zone-ref` | 48 h | oui | Z1 comparé | non | sans Smart Boiler |
+| QE5s | Pendant 45 minutes, la zone (ou la paire indépendante) régule et rien n'enregistre d'erreur dans le journal, le plancher suivant le radiateur dans la zone. Variante courte de QE5. | 3 `zone`, 4 `zone-ref` | 45 min | non | Z1 comparé | oui | sans Smart Boiler |
+| QE6 | Quand le gestionnaire de puissance de VTherm déleste les appareils de la zone, une source principale délestée envoie quand même sa commande et une source additionnelle délestée reste éteinte. | 5 `zone-valve` | 60 min | non | délestage | non | sans Smart Boiler |
+| QE7 | Pendant 2 h, la vanne, comme source additionnelle, suit la commande de la source principale. | 5 `zone-valve` | 2 h | non | vanne comme source additionnelle | non | sans Smart Boiler |
+| QZ1 | SmartPI n'écrit aucune erreur dans le journal et chacun de ses avertissements est listé, le Recorder ne refuse aucun des attributs des diagnostics, les formulaires lus en polonais montrent du texte et pas des clés, et après trois rechargements d'une entrée, son thermostat ne calcule pas deux fois. | toutes | 25 min | non | — | oui | sans Smart Boiler |
+| QW1 | Données d'eau présentes pendant 48 h : source live, a dans 0.5–1.2 de la vraie valeur et plus de 1.5 fois la valeur apprise sans les données (prévu, non construit) | — | — | — | eau avec et sans données | — | avec Smart Boiler |
+| QW2 | Eau chaude sanitaire prioritaire (dhw_active) : φ = 0, commande et intégrale maintenues (prévu, non construit) | — | — | — | eau chaude sanitaire | — | avec Smart Boiler |
+| QW3 | Données absentes pendant 2 h, puis pour de bon : la moyenne longue gardée, puis φ = 1 et la réparation water_data_gone une seule fois ; sa résolution remet le modèle à zéro (prévu, non construit) | — | — | — | interruptions ; test_config_flow_heating_type.py | — | avec Smart Boiler |
+| QW4 | Les données apparaissent après l'apprentissage : la réparation water_data_appeared une seule fois (prévu, non construit) | — | — | — | test_smartpi_water_handler.py | — | avec Smart Boiler |
+| QW5 | L'appel de Smart Boiler (below_threshold, no_demand, activation_delay, boiler_fault) : source smart_boiler, le maintien comme dans QC2, les champs de demande (prévu, non construit) | — | — | — | B2 ; test_smartpi_boiler_handler.py | — | avec Smart Boiler |
+| QW6 | Le plancher d'une zone sur l'eau de Smart Boiler : la source additionnelle transforme la puissance de la source principale en sa propre commande, avec ses propres données d'eau (prévu, non construit) | — | — | — | plancher sur l'eau | — | avec Smart Boiler |
+| QW7 | Thermostat non associé à un circuit, ou Smart Boiler retiré : durable, φ = 1 (prévu, non construit) | — | — | — | test_smartpi_water_input.py | — | avec Smart Boiler |
+| QW8 | Type de chauffage électrique avec Smart Boiler présent : ne lit jamais Smart Boiler (prévu, non construit) | — | — | — | test_smartpi_water_handler.py | — | avec Smart Boiler |
+
+L'ensemble minimal prend, par instance, d'environ 1 h (instances 4, 5 et 8) à environ 4.5 h
+(instance 3) ; toutes les instances tournent en parallèle. Les longs scénarios (QB1, QC2, QC4, QD5,
+QD6, QE5) tournent détachés ; ensemble, ils prennent environ trois jours.
+
+**À chaque lancement**, QZ1 vérifie : aucune erreur de SmartPI, chacun de ses avertissements listé,
+aucun attribut des diagnostics refusé par le Recorder, les formulaires en polonais qui montrent du
+texte et pas des clés brutes, et aucun thermostat qui calcule deux fois après plusieurs rechargements
+de son entrée.
+
+### 6.6 Vérifié sans le banc
+
+| Fichier | Ce qu'il vérifie | Où il tourne |
+|---|---|---|
+| `test_qas_room_sim.py` | la physique du simulateur comparée au modèle du premier ordre et au réseau de pièces du simulateur dans le processus de test, ses portes, fenêtres, chaudière, appareils et sa réinitialisation ; ses entités et services dans Home Assistant | CI |
+| `test_qas_pack.py` | aucun fichier du paquet collecté par pytest ; les fichiers des rôles à jour et valides ; le paquet se compile et s'importe sans le banc ; chaque scénario du plan enregistré avec une attente d'une phrase, et présent dans ce catalogue ; la base du lanceur ; `compare.py` ; l'état de départ préparé se charge | CI |
+| `test_qas_setup_flows.py` | la mise en place de chaque rôle par les vrais formulaires de Versatile Thermostat 10.5.1 et de SmartPI, sans aucune erreur dans le journal, puis une deuxième fois sans aucun changement ; les chemins de formulaires de QD1, QE1, QE2 et QE4 | en local, avec `SMARTPI_QAS_LOCAL=1` |
+
+### 6.7 Points connus
+
+- **Un capteur de diagnostic en double pendant la création des entrées.** Créer l'entrée SmartPI
+  propre d'un thermostat, ou enregistrer ses options, fait que l'entrée de valeurs par défaut ajoute
+  de nouveau le capteur de diagnostic d'un autre thermostat SmartPI qui n'a pas encore sa propre
+  entrée. Home Assistant refuse le doublon et écrit une erreur dans le journal. C'est le code de
+  l'auteur (`sensor.py`, inchangé depuis 0.4.0). Une fois que chaque thermostat a son entrée, cela
+  n'arrive plus ; la mise en place redémarre l'instance à la fin, donc les scénarios lisent un
+  journal sans cette erreur.
+- **Retour à 0.4.0.** Enregistrer les options dans 0.4.0 supprime les clés du fork (voisins, zone,
+  type de chauffage). QB3 le montre.
+- **L'état appris** que chargent QB2a et QD2 (`smartpi_qas_helpers/fixtures/learned_room.json`)
+  vient du simulateur dans le processus de test (a = 0.035, b = 0.0012, après sa sortie de la phase
+  d'apprentissage) ; SmartPI 0.4.0 le charge sans changement.

@@ -1,0 +1,49 @@
+fire_autocalib_event:
+  name: Fire an AutoCalib event
+  description: Fire an AutoCalib event through SmartPI's own handler, without changing AutoCalib's state (test only).
+  fields:
+    entity_id:
+      name: Thermostat
+      required: true
+      selector:
+        entity:
+          domain: climate
+silence_lead:
+  name: Silence a zone's main source
+  description: The main source stops publishing its commands to its additional source; the link stays attached (test only).
+  fields:
+    entity_id:
+      name: Main source
+      required: true
+      selector:
+        entity:
+          domain: climate
+    silent:
+      name: Silent
+      required: true
+      selector:
+        boolean:
+seed_state:
+  name: Seed SmartPI's learned state
+  description: Replace a thermostat's SmartPI state by a fixture and save it through SmartPI (test only).
+  fields:
+    entity_id:
+      name: Thermostat
+      required: true
+      selector:
+        entity:
+          domain: climate
+    fixture:
+      name: Fixture
+      required: true
+      selector:
+        text:
+recorded_events:
+  name: Recorded SmartPI events
+  description: The AutoCalib and SmartPI events fired since the start, as the response (test only).
+  fields:
+    clear:
+      name: Clear
+      required: false
+      selector:
+        boolean:

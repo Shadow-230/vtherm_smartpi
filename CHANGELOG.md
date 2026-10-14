@@ -4,6 +4,14 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+- Add the QAS test pack (`tests/qas/`): tests on a real Home Assistant, run on the bench's eight
+  test instances, for the set without Smart Boiler. It holds a room simulator as a Home
+  Assistant integration (its physics is now the in-process simulator's file, which
+  `tests/sim/plant.py` loads), test-only helpers, a `configuration.yaml` per instance role,
+  setup scripts that create every entry through the API, and the runner with 35 scenarios on
+  the bench's harness. The catalogue is in `testing.md`, section 6; the set with Smart Boiler
+  is listed there as planned. New tests check the simulator and the pack in CI, and, locally,
+  each role's setup through the real forms of Versatile Thermostat 10.5.1 and SmartPI.
 - Rework the documentation. Where the fork changes SmartPI's existing behaviour, the
   technical, diagnostics and user documents now describe it in place. `zone_dependencies.md`
   and `water_input.md` share one layout and give the reasons behind the design, the data
