@@ -16,11 +16,9 @@ All notable changes to this project will be documented in this file.
   neighbour changes, offer to reset the learned model. Saving the additional source's
   entry restarts the zone's main source too, and the main source warns at start when
   the master no longer has exactly these two thermostats.
-
-- Add a zone with two heat sources: the zone thermostat (main source) names a second
-  VTherm with SmartPI as its additional source, for example a heated floor next to a
-  radiator. The main source's SmartPI regulates; the additional source applies its
-  commands with its own cycle, delays and water data.
+- Add a zone with two heat sources: a room heated by two SmartPI thermostats, for
+  example a heated floor next to a radiator. The main source's SmartPI regulates; the
+  additional source applies its commands with its own cycle, delays and water data.
   A joint fit of the zone learns the losses, both sources, the main source's delay,
   the additional source's time scale and the neighbours' exchanges, apart for heating
   and cooling; while SmartPI learns, the additional source works in learning blocks,
@@ -31,11 +29,9 @@ All notable changes to this project will be documented in this file.
   works as if alone until it is about to reach its setpoint. A main source that stops publishing hands the zone to the
   additional source's own SmartPI until it is back; switched off, it keeps telling its
   source so.
-  Documented in `documentation/en/zone_dependencies.md`, section 6; the options form
-  comes next.
+  Documented in `documentation/en/zone_dependencies.md`, section 6.
 - Raise the bound of the known heat's shift of the reference temperature to 40 °C, and
   record switched cycles at their water factor in the exchange learning.
-
 - Add the water input: a heating type in the regulator settings (water radiator by
   default, water underfloor heating, electric mat, fast electric). For a water type,
   SmartPI reads the supply water of the thermostat's circuit from the Smart Boiler
@@ -43,7 +39,7 @@ All notable changes to this project will be documented in this file.
   reference water: the emitter gets power divided by the water factor, learning sees
   the command times the factor, hot water with priority holds the command and the
   integral, the cold water of an idle boiler holds only the integral (the zone can
-  still call for heat), and a lasting change of the water data offers a model reset
+  still call for heat), and water data appearing or going for good offer a model reset
   as a repair.
   SmartPI publishes the factor it applies as `water_factor` in the thermostat's
   `specific_states`. Without water data nothing changes. Documented in
@@ -52,10 +48,12 @@ All notable changes to this project will be documented in this file.
   heat with the zone through a door or permanently. SmartPI learns the exchange
   and folds it into its model at a single substitution point, and a neighbour's
   open window can pause learning or switch the zone off, to frost or to eco.
-  The options of a per-thermostat entry now open a menu: regulator settings,
-  dependencies and valve curve. Without dependencies nothing changes.
-- Document zone dependencies and the design of a second heat source in the
-  zone in `documentation/en/zone_dependencies.md`.
+  The options of a per-thermostat entry now open a menu: regulator settings, zone
+  dependencies and, for a linearized valve, the valve curve. Without dependencies
+  nothing changes.
+- Document zone dependencies, the zone with two heat sources and the water input in
+  `documentation/en/zone_dependencies.md` and `documentation/en/water_input.md`, with
+  links from the user, technical and diagnostics documentation and the README.
 - Fire AutoCalib events with the thermostat climate `entity_id` and move the
   thermostat name to a `name` field, so the recorder no longer fails with
   `Invalid entity ID` when an entity filter is configured.

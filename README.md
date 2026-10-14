@@ -75,6 +75,8 @@ Comprehensive documentation is available in English:
 
 - 🇬🇧 [User Documentation (English)](documentation/en/vtherm_smartpi.md)
 - 🇬🇧 [Technical Documentation (English)](documentation/en/technical_doc.md)
+- 🇬🇧 [Zone Dependencies and a Second Heat Source (English)](documentation/en/zone_dependencies.md)
+- 🇬🇧 [Water Input (English)](documentation/en/water_input.md)
 
 ## 👥 Authors
 

@@ -77,8 +77,9 @@ electric type never reads Smart Boiler.
 
 ### 3.1 Reading the data
 
-At each control call (`SmartPIHandler.control_heating`), for its VTherm climate `entity_id`,
-the handler reads the first available of:
+At each control call (`SmartPIHandler._update_water`, called from `control_heating` and, for a
+zone's additional source, from `_control_as_source`), for its VTherm climate `entity_id`, the
+handler reads the first available of:
 
 1. `thermostat.get_feature_manager("vtherm_smart_boiler")` — VTherm 10.5.0.beta1 and later,
    once the thermostat has the manager — and its properties;
@@ -105,7 +106,8 @@ decides when the long-term average of `φ` is fed (section 3.3).
   average in time): burner cycling makes the raw value jump. After a long gap the average
   follows the first new value.
 - **`T_room`** is the thermostat's room temperature (VTherm's `current_temperature`).
-- **Reference.** At the reference water `φ = 1`; half the drive gives `0.5 ** n`.
+- **Reference.** At the reference water and a room at 20 °C, `φ = 1`; half the drive gives
+  `0.5 ** n`.
 - **Water hotter than the reference** is taken as the reference (`φ ≤ 1`): the controller's
   power range is 0..1, so a higher factor would only cap the command; the emitter then gives
   at least the heat it gives without this feature. On such days the emitter gives more than
@@ -120,12 +122,13 @@ decides when the long-term average of `φ` is fed (section 3.3).
 | Situation | Kind | `φ` used | Source shown |
 |---|---|---|---|
 | `supply_temperature` known | — | from the averaged supply | `live` |
-| `heat_reason == dhw_active` | — | 0 | `dhw` |
-| `flow_unknown`, `flow_stale` | momentary | the long-term average of `φ` (`WATER_LONG_AVERAGE_S`, 3 days), so the learned model keeps its units; 1 if none exists yet | `average` |
+| `heat_reason == dhw_active`, with a known supply or after data were seen | — | 0 | `dhw` |
+| `flow_unknown`, `flow_stale`, after data were seen | momentary | the long-term average of `φ` (`WATER_LONG_AVERAGE_S`, 3 days), so the learned model keeps its units; 1 if none exists yet | `average` |
 | an unknown reason, or no data at all, after data were seen | momentary for `WATER_NO_DATA_LASTING_S` (24 h), then lasting | as momentary, then as lasting | `average`, then `lasting` |
 | `not_mapped`, `circuit_not_measured`, `several_circuits` | lasting | 1, as without the interface | `lasting` |
-| no data since the start | — | 1 | `none` |
-| electric heating type | — | 1 | `unused` |
+| no data since the start (any reason but a lasting one) | — | 1 | `none` |
+| after a lasting reason, until a supply is known again | — | 1 | `lasting` |
+| electric heating type | — | 1 | — (no `water` block) |
 
 The long-term average follows `φ` only while the boiler heats (`heat_available` true; without
 that signal, while `φ ≥ WATER_NO_HEAT`): days of an idle boiler do not drag it down. No data
@@ -148,10 +151,11 @@ its zones) counts as lasting.
    losses. Pauses come only from Smart Boiler, through `vtherm_smartpi.set_smartpi_learning`,
    as before. The dead-time estimator, which times the response to switching the emitter on
    or off and accepts only strong steps, gets the command itself (0 during hot water).
-3. **Power limit and timing.** With `φ < 1` the most the emitter can give at full command is
-   `max(φ, WATER_NO_HEAT)` × `max_on_percent`: the output is limited to it
-   (`_apply_soft_constraints`), and the anti-windup tracking, which compares the model with
-   the realized power, sees that limit. A demand above it is shown as `water_too_cold`. The
+3. **Power limit and timing.** With `φ < 1` the output is limited to
+   `max(φ, WATER_NO_HEAT)` × `max_on_percent` (`_apply_soft_constraints`): what a full command
+   gives, the floor `WATER_NO_HEAT` letting the command still reach `max_on_percent` when the water
+   brings next to no heat. The anti-windup tracking, which compares the model with the realized
+   power, sees that limit. A demand above it is shown as `water_too_cold`. The
    minimal activation delay and the valve's activation floor are checked on the command, not
    on the power.
 4. **Hot water and cold water.** While hot water has priority (`dhw_active`), the emitter's
@@ -165,13 +169,20 @@ its zones) counts as lasting.
    applied, rounded to 0.001. Otherwise (`none`, `lasting`, electric type) the key is absent:
    its presence tells Smart Boiler that this thermostat uses the water data, and Smart Boiler
    then skips its learning pause on large water swings.
-6. **Data appearing or going for good.** When the water data start being used (first data, or
-   a lasting reason ending) or stop for good (a lasting reason), the learned power changes
-   units. If SmartPI has a learned model (it is past its learning phase), it raises a Home
-   Assistant repair, "Water temperature data are now available" or "… are no longer
-   available". Its one step has **Reset the learned model**, checked by default; confirming
-   calls `vtherm_smartpi.reset_smartpi_learning` for the thermostat. Nothing is rescaled. A
-   momentary gap never raises it.
+6. **Data appearing or going for good.** When the water data start being used (first data, or a
+   known supply after a lasting gap) or stop for good (a lasting reason, or no data for 24 h), the
+   learned power changes units. If SmartPI has a learned model (it is past its learning phase), it
+   raises a Home Assistant repair, "Water temperature data are now available" or "… are no longer
+   available". Its one step has **Reset the learned model**, checked by default; confirming calls
+   `vtherm_smartpi.reset_smartpi_learning` for the thermostat. Nothing is rescaled. A momentary gap
+   never raises it. A change of the heating type drops what the water input knew (section 7), so a
+   change to a water type offers the reset at the first data, if SmartPI has a learned model; a
+   change to an electric type offers nothing.
+7. **Power in the diagnostics.** With water data the values of the `power` block (`pi_percent`,
+   `ff_percent`, `command_percent`, `limited_percent`, `applied_percent`, the `linear_*` values)
+   and the history series `power.command_percent` and `power.applied_percent` are power at the
+   reference water; `current_cycle_percent` and `next_cycle_percent` are the command sent to the
+   emitter.
 
 ## 4. Components
 
@@ -180,7 +191,7 @@ its zones) counts as lasting.
 | `WaterInput` | `smartpi/water_input.py` | Pure logic, no HA: the factor, the 15-min supply average, the long-term average of `φ`, the gap rules, the availability (`none`, `used`, `lasting`) and its changes for good; persistence. |
 | `WaterReading`, `WaterState` | `smartpi/water_input.py` | What Smart Boiler gave; the factor in use, its source, the averaged supply, the reasons, `no_heat`, `changed_for_good`. |
 | `SmartPIHandler._read_water` | `handler.py` | Reads the manager or the public API, checks types; any failure gives `None`. |
-| `SmartPIHandler.control_heating` | `handler.py` | Before each calculation of a water type: `algo.update_water(...)`; on a change for good, `_offer_model_reset`. |
+| `SmartPIHandler._update_water` | `handler.py` | Before each calculation of a water type (from `control_heating`, and from `_control_as_source` for a zone's additional source): `algo.update_water(...)`; on a change for good, `_offer_model_reset`. |
 | `SmartPIHandler.update_attributes` | `handler.py` | Writes or removes `water_factor` in `specific_states`. |
 | `SmartPI.update_water`, `_apply_water_state` | `algo.py` | Applies the factor; starts and ends the no-heat hold; refreshes the committed power. |
 | `SmartPI._to_actuator_power`, `_water_command`, `_to_linear_power` | `algo.py` | Command = power / `max(φ, WATER_NO_HEAT)` (or the held command); power = command × `φ`. With water data the committed command is the reference and its power follows the factor. |
@@ -196,12 +207,12 @@ flowchart TD
     A[control_heating] --> B{heating type uses water?}
     B -- no --> K[calculate as before, factor 1]
     B -- yes --> C[_read_water: feature manager, else public API]
-    C --> D[WaterInput.update: average, factor, gap rules]
-    D --> E{changed for good and model learned?}
+    C --> D[SmartPI.update_water: WaterInput.update, average, factor, gap rules]
+    D --> G[SmartPI._apply_water_state]
+    G --> E{changed for good and model learned?}
     E -- yes --> F[repair: offer the model reset]
-    E -- no --> G[SmartPI._apply_water_state]
-    F --> G
-    G --> H{hot water, or next to no heat?}
+    E -- no --> H{hot water, or next to no heat?}
+    F --> H
     H -- hot water --> I[hold the command and the integral]
     H -- next to no heat --> I2[hold the integral only]
     H -- no --> J[release the hold if it was ours]
@@ -236,21 +247,24 @@ sequenceDiagram
     participant SB as Smart Boiler
     participant H as SmartPI handler
     participant A as SmartPI algorithm
-    SB->>H: supply 52 degC, heat available
-    H->>A: update_water: factor 0.74 (live)
+    H->>SB: read the zone's water
+    SB-->>H: supply 52 degC, heat available
+    H->>A: update_water: factor 0.74 (live, radiator, room 20.3 degC)
     A->>A: command = power / 0.74
-    SB->>H: heat_reason dhw_active
+    H->>SB: read the zone's water
+    SB-->>H: heat_reason dhw_active
     H->>A: update_water: factor 0, no heat
     A->>A: hold the command and the integral
-    SB->>H: supply 50 degC, heat available
-    H->>A: update_water: factor from the average again
+    H->>SB: read the zone's water
+    SB-->>H: supply 50 degC, heat available
+    H->>A: update_water: factor from the averaged supply again (live)
     A->>A: release the hold
 ```
 
 ## 7. Persistent state
 
-`SmartPI.save_state()` gains a `water` key once the water input has seen data (so a
-thermostat without water data keeps the previous format):
+`SmartPI.save_state()` gains a `water` key once the water input has seen data or a lasting
+reason (so a thermostat without water data keeps the previous format):
 
 | Field | Meaning |
 |---|---|
@@ -289,11 +303,11 @@ For a water type, the published diagnostics (`live`) gain a `water` block:
 | `tests/test_smartpi_sim_water.py` | Simulated rooms heated by water (`tests/sim/boiler.py`: heating curve, burner cycling, hot-water priority, and a stand-in of Smart Boiler's public API): with the water data SmartPI learns the radiator's power at the reference water (without them it learns a weaker radiator); during hot water the integral and the command stay still; a momentary gap keeps the units, a lasting one gives 1 and offers the reset once; a boiler that fires only on demand (cold water between calls) does not lock the zone. |
 
 In the simulator a boiler (`SimBoiler`) feeds the zone's emitter: the plant's heater gives
-`a · u · φ_plant(t)` with the same emitter law, the water following a heating curve with an
-optional burner saw-tooth, hot-water windows, and an on-demand mode in which the water is at
-the boiler room's temperature unless the zone called for heat in the last 20 minutes; `SimSmartBoiler` answers `zone_water` with
-the boiler's flow rounded to 0.1 °C, `dhw_active` during hot water, and reasons a test forces
-for a time window.
+`a · u · φ_plant(t)` with the same emitter law, the water following a heating curve with an optional burner
+saw-tooth, hot-water windows, and an on-demand mode in which the water is at the boiler room's
+temperature unless the zone called for heat in the last 20 minutes; `SimSmartBoiler` answers
+`zone_water` with the boiler's flow rounded to 0.1 °C, `dhw_active` during hot water, and reasons a
+test forces for a time window.
 
 ## 10. Constants, limits and open points
 
@@ -322,4 +336,5 @@ for a time window.
   happens at run time, outside any options flow, and a repair is how an integration offers a
   step to the user then.
 - **Smart Boiler's side** (the manager's properties, the public API, reading `water_factor`)
-  is built in the Smart Boiler plugin; until then SmartPI simply finds no data.
+  is implemented in the Smart Boiler plugin; without Smart Boiler, or with a version without
+  it, SmartPI simply finds no data.

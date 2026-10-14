@@ -530,7 +530,8 @@ WATER_NO_DATA_LASTING_S = 24 * 3600.0
 # --- Second heat source: its heat as a known input of the lead ---
 # x_f below this: the source's heat counts as absent (learning is not gated).
 SOURCE_X_OFF = 0.05
-# A window teaches a_f only when the source's weighted x_f reaches this.
+# The source_heat gate pauses SmartPI's learning from this x_f; a neighbour's
+# window counts for the source's column only when its weighted x_f reaches it.
 SOURCE_X_MIN = 0.2
 # Largest credible a_f (degC/min at full power).
 SOURCE_A_F_MAX = 0.5
