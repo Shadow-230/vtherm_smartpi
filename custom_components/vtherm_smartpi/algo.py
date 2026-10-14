@@ -92,7 +92,16 @@ from .smartpi.autocalib import AutoCalibTrigger, AutoCalibEvent
 from .smartpi.deadtime_estimator import DeadTimeEstimator
 from .smartpi.ab_estimator import ABEstimator
 from .smartpi.thermal_twin_1r1c import ThermalTwin1R1C
-from .smartpi.water_input import WaterInput, WaterReading, WaterState
+from .smartpi.water_input import SOURCE_LIVE, WaterInput, WaterReading, WaterState
+from .smartpi.const import BOILER_CALL_GRACE_S
+from .smartpi.boiler_call import (
+    GATE_BOILER_SETTLING,
+    MODE_COOLING,
+    MODE_HELD,
+    MODE_WARMING,
+    BoilerCall,
+    BoilerReading,
+)
 from .smartpi.const import (
     AB_CONFIDENCE_MIN_SAMPLES_A,
     AB_CONFIDENCE_MIN_SAMPLES_B,
@@ -358,6 +367,10 @@ class SmartPI:
         self._water_factor: float = 1.0
         # Actuator command held while hot water has priority (None: not held).
         self._water_hold_actuator: float | None = None
+        # Whether the boiler heats a calling zone (documentation/en/water_input.md,
+        # section 11): its learning mode around a hold.
+        self.boiler = BoilerCall()
+        self._boiler_mode: str | None = None
         # The integral is held: hot water, or water bringing next to no heat.
         self._water_integral_hold: bool = False
         # The demand exceeded what the water can give at full command.
@@ -730,7 +743,10 @@ class SmartPI:
 
         self._learning_enabled = enabled
         self._reset_learning_window()
-        self.dt_est.reset_observation(self._committed_on_percent)
+        # Under a boiler that is not called the estimator is fed 0 (water_input.md, section 11).
+        self.dt_est.reset_observation(
+            0.0 if self._boiler_mode in (MODE_COOLING, MODE_HELD) else self._committed_on_percent
+        )
         self._heat_request_prev = False
         self._t_heat_episode_start = None
         self._t_cool_episode_start = None
@@ -1036,7 +1052,8 @@ class SmartPI:
                 self.dependency_model.record_realized_power(
                     cycle_end_now - elapsed_s,
                     cycle_end_now,
-                    self._to_linear_power(clamp(float(e_eff), 0.0, 1.0)),
+                    # Under a boiler that is not called, the cycle gave no heat.
+                    0.0 if self._boiler_mode in (MODE_COOLING, MODE_HELD) else self._to_linear_power(clamp(float(e_eff), 0.0, 1.0)),
                     switched=not self._valve_mode_enabled,
                     level=self._water_factor,
                 )
@@ -1799,9 +1816,10 @@ class SmartPI:
         """Integral time base for the gains, shortened by the active heat exchanges.
 
         The learned time constant 1/b gains the exchange conductances; a direct
-        heat input does not change the zone dynamics. With an always-connected
-        neighbour the learned b already holds its exchange, so the base is the
-        loss coefficient fitted without it.
+        heat input does not change the zone dynamics. With always-connected
+        neighbours the learned b already holds their exchanges, so the base moves
+        to the loss coefficient fitted without them as they fade in
+        (KnownInputs.loss).
         """
         model = self._effective_model
         if model is None or not model.active or not tau_info.reliable or tau_info.tau_min <= 0.0:
@@ -1810,7 +1828,7 @@ class SmartPI:
         if conductance <= 0.0:
             return tau_info.tau_min
         inputs = self._known_inputs
-        loss = inputs.loss_coefficient if inputs is not None else None
+        loss = inputs.loss(1.0 / tau_info.tau_min) if inputs is not None else None
         base = loss if loss is not None and loss > 0.0 else 1.0 / tau_info.tau_min
         return 1.0 / (base + conductance)
 
@@ -1830,6 +1848,20 @@ class SmartPI:
         dead-time observation in progress. A failing provider leaves the learned
         model unchanged.
         """
+        # A calling zone whose boiler is not called gets no heat: learning sees the
+        # power 0. The zone calls when its device gets a command (with cold water its
+        # power is near 0).
+        boiler_mode = self.boiler.update(
+            calling=self._actuator_committed_on_percent > 0.0,
+            heating=hvac_mode == VThermHvacMode_HEAT,
+            now_s=now_monotonic,
+            # A switched device is counted for the boiler only while on: its cycle is added.
+            grace_s=BOILER_CALL_GRACE_S + (0.0 if self._valve_mode_enabled else float(self._cycle_min) * 60.0),
+        )
+        if boiler_mode in (MODE_COOLING, MODE_HELD) and self.calibration_mgr.is_calibrating:
+            # A calibration times the response to heat that does not come.
+            _LOGGER.info("%s - The boiler is not called: calibration cancelled", self._name)
+            self.calibration_mgr.cancel()
         inputs = None
         if self._known_inputs_enabled and self._known_inputs_provider is not None:
             try:
@@ -1858,6 +1890,7 @@ class SmartPI:
                             target_temp=target_temp,
                             lead_power_cap=min(self._max_on_linear(), self.source_power_cap),
                             lead_cycle_s=float(self._cycle_min) * 60.0,
+                            heat_withheld=boiler_mode is not None,
                         ),
                     )
                 else:
@@ -1870,12 +1903,23 @@ class SmartPI:
         self._apply_zone_fit(hvac_mode)
 
         gate = inputs.learning_gate if inputs is not None else None
-        if (gate is None) != (self._learning_gate is None):
+        if gate is None and boiler_mode in (MODE_COOLING, MODE_WARMING):
+            gate = GATE_BOILER_SETTLING
+        if boiler_mode != self._boiler_mode:
+            # The boiler's call changing for the zone: the learning window closes, and
+            # the dead-time estimator starts again from the input it will now get: it
+            # drops the step it may be timing (a call that got no heat) and does not
+            # time the boiler's start after a hold, whose delay is the water's.
+            self.learn_win.reset()
+            no_heat = boiler_mode in (MODE_COOLING, MODE_HELD)
+            self.dt_est.reset_observation(0.0 if no_heat else self._deadtime_power())
+        elif (gate is None) != (self._learning_gate is None):
             # Observations spanning a gate edge mix two regimes. Only learning is
             # reset: the control law's dead-time episode markers stay untouched.
             self.learn_win.reset()
             self.dt_est.reset_observation(self._committed_on_percent)
         self._learning_gate = gate
+        self._boiler_mode = boiler_mode
 
     def _apply_zone_fit(self, hvac_mode: VThermHvacMode | None) -> None:
         """A zone with two sources: SmartPI starts from the zone's joint fit and keeps it.
@@ -2066,7 +2110,8 @@ class SmartPI:
 
     @property
     def learning_gate(self) -> str | None:
-        """Reason why the dependency layer pauses learning, or None."""
+        """Reason why the dependency layer, or the boiler's call (``boiler_settling``),
+        pauses learning, or None."""
         return self._learning_gate
 
     def dependency_diagnostics(self) -> Dict[str, Any] | None:
@@ -2128,8 +2173,23 @@ class SmartPI:
     def configure_heating_type(self, heating_type: str | None) -> None:
         """Set the thermostat's heating type (a water type uses Smart Boiler's water data)."""
         self.water.configure(heating_type)
+        self.boiler.configure(heating_type)
         if not self.water.uses_water:
             self._apply_water_state(WaterState())
+
+    def update_boiler(self, reading: BoilerReading | None) -> None:
+        """The boiler's call read for this calculation (None: not known)."""
+        self.boiler.set_reading(reading)
+
+    @property
+    def boiler_mode(self) -> str | None:
+        """How learning treats the boiler's call: ``emitter_cooling``, ``held``,
+        ``emitter_warming`` or None (documentation/en/water_input.md, section 11)."""
+        return self._boiler_mode
+
+    def boiler_diagnostics(self) -> dict | None:
+        """The boiler block of the diagnostics (None without any reading of its call)."""
+        return self.boiler.diagnostics()
 
     def update_water(self, reading: WaterReading | None, room_c: float | None) -> WaterState:
         """Apply the water data read for this calculation (None: no data now)."""
@@ -2156,6 +2216,27 @@ class SmartPI:
             # The committed command now brings another power: learning and the
             # dead-time observation follow the power.
             self._committed_on_percent = self._to_linear_power(self._actuator_committed_on_percent)
+
+    def _learning_power(self) -> float:
+        """The power learning sees: 0 under a boiler that is not called.
+
+        With water data the power is already the command times the water's factor,
+        which follows the water as it cools and warms: it stays as it is.
+        """
+        if self._boiler_mode == MODE_HELD and self.water.state.source != SOURCE_LIVE:
+            # Without a live water reading (no data, or the long-term average during
+            # a gap) nothing says the water is cold: no heat comes.
+            return 0.0
+        return self._committed_on_percent
+
+    def _deadtime_input(self) -> float:
+        """The dead-time estimator's input: 0 while the zone is held.
+
+        It then keeps recording the temperature, which the learning windows read,
+        and sees no step: there is no response to time. While the emitter cools or
+        warms the ``boiler_settling`` gate pauses it.
+        """
+        return 0.0 if self._boiler_mode in (MODE_COOLING, MODE_HELD) else self._deadtime_power()
 
     def _deadtime_power(self) -> float:
         """Applied output for the dead-time estimator: the command step, not its power.
@@ -3721,6 +3802,9 @@ class SmartPI:
         # command, and nothing is regulated or learned.
         if self._executive is not None:
             self._set_linear_output(self._executive["command"])
+            # Its boiler's call does not apply to a command that is not its own.
+            self.boiler.update(calling=False, heating=False, now_s=now)
+            self._boiler_mode = None
             return
 
         # --- Known model inputs and the reaction to a neighbour's open window ---
@@ -3877,7 +3961,7 @@ class SmartPI:
                 now=now,
                 tin=t_int_lp,
                 sp=target_temp_filt,
-                u_applied=self._deadtime_power(),
+                u_applied=self._deadtime_input(),
                 max_on_percent=self._max_on_percent if self._max_on_percent is not None else 1.0,
                 is_hysteresis=False,
                 hvac_mode=hvac_mode,
@@ -3889,7 +3973,7 @@ class SmartPI:
                 dt_min=dt_min,
                 current_temp=t_int_clean,
                 ext_temp=ext_current_temp,
-                u_active=self._committed_on_percent,
+                u_active=self._learning_power(),
                 setpoint_changed=setpoint_changed,
                 hvac_mode=hvac_mode,
                 target_temp=target_temp,
@@ -3949,7 +4033,7 @@ class SmartPI:
                     now=now,
                     tin=t_int_lp,
                     sp=target_temp_filt,
-                    u_applied=self._deadtime_power(),
+                    u_applied=self._deadtime_input(),
                     max_on_percent=self._max_on_percent if self._max_on_percent is not None else 1.0,
                     is_hysteresis=True,
                     hvac_mode=hvac_mode,
@@ -4167,6 +4251,9 @@ class SmartPI:
             self._ff_trim.freeze("perturbed")
         elif is_degraded:
             self._ff_trim.freeze("degraded")
+        elif self._boiler_mode is not None:
+            # Around a hold the command is not the heat: no evidence for the trim.
+            self._ff_trim.freeze("boiler_not_heating")
         else:
             self._ff_trim.unfreeze()
 

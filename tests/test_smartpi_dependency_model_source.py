@@ -427,6 +427,53 @@ def test_the_fit_its_response_and_the_learning_clock_survive_a_restart() -> None
     assert restarted._source.learn_elapsed_s["cool"] == pytest.approx(3600.0)
 
 
+def test_a_fit_known_before_a_restart_is_fully_in_the_model() -> None:
+    """After a restart the neighbours' k it gives and its a_f, in heating and in cooling, enter at once."""
+    from custom_components.vtherm_smartpi.smartpi.dependency_inputs import NeighbourObservation, NeighbourReading
+
+    state = DependencyState()
+    item = state.for_item("s1")
+    fitted = replace(_fit(k=(("hall", 0.002),)), k_se=(("hall", 0.0002),))
+    for key in ("zone_fit", "zone_fit_cool"):
+        engine = _model()._source.fits["heat"]
+        engine.result = fitted
+        item[key] = engine.save_state()
+    item["x_f"] = 0.5
+    hall = NeighbourObservation(
+        DependencyItem(item_id="hall", kind="neighbour", entity="reg-hall", mode="always"),
+        NeighbourReading(item_id="hall", entity_id="climate.hall", temperature=16.0, available=True, is_thermostat=True),
+    )
+    readings = DependencyReadings(
+        neighbours=(hall,), source=SourceObservation("s1", "climate.floor", True, (), 1.0)
+    )
+
+    restarted = _model(state)
+    inputs = restarted.update(readings, _ctx(now_s=0.0))
+
+    assert inputs.exchanges[0].conductance == pytest.approx(0.002)
+    assert inputs.heats[0].rate == pytest.approx(0.03 * restarted._source.x_f)
+    assert restarted._fade_weight(restarted._source.key(VThermHvacMode_COOL), 0.0) == 1.0
+
+
+def test_an_always_connected_exchange_of_the_fit_is_in_the_model_at_once() -> None:
+    """The fit's b, which replaces SmartPI's at once, leaves the exchange out: its k does not fade in."""
+    from custom_components.vtherm_smartpi.smartpi.dependency_inputs import NeighbourObservation, NeighbourReading
+
+    model = _model()
+    hall = NeighbourObservation(
+        DependencyItem(item_id="hall", kind="neighbour", entity="reg-hall", mode="always"),
+        NeighbourReading(item_id="hall", entity_id="climate.hall", temperature=16.0, available=True, is_thermostat=True),
+    )
+    readings = DependencyReadings(neighbours=(hall,), source=SourceObservation("s1", "climate.floor", True, (), 1.0))
+    model.update(readings, _ctx(now_s=0.0))
+    _published(model, replace(_fit(k=(("hall", 0.002),)), k_se=(("hall", 0.0002),)))
+
+    inputs = model.update(readings, _ctx(now_s=60.0))
+
+    assert inputs.exchanges[0].conductance == pytest.approx(0.002)
+    assert inputs.loss_coefficient is None
+
+
 def test_an_older_single_learning_clock_counts_for_heating() -> None:
     state = DependencyState()
     state.for_item("s1")["learn_elapsed_s"] = 7200.0

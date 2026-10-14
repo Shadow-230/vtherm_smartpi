@@ -4,13 +4,16 @@ This document describes how SmartPI uses the temperature of the water reaching a
 thermostat's emitters. It is in two parts: the consumer specification (what SmartPI reads,
 how it turns it into a factor and what it does with it; sections 2–3) and the technical
 description (components, one calculation, lifecycle, persistence, diagnostics, tests;
-sections 4–10). The PI controller, its feed-forward and its own learning are described in
+sections 4–10). Section 11 covers a boiler that is not called while the zone calls for heat. The
+PI controller, its feed-forward and its own learning are described in
 the [technical documentation](technical_doc.md).
 
 The data come from the Smart Boiler plugin, whose
 [water interface specification](https://github.com/Shadow-230/vtherm-smart-boiler/blob/dev/documentation/en/water-interface.md)
 is binding for the names, types and values read here. Without Smart Boiler, or without
-water data for a thermostat, SmartPI behaves exactly as before.
+water data for a thermostat, SmartPI behaves exactly as before. Whether the boiler is called comes
+from Smart Boiler or, where Versatile Thermostat's own central boiler drives it, from VTherm
+(section 11).
 
 Abbreviations: Home Assistant (HA), Versatile Thermostat (VTherm), domestic hot water (DHW).
 
@@ -26,6 +29,7 @@ Abbreviations: Home Assistant (HA), Versatile Thermostat (VTherm), domestic hot 
 8. [Diagnostics](#8-diagnostics)
 9. [Testing](#9-testing)
 10. [Constants, limits and open points](#10-constants-limits-and-open-points)
+11. [A boiler that is not called](#11-a-boiler-that-is-not-called)
 
 ## 1. Overview
 
@@ -199,6 +203,9 @@ its zones) counts as lasting.
 | `SmartPI._apply_soft_constraints` | `algo.py` | Power limit `max_on_percent × max(φ, WATER_NO_HEAT)`; `water_too_cold`. |
 | `WaterModelResetFlow` | `repairs.py` | The repair's step: reset the learned model (checked by default). |
 | Heating type | `config_flow.py`, `const.py` | The `smart_pi_heating_type` selector in the regulator settings. |
+| `BoilerCall`, `BoilerReading` | `smartpi/boiler_call.py` | Pure logic: the boiler's call, the learning mode (`emitter_cooling`, `held`, `emitter_warming`), the grace and the settling time from the heating type, the `boiler` diagnostics (section 11). |
+| `SmartPIHandler._read_boiler`, `vtherm_central_boiler_on` | `handler.py` | Smart Boiler's `boiler_called`, `call_reason` and demand fields, else VTherm's central boiler for a thermostat it serves; for a water heating type only. |
+| `SmartPI.update_boiler`, `_read_known_inputs`, `_learning_power`, `_deadtime_input` | `algo.py` | The learning mode at each calculation: learning with the power 0 while held, the `boiler_settling` gate while the emitter cools or warms, the dead-time estimator's input and steps, the feed-forward trim frozen, the dependency layer told (`heat_withheld`), a cycle's realized power recorded as 0. |
 
 ## 5. One calculation
 
@@ -292,6 +299,16 @@ For a water type, the published diagnostics (`live`) gain a `water` block:
 | `low_heat` | The water brings next to no heat: the integral is held. |
 | `water_too_cold` | The demand exceeded what the water gives at full command. |
 
+Where the boiler's call is known (section 11), `live` also gains a `boiler` block:
+
+| Field | Meaning |
+|---|---|
+| `source` | `smart_boiler` or `vtherm_central_boiler`. |
+| `called` | Whether the boiler is called for heating now. |
+| `reason` | Why it is not: Smart Boiler's `call_reason`, or `not_called` for VTherm's central boiler. |
+| `learning` | `emitter_cooling`, `held`, `emitter_warming` or `null` (section 11.2). |
+| `demand` | From Smart Boiler, the demand against its thresholds it gave: `demand_count`, `count_threshold`, `count_by`, `demand_power_kw`, `power_threshold_kw`, `demand_opening`, `opening_threshold`. |
+
 ## 9. Testing
 
 | Test file | What it checks |
@@ -300,6 +317,10 @@ For a water type, the published diagnostics (`live`) gain a `water` block:
 | `tests/test_smartpi_water_algo.py` | No change without data; command = power / `φ`, learning = command × `φ`; the committed power follows a new factor; the power limit and `water_too_cold`; the hold of the command and the integral during hot water (the integral mode is the water's hold; a zero demand still gives zero), re-asserted, and not releasing another hold; cold water from an idle boiler holds the integral only and the command reaches 1; the learning phase commits the power and gives the dead-time estimator the command; the activation delay on the command; the feed-forward trim records the power; electric type; diagnostics and persistence; the learning reset keeps the averages. |
 | `tests/test_smartpi_water_handler.py` | The public API by `entity_id`; the feature manager first; the API when the thermostat has no manager; every failure is no data; badly typed fields; `water_factor` published while water data are used (also the average during a momentary gap) and absent otherwise; the reset offered when data appear or go for good with a learned model only, never on a momentary gap. |
 | `tests/test_config_flow_heating_type.py` | The heating type in the regulator settings (default, options), stored by the options flow; the repair step resets the model only when checked; the English texts. |
+| `tests/test_smartpi_boiler_call.py` | The modes: a call answered within the grace changes nothing, a short stop of a working boiler neither; an unanswered call cools the emitter, then holds; the start after a hold warms it; the zone's command off ends them; a call not known; Smart Boiler's `below_threshold` and `no_demand`; outside heating; the settling time by heating type; the diagnostics with the demand. |
+| `tests/test_smartpi_boiler_algo.py` | Learning gets the power 0 while held and waits while the emitter cools or warms; the dead-time estimator gets 0 and does not time the boiler's start; the feed-forward trim frozen and released; a cycle's realized power recorded as 0; the dependency layer told; nothing changes without a reading. |
+| `tests/test_smartpi_boiler_handler.py` | Each of Smart Boiler's reasons from the API and the manager; its demand fields, badly typed ones left out; VTherm's central boiler when Smart Boiler says nothing (no fields, `None` with `not_controlling` or `waiting_data`, an unknown reason, a wrong type), only for a thermostat it serves; its binary sensor read in Home Assistant; an electric heating type reads nothing. |
+| `tests/test_smartpi_sim_boiler_call.py` | A zone under a 2500 W start threshold, fired by the other zones outside a window of the day, with VTherm's central boiler and with Smart Boiler's call over its water data (section 11.4). |
 | `tests/test_smartpi_sim_water.py` | Simulated rooms heated by water (`tests/sim/boiler.py`: heating curve, burner cycling, hot-water priority, and a stand-in of Smart Boiler's public API): with the water data SmartPI learns the radiator's power at the reference water (without them it learns a weaker radiator); during hot water the integral and the command stay still; a momentary gap keeps the units, a lasting one gives 1 and offers the reset once; a boiler that fires only on demand (cold water between calls) does not lock the zone. |
 
 In the simulator a boiler (`SimBoiler`) feeds the zone's emitter: the plant's heater gives
@@ -328,22 +349,22 @@ test forces for a time window.
   [Zone dependencies and a second heat source, §6.2 and §6.7](zone_dependencies.md#6-a-second-heat-source).
 - **A boiler start threshold** (Versatile Thermostat's central boiler, or Smart Boiler, set to fire
   only above a total power or a valve opening, with the zone count off): a zone whose demand stays
-  below it calls for heat that does not come, and nothing tells SmartPI why. Its command is
-  counted as power from the device's power in Versatile Thermostat (2000 W at 20 % is 400 W, under
-  a 600 W threshold).
-  - Without water data SmartPI takes its command for heat: windows with the valve open and no
-    heat can lower its `a`, and the integral and the feed-forward trim rise until the command
-    crosses the threshold; the boiler then fires in short bursts. In a trial simulation outside the
+  below it calls for heat that does not come. Its command is counted as power from the device's
+  power in Versatile Thermostat (2000 W at 20 % is 400 W, under a 600 W threshold). Told that the
+  boiler is not called, SmartPI no longer learns from it once the call has gone unanswered for
+  longer than the grace (section 11); its regulation is unchanged:
+  - Not told, without water data, SmartPI takes its command for heat. Told or not, the integral
+    rises until the command crosses the threshold; the boiler then fires in short bursts. In a trial simulation outside the
     test suite (one zone needing a 20 % opening) a 35 % threshold gave about 5 starts per hour and
     twice the integral, and with 70 % the zone stayed 0.2 to 0.7 degC below its setpoint for 30 h.
   - With water data the cooling water lowers `φ` within the 15-min average, so learning stops
     counting the missing heat; but the command `power / φ` then rises above the threshold and falls
     back once the water is warm: about 10 starts per hour with 2-min burns at a 35 % threshold.
-  - `heat_available` false (`flame_off`) cannot tell this apart from an ordinary burner pause. A
-    start hysteresis on the boiler's side removed the cycling in the same simulation (0.7 starts
-    per hour, 68-min burns). A reason from Smart Boiler for "held below the start threshold", with
-    low-load firing on its side, would let SmartPI hold its integral and keep its command: open, to
-    be decided together with Smart Boiler.
+  - `heat_available` false (`flame_off`) cannot tell this apart from an ordinary burner pause: the
+    boiler's call (section 11) can. A start hysteresis on the boiler's side removed the cycling in
+    the same simulation (0.7 starts per hour, 68-min burns); low-load firing on Smart Boiler's
+    side, with SmartPI holding its integral and keeping its command while the boiler is not called,
+    is open, to be decided together with Smart Boiler.
   - With a single active zone enough to fire the boiler (the default count of 1), none of this
     happens.
 - **Dead time with an on-demand boiler**: an "on" step made with cold water includes the
@@ -354,3 +375,150 @@ test forces for a time window.
 - **Smart Boiler's side** (the manager's properties, the public API, reading `water_factor`)
   is implemented in the Smart Boiler plugin; without Smart Boiler, or with a version without
   it, SmartPI simply finds no data.
+
+## 11. A boiler that is not called
+
+A boiler may fire only once the zones' demand meets its start criteria — a number of calling
+devices or zones, their total power, the widest valve opening — and after an activation delay. A
+zone under them calls for heat that does not come. Taking its command for heat, SmartPI learns a
+weaker emitter (`a`), a wrong dead time and a bias of its feed-forward trim: in a simulation of a
+zone calling through a night without the boiler, its learned `a` fell to 1 % of the truth
+(section 11.4). Smart Boiler's `heat_available` cannot tell this case apart: `flame_off` also comes
+with every ordinary burner pause while the boiler is called.
+
+### 11.1 Where the boiler's call comes from
+
+```mermaid
+flowchart TD
+    A[Control call of a thermostat with a water heating type] --> B{Smart Boiler gives boiler_called?}
+    B -- "True, or False with a known call_reason" --> S[Smart Boiler's call]
+    B -- "no field, None, an unknown reason, a wrong type" --> C{VTherm counts the thermostat for its central boiler?}
+    C -- yes --> D{Central boiler sensor on or off?}
+    D -- on or off --> V[VTherm's call]
+    D -- "unknown, unavailable, no such sensor" --> N[Not known: learning as before]
+    C -- no --> N
+```
+
+| Source | When | Values |
+|---|---|---|
+| Smart Boiler: `boiler_called`, `call_reason` of its water interface (the feature manager or `zone_water`) | Smart Boiler controls the boiler | `True`; `False` with `below_threshold` (zones call under the count, power and opening criteria), `no_demand` (no zone calls), `activation_delay` or `boiler_fault` |
+| Versatile Thermostat's central boiler: its binary sensor (unique ID `central_boiler_state`) | Smart Boiler says nothing (`None` with `not_controlling` or `waiting_data`, an older version without the fields, an unknown reason, a wrong type), and VTherm counts the thermostat for its central boiler (`is_used_by_central_boiler`) | on, or off (`not_called`) |
+| none | otherwise, and for an electric heating type | SmartPI learns as before (after a hold, once the emitter has warmed) |
+
+- Smart Boiler and VTherm's central boiler do not control the boiler together: Smart Boiler
+  keeps its own control off while VTherm's central boiler is set up. With Smart Boiler in control
+  the fallback finds no VTherm boiler, and SmartPI learns as before until Smart Boiler publishes
+  its fields.
+- `True` means the boiler is commanded to heat; a burner pause or hot water with priority stays in
+  `heat_available` and `heat_reason` (section 3).
+- VTherm's sensor follows VTherm's decision after its activation delay: the device count and power
+  thresholds, and every other zone calling.
+- Smart Boiler's fields were agreed with the Smart Boiler project on 2026-10-14 and are read
+  defensively until it publishes them. Its demand fields (`demand_count`, `count_threshold`,
+  `count_by`, `demand_power_kw`, `power_threshold_kw`, `demand_opening`, `opening_threshold`) go to
+  the diagnostics only.
+
+### 11.2 Learning around a hold
+
+With `u` the command of the zone's device, `called` the boiler's call, `t0` the start of the
+zone's call left unanswered and `t1` the boiler's start after a hold:
+
+    calling     = heating  and  u > 0
+    grace       = BOILER_CALL_GRACE_S (15 min), plus the cycle for a switched device
+    t_settle    = L + 3·tau of the heating type's emitter (radiator 65 min, water floor 570 min)
+
+    emitter_cooling   calling, not called since t0, t0 + grace <= t < t0 + t_settle
+                      (or at once when the boiler stops again while the emitter warms)
+    held              calling, not called since t0, t >= t0 + t_settle
+    emitter_warming   calling, called again (or the call no longer known) at t1 after
+                      emitter_cooling or held, t < t1 + t_settle
+
+- **A boiler answering the zone's call within the grace** — an on-demand boiler, VTherm's
+  activation delay of at most 10 min — changes nothing: the zone's own step, with the boiler's
+  reaction in it, is learned as before. So does a boiler already at work, or one cycling with
+  stops shorter than the grace: its water stays warm. A switched device is counted for the boiler
+  only while it is on, so the off part of its cycle is no stop of the boiler's answer: its cycle is
+  added to the grace.
+- **Emitter cooling.** The boiler has stopped under a calling zone (or never answered): the
+  circuit's pump stops a few minutes later and the emitter gives only the heat it holds, which
+  fades with its lag. Learning waits; after three lags less than 5 % is left.
+- **Held.** No heat comes. Learning sees the power 0 (with water data the power is already the
+  command times a factor near 0, and stays as it is): windows of the zone cooling teach `b`, and no
+  sample of `a` is taken.
+- **Emitter warming.** The boiler has started after a hold: its water has to reach the emitter and
+  warm it, while the valve has been open all along — no step of the zone's command that SmartPI's
+  learning would wait for. Learning waits again. The boiler's start is not timed as a dead time
+  either: its delay is the water's, not the valve's, and SmartPI's dead time is the valve's (in
+  the simulation the start's response came in 2 to 5 min, the valve's in 11).
+
+```mermaid
+stateDiagram-v2
+    state "learning as usual" as Normal
+    state "waiting for the boiler: the grace" as Grace
+    state "emitter_cooling: learning paused" as Cooling
+    state "held: learning sees no heat" as Held
+    state "emitter_warming: learning paused" as Warming
+    [*] --> Normal
+    Normal --> Grace: the zone calls, the boiler is not called
+    Grace --> Normal: the boiler is called within the grace
+    Grace --> Cooling: grace over
+    Cooling --> Held: t_settle from t0
+    Cooling --> Warming: the boiler is called, or its call no longer known
+    Held --> Warming: the boiler is called, or its call no longer known
+    Warming --> Cooling: the boiler stops again
+    Warming --> Normal: t_settle from t1
+    Grace --> Normal: the zone's command at 0
+    Cooling --> Normal: the zone's command at 0
+    Held --> Normal: the zone's command at 0
+    Warming --> Normal: the zone's command at 0
+```
+
+| | Grace, learning as usual | `emitter_cooling` | `held` | `emitter_warming` |
+|---|---|---|---|---|
+| `a`, `b` | learned | paused (gate `boiler_settling`) | learned with the power 0: only how the zone cools | paused (gate `boiler_settling`) |
+| Dead-time estimator | as usual | paused (gate) | input 0, no step | paused (gate); then the command again, with no step |
+| Feed-forward trim | runs | frozen (`boiler_not_heating`) | frozen | frozen |
+| Exchanges with neighbours, the zone's fit | learned | paused | paused | paused |
+| A cycle's realized power recorded for them | the cycle's | 0 | 0 | the cycle's |
+
+- Each change of mode discards the open learning window and the dead-time estimator's step in
+  progress (a call that got no heat, or the boiler's start); so does pausing or resuming learning
+  while the zone is held, from the input the estimator gets.
+- A calibration in progress is cancelled once the zone is cooling or held: it would time the
+  response to heat that does not come.
+- A thermostat working as another's additional source follows that thermostat's command, not its
+  own: its mode is cleared.
+- **A boiler cycling under the zone's own threshold** with stops shorter than the grace (the
+  bursts of section 10) is not held: learning takes the command for heat there, as before.
+- **Regulation is unchanged.** The controller still counts its command: the proportional part and
+  the integral rise until the zone's demand meets the boiler's criteria, or the other zones have it
+  called. A zone that needs less than the threshold still makes the boiler cycle, and may stay
+  below its setpoint (section 10): with the boiler's call given, the simulation of a zone needing
+  20 % under a 70 % threshold still sat 0.2 to 0.7 degC low for 30 h. That is the open regulation
+  point, not a learning one.
+- After a change of the heating type, the settling time follows the new emitter.
+
+### 11.3 Diagnostics and state
+
+The `boiler` block of section 8 shows the source, the call, its reason, the learning mode and,
+from Smart Boiler, the demand against the thresholds. Nothing is saved: after a restart the first
+reading starts the modes again.
+
+### 11.4 Results (simulation)
+
+`tests/test_smartpi_sim_boiler_call.py`: a radiator of 2000 W behind a valve, a start threshold of
+2500 W reached only with the other zones (3000 W), which do not call in a window of the day; the
+boiler's water warms with a 4-min lag when it fires and otherwise cools below the room; 0.01 °C
+sensor, 96 h, outdoor 3 °C ± 2 °C.
+
+| Case | Not told | Told |
+|---|---|---|
+| VTherm's central boiler, no water data, no boiler 2:00–8:00 | `a` 0.01 of the truth, `b` 0.98 | `a` 1.06, `b` 0.98 |
+| Smart Boiler with water data, no boiler 10:00–16:00 | `a` 1.05, `b` 0.99 (a trial run; the water data already show the missing heat) | `a` 1.04, `b` 0.98 |
+
+The tests assert the told runs, and that no sample of `a` is learned while the boiler is not
+called; for VTherm's case also that the dead time stays the valve's (11.3 min, against 11.2 min
+and `a` 0.99, `b` 0.98 with the boiler always called). The zone that fires the boiler itself (in SmartPI's learning
+phase, with its command at 100 %) still learns its dead time and leaves the learning phase: its
+call is answered within the grace. With a 0.1 °C sensor SmartPI's own estimator is about 20 % off
+the truth even with the boiler always called, which hides the differences.

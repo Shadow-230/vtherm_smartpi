@@ -133,6 +133,17 @@ def _sign(hvac_mode: VThermHvacMode | None) -> float:
     return -1.0 if hvac_mode == VThermHvacMode_COOL else 1.0
 
 
+def _fit_k(fit: ZoneFitResult) -> dict[str, float]:
+    """The neighbours' k a published fit gives: within (0, COUPLING_K_MAX] and with a
+    relative standard error of at most ZONE_FIT_MAX_REL_SE."""
+    se = dict(fit.k_se)
+    return {
+        item_id: k
+        for item_id, k in fit.k
+        if (s := se.get(item_id)) is not None and 0.0 < k <= COUPLING_K_MAX and s <= ZONE_FIT_MAX_REL_SE * k
+    }
+
+
 def _fit_key(hvac_mode: VThermHvacMode | None) -> str | None:
     """The fit of an HVAC mode: heating, cooling, or none outside them."""
     if hvac_mode == VThermHvacMode_HEAT:
@@ -172,6 +183,9 @@ class ModelContext:
     lead_power_cap: float = 1.0
     # The lead's cycle.
     lead_cycle_s: float = 600.0
+    # The zone calls but its boiler does not heat it: its power is not heat, the
+    # exchanges and the zone's fit learn nothing then.
+    heat_withheld: bool = False
 
 
 class _Source:
@@ -373,6 +387,7 @@ class DependencyModel:
                 ),
                 learning_allowed=(
                     ctx.learning_allowed
+                    and not ctx.heat_withheld
                     and ctx.model_reliable
                     and ctx.deadtime_s is not None
                     and gate != GATE_NEIGHBOUR_WINDOW
@@ -395,12 +410,28 @@ class DependencyModel:
                 # while this mode's fit is known: it starts from the fit at once.
                 self.pending_seed = (_sign(ctx.hvac_mode) * fit.a, fit.b)
 
+        known_k = {obs.item.item_id: self._neighbour_k(obs.item.item_id, fit) for obs in connected}
+        always = [obs.item.item_id for obs in connected if obs.item.mode == MODE_ALWAYS]
+        if fit is None and any(known_k[item_id] is None for item_id in always):
+            # SmartPI's b holds every always-connected exchange, and the fitted loss
+            # leaves them all out: they enter together, once each of them is known.
+            known_k.update(dict.fromkeys(always))
+        elif fit is not None:
+            # The fit's b, which replaces SmartPI's at once, leaves the always-connected
+            # exchanges out: they are in the model at once too.
+            for item_id in always:
+                if known_k[item_id] is not None:
+                    self._known_since[item_id] = -math.inf
         exchanges = []
+        always_k = always_weighted = 0.0
         for obs in connected:
-            k = self._neighbour_k(obs.item.item_id, fit)
+            k = known_k[obs.item.item_id]
             weight = self._fade(obs.item.item_id, k, ctx.now_s)
             if k is not None:
                 exchanges.append(ExchangeInput(obs.item.item_id, weight * k, obs.reading.temperature))
+                if obs.item.mode == MODE_ALWAYS:
+                    always_k += k
+                    always_weighted += weight * k
 
         drive_exchanges = tuple(exchanges)
         if source is not None and fit is not None:
@@ -435,12 +466,15 @@ class DependencyModel:
             self._save_source()
 
         # With the zone's fit SmartPI's b is the fit's, already without the neighbours.
-        always_connected = fit is None and any(obs.item.mode == MODE_ALWAYS for obs in connected)
+        # Without it the fitted loss replaces SmartPI's b at the share of the
+        # always-connected exchanges already in the model: b_eff does not step.
+        always_known = fit is None and always_k > 0.0
         return KnownInputs(
             exchanges=tuple(exchanges),
             heats=tuple(heats),
             learning_gate=gate,
-            loss_coefficient=self._coupling.loss_coefficient() if always_connected else None,
+            loss_coefficient=self._coupling.loss_coefficient() if always_known else None,
+            loss_weight=always_weighted / always_k if always_known else 0.0,
             control_action=action,
             action_setpoint=setpoint,
             status=tuple(self._status(obs, ctx, fit) for obs in readings.neighbours),
@@ -486,14 +520,8 @@ class DependencyModel:
         fitted from few windows.
         """
         if fit is not None:
-            k = dict(fit.k).get(item_id)
-            se = dict(fit.k_se).get(item_id)
-            if (
-                k is not None
-                and se is not None
-                and 0.0 < k <= COUPLING_K_MAX
-                and se <= ZONE_FIT_MAX_REL_SE * k
-            ):
+            k = _fit_k(fit).get(item_id)
+            if k is not None:
                 return k
         return self._coupling.k(item_id)
 
@@ -535,8 +563,14 @@ class DependencyModel:
             fit = self.zone_fit(ctx.hvac_mode)
             if fit is not None:
                 source.candidates.select(fit.candidate)
-                # A fit known before a restart is fully in the control law.
-                self._known_since[source.key(ctx.hvac_mode)] = -math.inf
+            # A fit known before a restart is fully in the control law: the
+            # source's a_f and the neighbours' k it gives, in either HVAC mode.
+            for hvac_mode in (VThermHvacMode_HEAT, VThermHvacMode_COOL):
+                known = self.zone_fit(hvac_mode)
+                if known is not None:
+                    self._known_since[source.key(hvac_mode)] = -math.inf
+                    for item_id in _fit_k(known):
+                        self._known_since[item_id] = -math.inf
         source.active = obs is not None and obs.active
         source.power_cap = obs.power_cap if obs is not None else 1.0
         if obs is not None:
@@ -652,6 +686,7 @@ class DependencyModel:
             and ctx.zone_temp is not None
             and ctx.ext_temp is not None
             and not ctx.calibrating
+            and not ctx.heat_withheld
             and not self._settling(ctx.now_s)
         )
         exchanges: dict[str, float] = {}

@@ -154,7 +154,9 @@ some contexts (a neighbour's door moving, a neighbour's open window) pause learn
 a zone with two heat sources, SmartPI starts from the zone's fit and holds its `a`, `b`
 and the evidence the bootstrap counts. See
 [Zone dependencies, §2.3](zone_dependencies.md#23-where-the-model-is-used) and
-[§6.5](zone_dependencies.md#65-learning).
+[§6.5](zone_dependencies.md#65-learning). A zone calling for heat while its boiler is not called
+(a start threshold, an activation delay) learns with the power 0, and not around the boiler's
+stop and start; see [Water input, §11](water_input.md#11-a-boiler-that-is-not-called).
 
 ### 3.5 Dead-time estimation
 
@@ -581,8 +583,8 @@ With zone dependencies configured, `live` also carries a `dependencies` block
 (composed model, learning gate, one entry per neighbour, and `second_source` for the main
 source of a zone with two heat sources; a thermostat working as an additional source shows
 only its role); see [Zone dependencies, §9](zone_dependencies.md#9-diagnostics). For a water
-heating type, `live` also carries a `water` block; see
-[Water input, §8](water_input.md#8-diagnostics).
+heating type, `live` also carries a `water` block, and a `boiler` block where the boiler's call
+is known; see [Water input, §8](water_input.md#8-diagnostics).
 
 `feedforward.fftrim.command_ownership` exposes the latest binding status,
 rejection reason, request sequence, requested/projected/realized powers and

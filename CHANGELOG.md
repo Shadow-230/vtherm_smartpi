@@ -4,6 +4,28 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+- Learn nothing wrong from a boiler that is not called. A zone calling for heat while
+  its boiler is held off (a start threshold of devices, power or valve opening, an
+  activation delay) took its command for heat and lost its learned emitter power. SmartPI
+  now reads the boiler's call — Smart Boiler's `boiler_called` and `call_reason` where
+  Smart Boiler controls the boiler, otherwise Versatile Thermostat's central boiler for a
+  thermostat it serves — and, once the call has gone unanswered for 15 min (plus the
+  cycle for a switched device), learns with the power 0 (only how the zone cools),
+  waiting while the emitter cools after the stop and warms after the start; the
+  dead-time estimator does not time the boiler's start, a calibration is cancelled, and
+  the feed-forward trim and the zone exchanges pause. Regulation is unchanged. A `boiler`
+  block in the diagnostics shows the call and, from Smart Boiler, the demand against its
+  thresholds. Documented in `documentation/en/water_input.md`, section 11.
+- Fix the fade-in of known exchanges. Always-connected neighbours enter together once
+  each is known, and the loss fitted without them replaces SmartPI's b at the pace
+  their exchanges enter, so the feed-forward no longer dips for an hour when they are
+  published (nor drops a neighbour still unknown). In a zone with two sources their k
+  from the fit is in the model at once, like the fit's b. A zone's fit known before a
+  restart puts the neighbours' k it gives, and the source's a_f of both HVAC modes,
+  fully in the model at once.
+- The zone form no longer asks for the main source's delay and lag, which nothing
+  used (the zone's fit learns its delay), and offers the reset only when the
+  additional source's delay or lag really changes.
 - Add the options form of a zone with two heat sources: "Zone with two heat sources"
   in the menu of a thermostat entry sets the zone up from its master thermostat (a
   Versatile Thermostat over climate whose two devices are SmartPI thermostats), checks

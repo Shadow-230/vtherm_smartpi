@@ -348,6 +348,20 @@ async def test_gains_use_the_fitted_loss_with_always_neighbours(monkeypatch) -> 
     assert algo._control_tau_min(tau) == pytest.approx(1.0 / (loss + k))
 
 
+async def test_the_fitted_loss_in_the_gains_fades_in_with_its_exchange(monkeypatch) -> None:
+    """Halfway through the fade the integral time is still SmartPI's own, which holds the exchange."""
+    algo = Simulation(monkeypatch, _zone(neighbours=())).algo
+    k, loss, learned_b = 0.0015, 0.001, 0.0025
+    inputs = KnownInputs(
+        exchanges=(ExchangeInput("n1", 0.5 * k, 20.0),), loss_coefficient=loss, loss_weight=0.5, status=STATUS
+    )
+    algo._known_inputs = inputs
+    algo._effective_model = compose(learned_b, 5.0, inputs)
+    tau = SimpleNamespace(reliable=True, tau_min=1.0 / learned_b)
+
+    assert algo._control_tau_min(tau) == pytest.approx(1.0 / learned_b)
+
+
 async def test_completed_cycles_report_their_realized_power(monkeypatch) -> None:
     """A switched cycle delivers its energy at full power from its start."""
     sim = Simulation(monkeypatch, _zone(neighbours=()))
