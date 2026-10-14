@@ -161,18 +161,6 @@ def _stored(hass: HomeAssistant):
     return stored
 
 
-def _known_setup_error(message: str) -> bool:
-    """An error of the author's code met while the entries are created, not after a restart.
-
-    Creating a thermostat's own SmartPI entry, or saving its options, reloads the defaults entry,
-    which adds again the diagnostic sensor of another SmartPI thermostat that has no entry of its
-    own yet: Home Assistant refuses the duplicate unique ID (``sensor.py``, unchanged since 0.4.0).
-    Once every thermostat has its entry, the defaults entry adds none, so the bench, which reads
-    the log from its restart after the setup, does not meet it.
-    """
-    return "Platform vtherm_smartpi does not generate unique IDs" in message and "smartpi_diag_" in message
-
-
 # Unloading every entry at the end of the test reloads VTherm's thermostats once more, after the
 # SmartPI factory is gone: one of their control timers is left to the test's teardown.
 @pytest.mark.parametrize("expected_lingering_timers", [True])
@@ -208,7 +196,7 @@ async def test_role_sets_up_through_the_forms(
     errors = [
         f"{r.name}: {r.getMessage()[:200]}"
         for r in caplog.records
-        if r.levelno >= logging.ERROR and not _known_setup_error(r.getMessage())
+        if r.levelno >= logging.ERROR
     ]
     assert not errors, errors
 
@@ -217,6 +205,82 @@ async def test_role_sets_up_through_the_forms(
     assert api.lines[before:] == [
         line for line in api.lines[before:] if line.startswith(("area ", "number.", MAX_POWER_INPUT))
     ], api.lines[before:]
+
+
+MASTER_WARNING = "no longer has exactly this thermostat"
+
+
+@pytest.mark.parametrize("expected_lingering_timers", [True])
+@pytest.mark.parametrize("name", ["zone", "zone-ref", "zone-valve"])
+async def test_a_zone_reloaded_gives_no_false_master_warning(
+    hass: HomeAssistant, caplog: pytest.LogCaptureFixture, name: str
+) -> None:
+    """The zone's forms and a reload of each SmartPI entry rebuild the thermostats as VTherm does
+    (the algorithm before the entity id): the zone's master, with exactly its two devices, is not
+    reported."""
+    caplog.set_level(logging.WARNING)
+    role = ROLES[name]
+    api = await _start(hass, role)
+    await run_stages(api, role, _stored(hass))
+    for title in role.smartpi_titles:
+        assert await hass.config_entries.async_reload(_entry_id(hass, SMARTPI, title))
+        await hass.async_block_till_done()
+
+    warnings = [r.getMessage() for r in caplog.records if MASTER_WARNING in r.getMessage()]
+    assert not warnings, warnings
+
+
+DUPLICATE_ID = "does not generate unique IDs"
+
+
+@pytest.mark.parametrize("expected_lingering_timers", [True])
+async def test_a_thermostat_s_own_entry_takes_over_its_diagnostic_sensor(
+    hass: HomeAssistant, caplog: pytest.LogCaptureFixture
+) -> None:
+    """The defaults entry shows the diagnostic sensor of each SmartPI thermostat without an entry of
+    its own (here after it is reloaded, as after a restart). The thermostat's own entry then takes
+    the sensor over: no duplicate unique ID is refused when that entry is created, reloaded, its
+    options saved, or the zone form creates the other thermostat's entry, and each sensor stays
+    live after the defaults entry is reloaded. Before, the defaults entry kept the sensor until it
+    was reloaded or Home Assistant restarted (the same in 0.4.0)."""
+    from flows import run_flow  # noqa: PLC0415
+    from stages import settings_save_steps, smartpi_thermostat_steps, zone_steps  # noqa: PLC0415
+
+    caplog.set_level(logging.ERROR)
+    role = ROLES["zone-valve"]
+    api = await _start(hass, role)
+    await run_stages(api, role, _stored(hass), only="vtherm")
+    defaults = _entry_id(hass, SMARTPI, role.smartpi_titles[0])
+    registry = er.async_get(hass)
+    radiator, floor = role.thermostats[0], role.thermostats[1]
+
+    def owner(thermostat) -> str | None:
+        unique_id = registry.async_get(thermostat.climate).unique_id
+        entity_id = registry.async_get_entity_id("sensor", SMARTPI, f"smartpi_diag_{unique_id}")
+        state = hass.states.get(entity_id) if entity_id else None
+        if state is None or state.attributes.get("restored"):
+            return None
+        return registry.async_get(entity_id).config_entry_id
+
+    assert await hass.config_entries.async_reload(defaults)
+    await hass.async_block_till_done()
+    assert owner(radiator) == owner(floor) == defaults
+
+    await run_flow(api.transport, "config", SMARTPI, smartpi_thermostat_steps(role, radiator))
+    main = _entry_id(hass, SMARTPI, radiator.name)
+    assert owner(radiator) == main
+    assert await hass.config_entries.async_reload(main)
+    await hass.async_block_till_done()
+    await run_flow(api.transport, "options", main, settings_save_steps(role))
+    await run_flow(api.transport, "options", main, zone_steps(role.zone))
+    assert owner(floor) == _entry_id(hass, SMARTPI, floor.name)
+    assert await hass.config_entries.async_reload(defaults)
+    await hass.async_block_till_done()
+
+    duplicates = [r.getMessage() for r in caplog.records if DUPLICATE_ID in r.getMessage()]
+    assert not duplicates, duplicates
+    assert owner(radiator) == main
+    assert owner(floor) == _entry_id(hass, SMARTPI, floor.name)
 
 
 # --- the scenarios' own flows ------------------------------------------------------------------

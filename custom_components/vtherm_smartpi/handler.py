@@ -486,7 +486,12 @@ class SmartPIHandler:
         self._check_zone_master()
 
     def _check_zone_master(self) -> None:
-        """Warn when the zone's master no longer has exactly these two thermostats as its devices."""
+        """Warn when the zone's master no longer has exactly these two thermostats as its devices.
+
+        The devices are compared by unique id: at a reload of its entry, VTherm builds the
+        algorithm before the thermostat has its entity id. A device missing from the registry
+        keeps its entity id, so it never matches.
+        """
         t = self._thermostat
         master_id = self._zone_master_id if self._source_settings else None
         if not master_id:
@@ -506,7 +511,11 @@ class SmartPIHandler:
             _LOGGER.warning("%s - The zone's master thermostat cannot be found; check the zone", t)
             return
         devices = {**vt_entry.data, **vt_entry.options}.get("underlying_entity_ids") or []
-        if set(devices) != {t.entity_id, source_entity}:
+        device_ids = {
+            device.unique_id if (device := registry.async_get(entity_id)) is not None else entity_id
+            for entity_id in devices
+        }
+        if device_ids != {t.unique_id, self._source_unique_id}:
             _LOGGER.warning(
                 "%s - The zone's master %s no longer has exactly this thermostat and %s as its devices; check the zone",
                 t,
