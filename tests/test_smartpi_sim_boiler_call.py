@@ -125,7 +125,7 @@ def _vtherm_central_boiler(monkeypatch, sim, boiler):
 def _called_entity(sim, boiler):
     """The boiler's call as a binary sensor, the thermostat's own signal."""
     sim.states.set("binary_sensor.boiler_called", lambda: SimState("on" if boiler.firing else "off"))
-    sim.thermostat.entry_infos.update(
+    sim.thermostat.smartpi_options.update(
         {CONF_SMART_PI_BOILER_SIGNALS: "own", CONF_SMART_PI_BOILER_CALLED_ENTITY: "binary_sensor.boiler_called"}
     )
 
@@ -145,7 +145,7 @@ async def _run(monkeypatch, a, b, off_h, call=None, water=None):
     )
     sim = Simulation(monkeypatch, spec, Weather(base_c=3.0, daily_amplitude_c=2.0))
     boiler.actuator = sim.actuator
-    options = sim.thermostat.entry_infos
+    options = sim.thermostat.smartpi_options
     if call == "vtherm":
         _vtherm_central_boiler(monkeypatch, sim, boiler)
         options[CONF_SMART_PI_BOILER_CALL_SOURCE] = "vtherm_central_boiler"

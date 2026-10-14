@@ -18,8 +18,9 @@ from custom_components.vtherm_smartpi.const import (
     CONF_TARGET_VTHERM,
     DEFAULT_OPTIONS,
     DOMAIN,
+    SHARED_SETTINGS,
 )
-from custom_components.vtherm_smartpi.config_flow import build_options_schema
+from custom_components.vtherm_smartpi.config_flow import build_main_options_schema, build_options_schema
 
 VT_DOMAIN = "versatile_thermostat"
 
@@ -51,7 +52,8 @@ async def test_first_user_step_creates_default_entry(hass) -> None:
 
     assert result["type"] == FlowResultType.CREATE_ENTRY
     assert result["title"] == "SmartPI defaults"
-    assert result["data"] == DEFAULT_OPTIONS
+    # The shared settings only: the others are set for one thermostat.
+    assert result["data"] == {key: DEFAULT_OPTIONS[key] for key in SHARED_SETTINGS}
 
 
 @pytest.mark.asyncio
@@ -81,11 +83,12 @@ def test_global_options_schema_hides_valve_linearization() -> None:
     assert CONF_SMART_PI_ENABLE_VALVE_LINEARIZATION not in schema_keys
 
 
-def test_global_options_schema_exposes_pwm_cycle_force_option() -> None:
-    """Global defaults must expose the PWM cycle force setting."""
-    schema_keys = _schema_keys(build_options_schema(DEFAULT_OPTIONS))
-
-    assert CONF_SMART_PI_ALLOW_PWM_CYCLE_FORCE in schema_keys
+def test_the_pwm_cycle_force_option_is_set_for_one_thermostat() -> None:
+    """The PWM cycle restart depends on the thermostat's cycle and emitter: not in the defaults."""
+    assert CONF_SMART_PI_ALLOW_PWM_CYCLE_FORCE not in _schema_keys(build_options_schema(DEFAULT_OPTIONS))
+    assert CONF_SMART_PI_ALLOW_PWM_CYCLE_FORCE in _schema_keys(
+        build_main_options_schema(DEFAULT_OPTIONS, include_valve_linearization=False)
+    )
     assert DEFAULT_OPTIONS[CONF_SMART_PI_ALLOW_PWM_CYCLE_FORCE] is False
 
 
@@ -277,8 +280,9 @@ async def test_options_flow_shows_valve_linearization_from_dedicated_target_conf
 
     # A thermostat entry opens a menu; the regulator settings are one of its steps.
     assert result["type"] == FlowResultType.MENU
-    # The valve curve entry appears only once linearization is enabled.
-    assert result["menu_options"] == ["settings", "zone", "dependencies", "heating_inputs"]
+    # The valve curve entry appears only once linearization is enabled; "Water and boiler"
+    # only with a water heating type (none set here).
+    assert result["menu_options"] == ["settings", "zone", "dependencies"]
     result = await hass.config_entries.options.async_configure(
         result["flow_id"], {"next_step_id": "settings"}
     )

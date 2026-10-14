@@ -5,8 +5,6 @@
       "global": {
         "title": "SmartPI defaults",
         "data": {
-          "minimal_activation_delay": "Minimal activation delay",
-          "minimal_deactivation_delay": "Minimal deactivation delay",
           "smart_pi_deadband": "Deadband",
           "smart_pi_hysteresis_on": "Hysteresis on",
           "smart_pi_hysteresis_off": "Hysteresis off",
@@ -14,10 +12,7 @@
           "smart_pi_use_setpoint_filter": "Use setpoint filter",
           "smart_pi_use_ff3": "Use FF3",
           "smart_pi_deadband_allow_p": "Allow damped P near deadband edge",
-          "smart_pi_allow_pwm_cycle_force": "Allow PWM cycle restart on band transitions",
-          "smart_pi_debug": "Record full diagnostics (debug)",
-          "smart_pi_enable_valve_linearization": "Enable valve curve linearization",
-          "smart_pi_heating_type": "Heating type"
+          "smart_pi_debug": "Record full diagnostics (debug)"
         }
       },
       "thermostat": {
@@ -66,8 +61,6 @@
       "init": {
         "title": "SmartPI defaults",
         "data": {
-          "minimal_activation_delay": "Minimal activation delay",
-          "minimal_deactivation_delay": "Minimal deactivation delay",
           "smart_pi_deadband": "Deadband",
           "smart_pi_hysteresis_on": "Hysteresis on",
           "smart_pi_hysteresis_off": "Hysteresis off",
@@ -75,12 +68,9 @@
           "smart_pi_use_setpoint_filter": "Use setpoint filter",
           "smart_pi_use_ff3": "Use FF3",
           "smart_pi_deadband_allow_p": "Allow damped P near deadband edge",
-          "smart_pi_allow_pwm_cycle_force": "Allow PWM cycle restart on band transitions",
-          "smart_pi_debug": "Record full diagnostics (debug)",
-          "smart_pi_enable_valve_linearization": "Enable valve curve linearization",
-          "smart_pi_heating_type": "Heating type"
+          "smart_pi_debug": "Record full diagnostics (debug)"
         },
-        "description": "Settings for the thermostats without their own SmartPI entry, and the boiler's signals shared by all thermostats.",
+        "description": "The settings shared by the thermostats that use the defaults, and the boiler's signals shared by all thermostats.",
         "menu_options": {
           "settings": "Regulator settings",
           "boiler_signals": "Boiler signals"
@@ -366,6 +356,7 @@
     },
     "heating_type": {
       "options": {
+        "not_set": "Not set (no water data, no boiler's call)",
         "radiator": "Water radiator",
         "floor_water": "Water underfloor heating",
         "floor_electric": "Electric heating mat",
@@ -427,6 +418,10 @@
           }
         }
       }
+    },
+    "thermostat_entries_created": {
+      "title": "SmartPI created an entry of its own for some thermostats",
+      "description": "The \"SmartPI defaults\" entry no longer holds the settings that belong to one thermostat (heating type, activation delays, valve curve, PWM cycle restart). These thermostats ran with such settings from the defaults, so each one now has its own SmartPI entry with them: {entries}. They use the shared settings of the defaults as before. Check each entry's options if a thermostat needs other values."
     }
   }
 }

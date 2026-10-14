@@ -75,3 +75,50 @@ async def test_a_thermostat_s_own_entry_takes_over_its_diagnostic_sensor(hass, c
     assert registry.async_get(diagnostics).config_entry_id == own.entry_id
     state = hass.states.get(diagnostics)
     assert state is not None and not state.attributes.get("restored"), state
+
+
+@pytest.mark.asyncio
+async def test_an_own_entry_that_uses_the_defaults_records_as_the_defaults_say(hass, monkeypatch) -> None:
+    """"Record full diagnostics" is a shared setting: an own entry that uses the defaults takes it from
+    them, and a change in the defaults makes its sensor again (and reloads its thermostat)."""
+    import custom_components.vtherm_smartpi as smartpi_init
+    from homeassistant.setup import async_setup_component
+
+    from custom_components.vtherm_smartpi.const import CONF_SMART_PI_USE_DEFAULTS, SHARED_SETTINGS
+    from custom_components.vtherm_smartpi.sensor import SmartPIRecordedDiagnosticSensor
+
+    hass.config.components.add(VT_DOMAIN)
+    monkeypatch.setattr(smartpi_init, "_reload_smartpi_vtherms", AsyncMock())
+    monkeypatch.setattr(smartpi_init, "_reload_smartpi_vtherms_for_target", AsyncMock())
+    using_defaults = AsyncMock()
+    monkeypatch.setattr(smartpi_init, "_reload_smartpi_vtherms_using_defaults", using_defaults)
+    assert await async_setup_component(hass, "sensor", {})
+    vt_entry = MockConfigEntry(domain=VT_DOMAIN, unique_id="vt-x", data={CONF_PROP_FUNCTION: PROP_FUNCTION_SMART_PI})
+    vt_entry.add_to_hass(hass)
+    registry = er.async_get(hass)
+    registry.async_get_or_create("climate", VT_DOMAIN, "vt-x", suggested_object_id="vt_x", config_entry=vt_entry)
+    shared = {key: DEFAULT_OPTIONS[key] for key in SHARED_SETTINGS}
+    defaults = MockConfigEntry(domain=DOMAIN, title="SmartPI defaults", unique_id=DOMAIN, data=shared, minor_version=2)
+    defaults.add_to_hass(hass)
+    own = MockConfigEntry(
+        domain=DOMAIN,
+        title="X",
+        unique_id=f"{DOMAIN}-vt-x",
+        data={CONF_TARGET_VTHERM: "vt-x", CONF_SMART_PI_USE_DEFAULTS: True, CONF_SMART_PI_DEBUG: True},
+        minor_version=2,
+    )
+    own.add_to_hass(hass)
+    # Setting up one entry sets up the integration's others.
+    await _set_up(hass, defaults)
+
+    def recorded() -> bool:
+        sensors = hass.data["entity_components"]["sensor"].entities
+        sensor = next(s for s in sensors if s.unique_id == "smartpi_diag_vt-x")
+        return isinstance(sensor, SmartPIRecordedDiagnosticSensor)
+
+    assert not recorded()
+    hass.config_entries.async_update_entry(defaults, options={**shared, CONF_SMART_PI_DEBUG: True})
+    await hass.async_block_till_done()
+
+    assert recorded()
+    using_defaults.assert_awaited()

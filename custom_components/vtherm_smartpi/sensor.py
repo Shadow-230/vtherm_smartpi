@@ -23,6 +23,7 @@ from .const import (
     SIGNAL_SMARTPI_TARGET_UPDATED,
 )
 from .algo import SmartPI
+from .settings import effective_settings
 from .smartpi.diagnostic_history import build_diagnostic_attributes
 from .smartpi.device_link import cleanup_config_entry_devices, target_uses_smartpi
 from .smartpi.const import SmartPIPhase
@@ -157,10 +158,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
                 continue
             tracked_unique_ids.add(target_unique_id)
             held = _live_diagnostic_sensors(hass).get(target_unique_id)
-            debug_mode = entry.options.get(
-                CONF_SMART_PI_DEBUG,
-                entry.data.get(CONF_SMART_PI_DEBUG, False),
-            )
+            # "Record full diagnostics" as the thermostat runs with it: its own value, or
+            # the defaults' for a thermostat that uses them (settings.py).
+            debug_mode = effective_settings(hass, target_unique_id)[0][CONF_SMART_PI_DEBUG]
             sensor_class = (
                 SmartPIRecordedDiagnosticSensor
                 if debug_mode

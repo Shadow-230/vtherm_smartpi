@@ -4,6 +4,24 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+- Sort the settings into shared and "this thermostat only", and read them per key. The
+  heating type, the activation delays, the valve curve and the PWM cycle restart belong to one
+  thermostat: they leave the "SmartPI defaults" entry and are set in the thermostat's own entry;
+  not set means not used (no heating type: no water data and no boiler's call; no delays; no
+  valve curve; no PWM restart), as in the release 0.4.0. The other settings are shared: they
+  come from the defaults, or from the thermostat's own entry when its new switch "Use the
+  SmartPI defaults" (`smart_pi_use_defaults`) is off. At run time no value is taken from the
+  code where an entry can hold one; a shared setting missing from an entry edited by hand is
+  logged once and takes the form's value. Versatile Thermostat's TPI delays are no longer read
+  for a thermostat on SmartPI. A thermostat without an entry of its own runs as in the release.
+  The heating type gets a "Not set" choice and comes first in a thermostat's settings; the
+  zone's emitter types and "Record full diagnostics" follow the same rule, and a save of the
+  defaults reloads every thermostat that uses them. The entries move to minor version 2 (the
+  major version stays 1, so 0.4.0 still loads them): a thermostat's entry keeps its values with
+  the switch off; the defaults entry keeps the shared settings only, and the "thermostat only"
+  settings it set (such as the heating type of the fork's earlier versions) go, once Home
+  Assistant has started, to an entry created for each thermostat on SmartPI that has none, with
+  a repair notice listing them.
 - Add the sources of the inputs from the heating system. The water data (the supply water
   temperature of a thermostat's circuit, the boiler can heat, hot water has priority, a fault)
   and the boiler's call now come from a source chosen in a new "Water and boiler" item of a

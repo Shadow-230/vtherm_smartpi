@@ -93,9 +93,9 @@ Decisions and reasons:
 
 ## 2. Configuration
 
-**Heating type** (`smart_pi_heating_type`) — set in the regulator settings of the "SmartPI
-defaults" entry (as the default) and of each thermostat entry. Default: water radiator. Only a
-water type reads the water data and the boiler's call.
+**Heating type** (`smart_pi_heating_type`) — the first of a thermostat's settings, set in its own
+entry only (not in the "SmartPI defaults" entry). Default: not set. Only a water type reads the
+water data and the boiler's call.
 
 | Value | Heating type | Exponent `n` | Reference water `T_wref` | Uses the inputs |
 |---|---|---|---|---|
@@ -175,8 +175,9 @@ flowchart TD
   provider gives it).
 - In the diagnostics, `water.source` is `live` and `inputs.*.source` is `provider:<name>`.
 
-An entry without its own heating type takes the default, which is a water radiator. For an electric
-emitter, set an electric type: it reads neither the water nor the boiler's call.
+A thermostat without a heating type (no entry of its own, or "Not set") reads neither the water
+nor the boiler's call, as in the release 0.4.0: set a water type to use them. For an electric
+emitter, set an electric type: it reads neither either.
 
 ## 3. Water data
 
@@ -701,8 +702,11 @@ flowchart TD
 | `smart_pi_model_kept_for_water` | thermostat | the water inputs (source and supply sensor) for which the user kept the learned model in the reset step |
 | `smart_pi_reset_token` | thermostat | set by the reset step to reset the learned model once (as for the neighbours and the zone) |
 
-An entry without these keys works as before (section 2). The entry the zone form creates for an
-additional source does not copy the defaults' signals: it takes them from the defaults.
+An entry without these keys works as before (section 2). An entry that SmartPI creates itself
+(for a zone's member, or at the migration of the "SmartPI defaults" entry) holds only the
+settings of that one thermostat: it takes the shared settings and the boiler's signals from the
+defaults. Where each other setting is read from is in
+[SmartPI, "Configuration"](vtherm_smartpi.md#configuration).
 
 **The algorithm's state.** `SmartPI.save_state()` adds a `water` key once the water input has seen
 data or a lasting reason. So a thermostat without water data keeps the previous format. The key

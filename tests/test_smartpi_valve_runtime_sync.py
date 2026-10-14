@@ -64,7 +64,7 @@ async def test_handler_sends_linearized_valve_command(
     """A linear SmartPI demand must be mapped before reaching the scheduler."""
     thermostat = fake_handler_runtime
     thermostat.cycle_scheduler.is_valve_mode = True
-    thermostat.entry_infos.update(
+    thermostat.smartpi_options.update(
         {
             "smart_pi_enable_valve_linearization": True,
             "smart_pi_min_valve": 7.0,
@@ -105,7 +105,7 @@ async def test_handler_passes_projected_valve_power_to_mid_cycle_binding(
     thermostat = fake_handler_runtime
     thermostat.cycle_scheduler.is_valve_mode = True
     thermostat.cycle_scheduler.is_cycle_running = True
-    thermostat.entry_infos.update(
+    thermostat.smartpi_options.update(
         {
             "smart_pi_enable_valve_linearization": True,
             "smart_pi_min_valve": 7.0,
@@ -286,7 +286,7 @@ async def test_valve_wrapper_binds_published_power_immediately_and_on_auto_repea
 def test_handler_syncs_scheduler_delays_before_projection(fake_handler_runtime) -> None:
     """Scheduler delay values must be the values used by ownership projection."""
     thermostat = fake_handler_runtime
-    thermostat.entry_infos.update(
+    thermostat.smartpi_options.update(
         {
             "minimal_activation_delay": 20,
             "minimal_deactivation_delay": 30,

@@ -34,6 +34,9 @@ from .const import (
     CONF_SMART_PI_USE_FF3,
     CONF_SMART_PI_USE_SETPOINT_FILTER,
     CONF_TARGET_VTHERM,
+    CONF_SMART_PI_USE_DEFAULTS,
+    SHARED_SETTINGS,
+    THERMOSTAT_SETTINGS,
     BOILER_SIGNAL_KEYS,
     CONF_SMART_PI_BOILER_CALL_SOURCE,
     CONF_SMART_PI_BOILER_CALLED_ENTITY,
@@ -63,6 +66,7 @@ from .heating_inputs import (
     resolve_entity,
     stored_entity,
 )
+from .settings import defaults_entry, entry_options, heating_type_of
 from .smartpi.boiler_call import SOURCE_VTHERM
 from .smartpi.const import HEATING_TYPES, WATER_EMITTERS
 from .smartpi.dependencies import (
@@ -98,6 +102,12 @@ from .smartpi.split import (
 )
 
 ERROR_INVALID_VALVE_CURVE = "invalid_valve_curve"
+# The heating type's "Not set" choice: stored as no key (no water data, no boiler's call).
+HEATING_TYPE_NOT_SET = "not_set"
+# The emitter a zone assumes for a member whose entry sets no heating type.
+ZONE_HEATING_TYPE = "radiator"
+# What an entry SmartPI creates itself may hold (async_step_import).
+IMPORT_KEYS = (*THERMOSTAT_SETTINGS, CONF_SMART_PI_DEPENDENCIES, CONF_SMART_PI_RESET_TOKEN)
 ABORT_DEPENDENCIES_UNCHANGED = "dependencies_unchanged"
 FIELD_REMOVE_DEPENDENCIES = "remove"
 FIELD_EDIT_DEPENDENCY = "dependency"
@@ -149,120 +159,113 @@ _RULE_HINT = {
 }
 
 
-def build_main_options_schema(
+def _seconds() -> selector.NumberSelector:
+    return selector.NumberSelector(
+        selector.NumberSelectorConfig(
+            min=0,
+            max=3600,
+            step=1,
+            mode=selector.NumberSelectorMode.BOX,
+            unit_of_measurement="s",
+        )
+    )
+
+
+def _number(maximum: float) -> selector.NumberSelector:
+    return selector.NumberSelector(
+        selector.NumberSelectorConfig(
+            min=0.0,
+            max=maximum,
+            step=0.01,
+            mode=selector.NumberSelectorMode.BOX,
+        )
+    )
+
+
+def build_heating_type_selector() -> selector.SelectSelector:
+    """The heating type, with "Not set" first (stored as no key)."""
+    return selector.SelectSelector(
+        selector.SelectSelectorConfig(
+            options=[HEATING_TYPE_NOT_SET, *HEATING_TYPES],
+            mode=selector.SelectSelectorMode.DROPDOWN,
+            translation_key="heating_type",
+        )
+    )
+
+
+def build_thermostat_settings_schema(
     defaults: dict[str, Any],
     *,
     include_valve_linearization: bool,
 ) -> vol.Schema:
-    """Build the SmartPI main options schema."""
-    schema = {
-        vol.Optional(
-            CONF_MINIMAL_ACTIVATION_DELAY,
-            default=defaults[CONF_MINIMAL_ACTIVATION_DELAY],
-        ): selector.NumberSelector(
-            selector.NumberSelectorConfig(
-                min=0,
-                max=3600,
-                step=1,
-                mode=selector.NumberSelectorMode.BOX,
-                unit_of_measurement="s",
-            )
-        ),
-        vol.Optional(
-            CONF_MINIMAL_DEACTIVATION_DELAY,
-            default=defaults[CONF_MINIMAL_DEACTIVATION_DELAY],
-        ): selector.NumberSelector(
-            selector.NumberSelectorConfig(
-                min=0,
-                max=3600,
-                step=1,
-                mode=selector.NumberSelectorMode.BOX,
-                unit_of_measurement="s",
-            )
-        ),
-        vol.Optional(
-            CONF_SMART_PI_DEADBAND,
-            default=defaults[CONF_SMART_PI_DEADBAND],
-        ): selector.NumberSelector(
-            selector.NumberSelectorConfig(
-                min=0.0,
-                max=2.0,
-                step=0.01,
-                mode=selector.NumberSelectorMode.BOX,
-            )
-        ),
-        vol.Optional(
-            CONF_SMART_PI_HYSTERESIS_ON,
-            default=defaults[CONF_SMART_PI_HYSTERESIS_ON],
-        ): selector.NumberSelector(
-            selector.NumberSelectorConfig(
-                min=0.0,
-                max=2.0,
-                step=0.01,
-                mode=selector.NumberSelectorMode.BOX,
-            )
-        ),
-        vol.Optional(
-            CONF_SMART_PI_HYSTERESIS_OFF,
-            default=defaults[CONF_SMART_PI_HYSTERESIS_OFF],
-        ): selector.NumberSelector(
-            selector.NumberSelectorConfig(
-                min=0.0,
-                max=2.0,
-                step=0.01,
-                mode=selector.NumberSelectorMode.BOX,
-            )
-        ),
-        vol.Optional(
-            CONF_SMART_PI_RELEASE_TAU_FACTOR,
-            default=defaults[CONF_SMART_PI_RELEASE_TAU_FACTOR],
-        ): selector.NumberSelector(
-            selector.NumberSelectorConfig(
-                min=0.0,
-                max=5.0,
-                step=0.01,
-                mode=selector.NumberSelectorMode.BOX,
-            )
-        ),
-        vol.Optional(
-            CONF_SMART_PI_USE_SETPOINT_FILTER,
-            default=defaults[CONF_SMART_PI_USE_SETPOINT_FILTER],
-        ): bool,
-        vol.Optional(
-            CONF_SMART_PI_USE_FF3,
-            default=defaults[CONF_SMART_PI_USE_FF3],
-        ): bool,
-        vol.Optional(
-            CONF_SMART_PI_DEADBAND_ALLOW_P,
-            default=defaults[CONF_SMART_PI_DEADBAND_ALLOW_P],
-        ): bool,
-        vol.Optional(
-            CONF_SMART_PI_ALLOW_PWM_CYCLE_FORCE,
-            default=defaults[CONF_SMART_PI_ALLOW_PWM_CYCLE_FORCE],
-        ): bool,
-        vol.Optional(
-            CONF_SMART_PI_DEBUG,
-            default=defaults[CONF_SMART_PI_DEBUG],
-        ): bool,
+    """The "thermostat only" settings: the heating type first, then the delays, the PWM
+    restart and, for a valve, the valve curve's on/off."""
+    schema: dict[Any, Any] = {
         vol.Optional(
             CONF_SMART_PI_HEATING_TYPE,
-            default=defaults.get(CONF_SMART_PI_HEATING_TYPE, DEFAULT_OPTIONS[CONF_SMART_PI_HEATING_TYPE]),
-        ): selector.SelectSelector(
-            selector.SelectSelectorConfig(
-                options=list(HEATING_TYPES),
-                mode=selector.SelectSelectorMode.DROPDOWN,
-                translation_key="heating_type",
-            )
-        ),
+            default=heating_type_of(defaults) or HEATING_TYPE_NOT_SET,
+        ): build_heating_type_selector(),
+        vol.Optional(
+            CONF_MINIMAL_ACTIVATION_DELAY,
+            default=defaults.get(CONF_MINIMAL_ACTIVATION_DELAY, DEFAULT_OPTIONS[CONF_MINIMAL_ACTIVATION_DELAY]),
+        ): _seconds(),
+        vol.Optional(
+            CONF_MINIMAL_DEACTIVATION_DELAY,
+            default=defaults.get(CONF_MINIMAL_DEACTIVATION_DELAY, DEFAULT_OPTIONS[CONF_MINIMAL_DEACTIVATION_DELAY]),
+        ): _seconds(),
+        vol.Optional(
+            CONF_SMART_PI_ALLOW_PWM_CYCLE_FORCE,
+            default=defaults.get(CONF_SMART_PI_ALLOW_PWM_CYCLE_FORCE, DEFAULT_OPTIONS[CONF_SMART_PI_ALLOW_PWM_CYCLE_FORCE]),
+        ): bool,
     }
     if include_valve_linearization:
         schema[
             vol.Optional(
                 CONF_SMART_PI_ENABLE_VALVE_LINEARIZATION,
-                default=defaults[CONF_SMART_PI_ENABLE_VALVE_LINEARIZATION],
+                default=defaults.get(
+                    CONF_SMART_PI_ENABLE_VALVE_LINEARIZATION, DEFAULT_OPTIONS[CONF_SMART_PI_ENABLE_VALVE_LINEARIZATION]
+                ),
             )
         ] = bool
     return vol.Schema(schema)
+
+
+def build_shared_settings_schema(defaults: dict[str, Any]) -> vol.Schema:
+    """The shared settings: set in the "SmartPI defaults" entry, or as a thermostat's own values."""
+
+    def default(key: str) -> Any:
+        return defaults.get(key, DEFAULT_OPTIONS[key])
+
+    return vol.Schema(
+        {
+            vol.Optional(CONF_SMART_PI_DEADBAND, default=default(CONF_SMART_PI_DEADBAND)): _number(2.0),
+            vol.Optional(CONF_SMART_PI_HYSTERESIS_ON, default=default(CONF_SMART_PI_HYSTERESIS_ON)): _number(2.0),
+            vol.Optional(CONF_SMART_PI_HYSTERESIS_OFF, default=default(CONF_SMART_PI_HYSTERESIS_OFF)): _number(2.0),
+            vol.Optional(
+                CONF_SMART_PI_RELEASE_TAU_FACTOR, default=default(CONF_SMART_PI_RELEASE_TAU_FACTOR)
+            ): _number(5.0),
+            vol.Optional(CONF_SMART_PI_USE_SETPOINT_FILTER, default=default(CONF_SMART_PI_USE_SETPOINT_FILTER)): bool,
+            vol.Optional(CONF_SMART_PI_USE_FF3, default=default(CONF_SMART_PI_USE_FF3)): bool,
+            vol.Optional(CONF_SMART_PI_DEADBAND_ALLOW_P, default=default(CONF_SMART_PI_DEADBAND_ALLOW_P)): bool,
+            vol.Optional(CONF_SMART_PI_DEBUG, default=default(CONF_SMART_PI_DEBUG)): bool,
+        }
+    )
+
+
+def build_main_options_schema(
+    defaults: dict[str, Any],
+    *,
+    include_valve_linearization: bool,
+) -> vol.Schema:
+    """A thermostat's settings: the "thermostat only" ones (heating type first), then the shared ones."""
+    return vol.Schema(
+        {
+            **build_thermostat_settings_schema(
+                defaults, include_valve_linearization=include_valve_linearization
+            ).schema,
+            **build_shared_settings_schema(defaults).schema,
+        }
+    )
 
 
 def build_valve_curve_schema(defaults: dict[str, Any]) -> vol.Schema:
@@ -318,8 +321,8 @@ def build_valve_curve_schema(defaults: dict[str, Any]) -> vol.Schema:
 
 
 def build_options_schema(defaults: dict[str, Any]) -> vol.Schema:
-    """Build the SmartPI defaults schema."""
-    return build_main_options_schema(defaults, include_valve_linearization=False)
+    """The "SmartPI defaults" entry's settings: the shared ones only."""
+    return build_shared_settings_schema(defaults)
 
 
 def build_user_target_schema() -> vol.Schema:
@@ -350,6 +353,20 @@ def _schema_defaults(user_input: dict[str, Any] | None = None) -> dict[str, Any]
     if user_input is not None:
         defaults.update(user_input)
     return defaults
+
+
+def _with_settings(stored: dict[str, Any], user_input: dict[str, Any]) -> dict[str, Any]:
+    """The stored settings with a form's answers; the heating type "Not set" is stored as no key."""
+    data = dict(stored)
+    data.update(user_input)
+    if data.get(CONF_SMART_PI_HEATING_TYPE) not in HEATING_TYPES:
+        data.pop(CONF_SMART_PI_HEATING_TYPE, None)
+    return data
+
+
+def _shared_defaults() -> dict[str, Any]:
+    """The shared settings at their form's starting values."""
+    return {key: DEFAULT_OPTIONS[key] for key in SHARED_SETTINGS}
 
 
 def _is_valve_state(state: Any) -> bool:
@@ -421,6 +438,8 @@ class SmartPIConfigFlow(ConfigFlow, domain=DOMAIN):
     """Manage SmartPI plugin config entries."""
 
     VERSION = 1
+    # 2: the settings sorted into shared and "thermostat only" (__init__.async_migrate_entry).
+    MINOR_VERSION = 2
     _pending_thermostat_data: dict[str, Any] | None = None
     _pending_thermostat_entity_id: str | None = None
     _pending_thermostat_is_valve: bool = False
@@ -433,7 +452,7 @@ class SmartPIConfigFlow(ConfigFlow, domain=DOMAIN):
             self._abort_if_unique_id_configured()
             return self.async_create_entry(
                 title="SmartPI defaults",
-                data=dict(DEFAULT_OPTIONS),
+                data=_shared_defaults(),
             )
 
         return await self.async_step_thermostat(user_input)
@@ -448,7 +467,7 @@ class SmartPIConfigFlow(ConfigFlow, domain=DOMAIN):
 
         return self.async_show_form(
             step_id="global",
-            data_schema=build_options_schema(DEFAULT_OPTIONS),
+            data_schema=build_options_schema(_shared_defaults()),
         )
 
     async def async_step_thermostat(self, user_input: dict[str, Any] | None = None):
@@ -491,7 +510,7 @@ class SmartPIConfigFlow(ConfigFlow, domain=DOMAIN):
         data = dict(self._pending_thermostat_data or {})
 
         if user_input is not None:
-            data.update(user_input)
+            data = _with_settings(data, user_input)
             self._pending_thermostat_data = data
             if (
                 self._pending_thermostat_is_valve
@@ -547,25 +566,18 @@ class SmartPIConfigFlow(ConfigFlow, domain=DOMAIN):
         )
 
     async def async_step_import(self, import_data: dict[str, Any]):
-        """Create the entry of a thermostat that joins a zone with two heat sources.
+        """Create the entry of a thermostat for SmartPI itself: a member of a zone with two
+        heat sources (the zone form), or a thermostat that ran with "thermostat only"
+        settings of the defaults entry (the migration, __init__.py).
 
-        It starts from the values the thermostat ran with: the global defaults.
+        The entry uses the defaults' shared settings; it holds the "thermostat only"
+        settings its caller gives (and the zone's items), nothing else.
         """
         target_unique_id = import_data[CONF_TARGET_VTHERM]
         await self.async_set_unique_id(f"{DOMAIN}-{target_unique_id}")
         self._abort_if_unique_id_configured()
-        data = dict(DEFAULT_OPTIONS)
-        global_entry = next(
-            (entry for entry in self._async_current_entries() if entry.unique_id == DOMAIN), None
-        )
-        if global_entry is not None:
-            data.update(global_entry.data)
-            data.update(global_entry.options)
-        data.pop(CONF_SMART_PI_DEPENDENCIES, None)
-        # The boiler's signals stay in the defaults: the new entry takes them from there.
-        for key in (*BOILER_SIGNAL_KEYS, CONF_SMART_PI_BOILER_SIGNALS):
-            data.pop(key, None)
-        data[CONF_TARGET_VTHERM] = target_unique_id
+        data: dict[str, Any] = {CONF_TARGET_VTHERM: target_unique_id, CONF_SMART_PI_USE_DEFAULTS: True}
+        data.update({key: value for key, value in import_data.items() if key in IMPORT_KEYS})
         registry = er.async_get(self.hass)
         entity_id = registry.async_get_entity_id(CLIMATE_DOMAIN, VT_DOMAIN, target_unique_id)
         state = self.hass.states.get(entity_id) if entity_id else None
@@ -632,10 +644,8 @@ class SmartPIOptionsFlow(OptionsFlow):
         return False
 
     def _current_options(self) -> dict[str, Any]:
-        """Return the stored options merged over the defaults."""
-        options = dict(DEFAULT_OPTIONS)
-        options.update(self._config_entry.options or self._config_entry.data)
-        return options
+        """Return the stored options (a form fills what is missing with its starting values)."""
+        return entry_options(self._config_entry)
 
     async def async_step_init(self, user_input: dict[str, Any] | None = None):
         """Open the options: a menu for a thermostat entry, the settings form for the defaults.
@@ -677,11 +687,15 @@ class SmartPIOptionsFlow(OptionsFlow):
     async def _async_settings_form(self, step_id: str, user_input: dict[str, Any] | None):
         """Show or save the regulator settings form."""
         defaults = self._current_options()
+        if self._config_entry.data.get(CONF_TARGET_VTHERM) is None:
+            # The defaults entry: the shared settings only.
+            if user_input is not None:
+                return self.async_create_entry(title="", data={**defaults, **user_input})
+            return self.async_show_form(step_id=step_id, data_schema=build_options_schema(defaults))
         is_valve_target = self._is_valve_target_entry()
 
         if user_input is not None:
-            data = dict(defaults)
-            data.update(user_input)
+            data = _with_settings(defaults, user_input)
             self._pending_options_data = data
             if (
                 is_valve_target
@@ -689,7 +703,7 @@ class SmartPIOptionsFlow(OptionsFlow):
             ):
                 return self.async_show_form(
                     step_id="valve_curve",
-                    data_schema=build_valve_curve_schema(data),
+                    data_schema=build_valve_curve_schema(_schema_defaults(data)),
                 )
             return self.async_create_entry(title="", data=data)
 
@@ -1073,9 +1087,7 @@ class SmartPIOptionsFlow(OptionsFlow):
 
     @staticmethod
     def _entry_options(entry) -> dict[str, Any]:
-        options = dict(DEFAULT_OPTIONS)
-        options.update(entry.options or entry.data)
-        return options
+        return entry_options(entry)
 
     def _entry_items(self, entry) -> list[DependencyItem]:
         return parse_dependencies(self._entry_options(entry).get(CONF_SMART_PI_DEPENDENCIES))
@@ -1130,15 +1142,8 @@ class SmartPIOptionsFlow(OptionsFlow):
         return {**vt_entry.data, **vt_entry.options}
 
     def _heating_type(self, member: er.RegistryEntry) -> str:
-        """The heating type set in a thermostat's SmartPI entry (else the defaults')."""
-        entry = self._entry_of(member.unique_id)
-        if entry is None:
-            entry = next(
-                (e for e in self.hass.config_entries.async_entries(DOMAIN) if e.unique_id == DOMAIN), None
-            )
-        options = self._entry_options(entry) if entry is not None else dict(DEFAULT_OPTIONS)
-        heating_type = options.get(CONF_SMART_PI_HEATING_TYPE)
-        return heating_type if heating_type in HEATING_TYPES else DEFAULT_OPTIONS[CONF_SMART_PI_HEATING_TYPE]
+        """The heating type set in a thermostat's own SmartPI entry (a radiator when it sets none)."""
+        return heating_type_of(self._entry_options(self._entry_of(member.unique_id))) or ZONE_HEATING_TYPE
 
     def _masters(self) -> list[er.RegistryEntry]:
         """Versatile Thermostat over_climate thermostats with this thermostat among their devices."""
@@ -1423,7 +1428,9 @@ class SmartPIOptionsFlow(OptionsFlow):
         entry = self._entry_of(member.unique_id)
         if entry is None:
             await self.hass.config_entries.flow.async_init(
-                DOMAIN, context={"source": SOURCE_IMPORT}, data={CONF_TARGET_VTHERM: member.unique_id}
+                DOMAIN,
+                context={"source": SOURCE_IMPORT},
+                data={CONF_TARGET_VTHERM: member.unique_id, CONF_SMART_PI_HEATING_TYPE: self._heating_type(member)},
             )
             entry = self._entry_of(member.unique_id)
         return entry
@@ -1502,7 +1509,7 @@ class SmartPIOptionsFlow(OptionsFlow):
 
     def _uses_water(self) -> bool:
         """The thermostat's heating type uses the water (radiator, water floor)."""
-        return self._current_options().get(CONF_SMART_PI_HEATING_TYPE) in WATER_EMITTERS
+        return heating_type_of(self._current_options()) in WATER_EMITTERS
 
     def _is_additional_source(self) -> bool:
         own = self._target_registry_entry()
@@ -1510,8 +1517,7 @@ class SmartPIOptionsFlow(OptionsFlow):
 
     def _defaults_options(self) -> dict[str, Any]:
         """The options of the "SmartPI defaults" entry."""
-        entry = next((e for e in self.hass.config_entries.async_entries(DOMAIN) if e.unique_id == DOMAIN), None)
-        return {**entry.data, **entry.options} if entry is not None else {}
+        return entry_options(defaults_entry(self.hass))
 
     def _used_by_central_boiler(self) -> bool:
         return self._vt_config(self._target_registry_entry()).get(VT_USED_BY_CENTRAL_BOILER) is True
@@ -1704,11 +1710,12 @@ class SmartPIOptionsFlow(OptionsFlow):
         defaults = self._current_options()
         is_valve_target = self._is_valve_target_entry()
         if user_input is not None:
-            data = dict(defaults)
-            data.update(user_input)
+            data = _with_settings(defaults, user_input)
             self._pending_options_data = data
             if is_valve_target and user_input.get(CONF_SMART_PI_ENABLE_VALVE_LINEARIZATION):
-                return self.async_show_form(step_id="valve_curve", data_schema=build_valve_curve_schema(data))
+                return self.async_show_form(
+                    step_id="valve_curve", data_schema=build_valve_curve_schema(_schema_defaults(data))
+                )
             return self.async_create_entry(title="", data=data)
         own = self._target_registry_entry()
         main = self._main_naming(own.id if own is not None else None)
@@ -1725,7 +1732,7 @@ class SmartPIOptionsFlow(OptionsFlow):
             data_schema=vol.Schema(
                 {
                     key: value
-                    for key, value in build_main_options_schema(
+                    for key, value in build_thermostat_settings_schema(
                         defaults, include_valve_linearization=is_valve_target
                     ).schema.items()
                     if getattr(key, "schema", key) in kept
@@ -1736,9 +1743,7 @@ class SmartPIOptionsFlow(OptionsFlow):
 
     async def async_step_valve_curve(self, user_input: dict[str, Any] | None = None):
         """Handle the options valve curve flow."""
-        defaults = dict(DEFAULT_OPTIONS)
-        defaults.update(self._config_entry.options or self._config_entry.data)
-        data = dict(self._pending_options_data or defaults)
+        data = dict(self._pending_options_data or self._current_options())
 
         if user_input is not None:
             data.update(user_input)

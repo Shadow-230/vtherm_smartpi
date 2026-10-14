@@ -1222,6 +1222,10 @@ zapisanego stanu SmartPI na każdy tryb HVAC, 26 KB z jednym sąsiadem i 38 KB z
 
 - Zapisany stan SmartPI przechowuje też ostatni zastosowany token resetu
   (`dependency_reset_token`, sekcja 2.2).
+- Strefa i sąsiedzi są zapisani w opcjach wpisów (`smart_pi_dependencies`). Wpis, który formularz
+  strefy tworzy dla członka bez własnego wpisu, korzysta z ustawień wspólnych z wartości
+  domyślnych (`smart_pi_use_defaults` włączony) i ma rodzaj ogrzewania członka oraz, gdy strefa
+  się tam przenosi, elementy strefy.
 - Stary zapisany stan bez tego klucza wczytuje się tak jak wcześniej.
 - Przy starcie stan pozycji, których nie ma już w konfiguracji, jest usuwany.
 - Zapisany stan, którego nie da się odczytać, jest pomijany. Wiersze, których nie da się użyć, są

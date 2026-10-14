@@ -501,6 +501,21 @@ Le handler lit les entrées venant de l'installation de chauffage par le fichier
 l'extension : les données d'eau et l'appel de la chaudière venant de la source choisie dans les options
 du thermostat (des entités, un fournisseur, ou la chaudière centrale de Versatile Thermostat).
 
+Le handler lit les réglages du thermostat clé par clé, par le fichier `settings.py` de l'extension,
+au démarrage de l'algorithme. D'abord l'entrée de Versatile Thermostat, sans les réglages propres à
+un thermostat (les délais TPI de Versatile Thermostat ne sont pas utilisés). Puis les réglages
+partagés (`SHARED_SETTINGS` dans `const.py` : bande morte, hystérésis, facteur tau de relâchement,
+filtre de consigne, FF3, P amorti, diagnostics complets) venant de l'entrée « SmartPI defaults », ou
+de l'entrée propre du thermostat quand son interrupteur « Use the SmartPI defaults » est désactivé.
+Puis l'entrée propre du thermostat : ses réglages « ce thermostat seulement » (`THERMOSTAT_SETTINGS` :
+type de chauffage, délais d'activation, redémarrage du cycle PWM, courbe de vanne), ses voisins, sa
+zone et sa source d'eau. Un réglage « ce thermostat seulement » non défini n'est pas utilisé. Les
+valeurs de départ du code (`DEFAULT_OPTIONS`) ne servent qu'à remplir les formulaires ; un réglage
+partagé absent d'une entrée modifiée à la main prend la valeur du formulaire et est journalisé une
+fois comme erreur de configuration. Les options enregistrées remplacent en bloc les premières données
+de l'entrée, donc un réglage retiré dans les options reste retiré. Un enregistrement de l'entrée des
+valeurs par défaut recharge chaque thermostat qui les utilise.
+
 ### 5.2 Modules `smartpi/` réellement utilisés
 
 | Module                 | Rôle principal                                           |

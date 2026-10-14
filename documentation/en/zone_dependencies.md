@@ -1188,6 +1188,10 @@ with one neighbour and 38 KB with two.
 
 - SmartPI's saved state also keeps the last reset token it applied (`dependency_reset_token`,
   section 2.2).
+- The zone and the neighbours are stored in the entries' options (`smart_pi_dependencies`). The
+  entry the zone form creates for a member that has none uses the defaults' shared settings
+  (`smart_pi_use_defaults` on) and holds the member's heating type and, when the zone moves
+  there, the zone's items.
 - An old saved state without the key loads as before.
 - At startup, the state of items no longer configured is dropped.
 - A saved state that cannot be read is ignored, rows that cannot be used are skipped, and the

@@ -6,6 +6,12 @@ from dataclasses import dataclass, field
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
+from custom_components.vtherm_smartpi.const import (
+    CONF_TARGET_VTHERM,
+    DEFAULT_OPTIONS,
+    DOMAIN,
+    SHARED_SETTINGS,
+)
 from custom_components.vtherm_smartpi.hvac_mode import (
     VThermHvacMode_HEAT,
     VThermHvacMode_OFF,
@@ -49,10 +55,12 @@ class FakeThermostatRuntime:
     """Runtime object used by SmartPI unit tests."""
 
     def __init__(self) -> None:
+        self._own_entry: SimpleNamespace | None = None
         self.hass = FakeHass()
         self.name = "Fake SmartPI"
         self.unique_id = "fake-smartpi"
         self.entity_id = "climate.fake_smartpi"
+        # Versatile Thermostat's own configuration of the thermostat.
         self.entry_infos: dict = {}
         self.prop_algorithm = None
         self.minimal_activation_delay = 0
@@ -74,6 +82,41 @@ class FakeThermostatRuntime:
         self.async_underlying_entity_turn_off = AsyncMock()
         self.async_control_heating = AsyncMock(return_value=True)
         self._state = SimpleNamespace()
+
+    @property
+    def hass(self) -> FakeHass:
+        return self._hass
+
+    @hass.setter
+    def hass(self, value: FakeHass) -> None:
+        """Another Home Assistant (a simulated world): the thermostat's own SmartPI entry moves with it."""
+        self._hass = value
+        if self._own_entry is not None:
+            self._register_own_entry()
+
+    @property
+    def smartpi_options(self) -> dict:
+        """The options of the thermostat's own SmartPI entry, made on first use with every
+        shared setting (as an entry that does not use the defaults)."""
+        if self._own_entry is None:
+            self._own_entry = SimpleNamespace(
+                entry_id=f"own-{self.unique_id}",
+                unique_id=f"{DOMAIN}-{self.unique_id}",
+                domain=DOMAIN,
+                title=self.name,
+                data={CONF_TARGET_VTHERM: self.unique_id},
+                options={
+                    CONF_TARGET_VTHERM: self.unique_id,
+                    **{key: DEFAULT_OPTIONS[key] for key in SHARED_SETTINGS},
+                },
+            )
+        self._register_own_entry()
+        return self._own_entry.options
+
+    def _register_own_entry(self) -> None:
+        entries = self._hass.config_entries._entries
+        if not any(entry is self._own_entry for entry in entries):
+            entries.append(self._own_entry)
 
     def update_custom_attributes(self) -> None:
         """Track attribute refresh requests."""

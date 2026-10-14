@@ -18,6 +18,7 @@ from custom_components.vtherm_smartpi.const import (
     CONF_SMART_PI_BOILER_CALLED_ENTITY,
     CONF_SMART_PI_BOILER_REASON_ENTITY,
     CONF_SMART_PI_BOILER_SIGNALS,
+    CONF_SMART_PI_DEADBAND,
     CONF_SMART_PI_DEPENDENCIES,
     CONF_SMART_PI_DHW_ENTITY,
     CONF_SMART_PI_FAULT_ENTITY,
@@ -155,8 +156,8 @@ async def test_the_defaults_keep_the_boiler_s_signals(hass) -> None:
     assert entry.options[CONF_SMART_PI_HEAT_AVAILABLE_ENTITY] == heat.id
     assert entry.options[CONF_SMART_PI_DHW_ENTITY] == "binary_sensor.yaml_dhw"
     assert CONF_SMART_PI_FAULT_ENTITY not in entry.options
-    # The regulator settings are kept.
-    assert entry.options[CONF_SMART_PI_HEATING_TYPE] == DEFAULT_OPTIONS[CONF_SMART_PI_HEATING_TYPE]
+    # The shared settings are kept.
+    assert entry.options[CONF_SMART_PI_DEADBAND] == DEFAULT_OPTIONS[CONF_SMART_PI_DEADBAND]
 
 
 # --- a thermostat's "Water and boiler" --------------------------------------------------

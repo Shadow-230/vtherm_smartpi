@@ -1255,6 +1255,10 @@ environ 16 KB de l'état sauvegardé de SmartPI par mode HVAC, 26 KB avec un voi
 
 - L'état sauvegardé de SmartPI garde aussi le dernier jeton de remise à zéro qu'il a appliqué
   (`dependency_reset_token`, section 2.2).
+- La zone et les voisins sont enregistrés dans les options des entrées (`smart_pi_dependencies`).
+  L'entrée que le formulaire de zone crée pour un membre qui n'en a pas utilise les réglages
+  partagés des valeurs par défaut (`smart_pi_use_defaults` activé) et contient le type de chauffage
+  du membre et, quand la zone y passe, les éléments de la zone.
 - Un ancien état sauvegardé sans cette clé se charge comme avant.
 - Au démarrage, l'état des éléments qui ne sont plus configurés est supprimé.
 - Un état sauvegardé illisible est ignoré, les lignes inutilisables sont sautées, et les échanges

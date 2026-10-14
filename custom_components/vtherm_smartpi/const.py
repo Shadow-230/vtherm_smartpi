@@ -52,6 +52,12 @@ BOILER_SIGNAL_KEYS = (
 # The water inputs (source and supply sensor) for which the user kept the learned model
 # when the options asked: their data appearing is then no change to ask about again.
 CONF_SMART_PI_MODEL_KEPT_FOR_WATER = "smart_pi_model_kept_for_water"
+# A thermostat's entry takes the shared settings from the "SmartPI defaults" entry (on)
+# or holds its own values (off) (documentation/en/vtherm_smartpi.md, "Configuration").
+CONF_SMART_PI_USE_DEFAULTS = "smart_pi_use_defaults"
+# Set by the migration to minor version 2 in the defaults entry: the "thermostat only"
+# settings it held, given to an entry created for each thermostat that ran with them.
+CONF_SMART_PI_SETTINGS_TO_MOVE = "smart_pi_settings_to_move"
 
 DEFAULT_MINIMAL_ACTIVATION_DELAY = 0
 DEFAULT_MINIMAL_DEACTIVATION_DELAY = 0
@@ -69,8 +75,10 @@ DEFAULT_MIN_VALVE = 7.0
 DEFAULT_KNEE_DEMAND = 80.0
 DEFAULT_KNEE_VALVE = 15.0
 DEFAULT_MAX_VALVE = 100.0
-DEFAULT_SMART_PI_HEATING_TYPE = "radiator"
 
+# The starting values of the forms. At run time they only stand in for a shared setting
+# missing from an entry edited by hand (settings.py). The heating type has none: it starts
+# "Not set".
 DEFAULT_OPTIONS: dict[str, float | bool | int | str] = {
     CONF_MINIMAL_ACTIVATION_DELAY: DEFAULT_MINIMAL_ACTIVATION_DELAY,
     CONF_MINIMAL_DEACTIVATION_DELAY: DEFAULT_MINIMAL_DEACTIVATION_DELAY,
@@ -88,8 +96,38 @@ DEFAULT_OPTIONS: dict[str, float | bool | int | str] = {
     CONF_SMART_PI_KNEE_DEMAND: DEFAULT_KNEE_DEMAND,
     CONF_SMART_PI_KNEE_VALVE: DEFAULT_KNEE_VALVE,
     CONF_SMART_PI_MAX_VALVE: DEFAULT_MAX_VALVE,
-    CONF_SMART_PI_HEATING_TYPE: DEFAULT_SMART_PI_HEATING_TYPE,
 }
+
+# Where each setting is set. Shared: in the "SmartPI defaults" entry, and in a
+# thermostat's entry only when it does not use the defaults. Thermostat only: in the
+# thermostat's own entry; not set means not used.
+SHARED_SETTINGS: tuple[str, ...] = (
+    CONF_SMART_PI_DEADBAND,
+    CONF_SMART_PI_HYSTERESIS_ON,
+    CONF_SMART_PI_HYSTERESIS_OFF,
+    CONF_SMART_PI_RELEASE_TAU_FACTOR,
+    CONF_SMART_PI_USE_SETPOINT_FILTER,
+    CONF_SMART_PI_USE_FF3,
+    CONF_SMART_PI_DEADBAND_ALLOW_P,
+    CONF_SMART_PI_DEBUG,
+)
+THERMOSTAT_SETTINGS: tuple[str, ...] = (
+    CONF_SMART_PI_HEATING_TYPE,
+    CONF_MINIMAL_ACTIVATION_DELAY,
+    CONF_MINIMAL_DEACTIVATION_DELAY,
+    CONF_SMART_PI_ALLOW_PWM_CYCLE_FORCE,
+    CONF_SMART_PI_ENABLE_VALVE_LINEARIZATION,
+    CONF_SMART_PI_MIN_VALVE,
+    CONF_SMART_PI_KNEE_DEMAND,
+    CONF_SMART_PI_KNEE_VALVE,
+    CONF_SMART_PI_MAX_VALVE,
+)
+VALVE_CURVE_POINTS: tuple[str, ...] = (
+    CONF_SMART_PI_MIN_VALVE,
+    CONF_SMART_PI_KNEE_DEMAND,
+    CONF_SMART_PI_KNEE_VALVE,
+    CONF_SMART_PI_MAX_VALVE,
+)
 
 HVAC_OFF_REASON_WINDOW_DETECTION = "hvac_off_window_detection"
 PROP_FUNCTION_SMART_PI = "smartpi"
@@ -103,6 +141,9 @@ DIAGNOSTIC_SENSOR_UNIQUE_ID_PREFIX = "smartpi_diag"
 # The diagnostic sensors added to Home Assistant now, by thermostat unique id (sensor.py).
 # Kept outside hass.data[DOMAIN], whose other keys tell whether a SmartPI entry is still loaded.
 DATA_DIAGNOSTIC_SENSORS = f"{DOMAIN}_diagnostic_sensors"
+
+# The repair notice listing the entries the migration created (__init__.py).
+ISSUE_THERMOSTAT_ENTRIES_CREATED = "thermostat_entries_created"
 
 SERVICE_RESET_SMARTPI_LEARNING = "reset_smartpi_learning"
 SERVICE_SET_SMARTPI_LEARNING = "set_smartpi_learning"

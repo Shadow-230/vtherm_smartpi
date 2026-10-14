@@ -102,9 +102,9 @@ Décisions et raisons :
 
 ## 2. Configuration
 
-**Type de chauffage** (`smart_pi_heating_type`) — réglé dans les réglages du régulateur de l'entrée
-« SmartPI defaults » (comme valeur par défaut) et de chaque entrée de thermostat. Par défaut :
-radiateur à eau. Seul un type à eau lit les données d'eau et l'appel de la chaudière.
+**Type de chauffage** (`smart_pi_heating_type`) — le premier des réglages d'un thermostat, réglé
+seulement dans son entrée propre (pas dans l'entrée « SmartPI defaults »). Par défaut : non défini.
+Seul un type à eau lit les données d'eau et l'appel de la chaudière.
 
 | Valeur | Type de chauffage | Exposant `n` | Eau de référence `T_wref` | Utilise les entrées |
 |---|---|---|---|---|
@@ -191,9 +191,9 @@ flowchart TD
   chaudière, si le fournisseur le donne).
 - Dans les diagnostics, `water.source` vaut `live` et `inputs.*.source` vaut `provider:<name>`.
 
-Une entrée sans type de chauffage à elle prend la valeur par défaut, qui est un radiateur à eau.
-Pour un émetteur électrique, choisissez un type électrique : il ne lit ni l'eau ni l'appel de la
-chaudière.
+Un thermostat sans type de chauffage (sans entrée propre, ou « Not set ») ne lit ni l'eau ni
+l'appel de la chaudière, comme dans la version 0.4.0 : choisissez un type à eau pour les utiliser.
+Pour un émetteur électrique, choisissez un type électrique : il ne les lit pas non plus.
 
 ## 3. Données d'eau
 
@@ -748,9 +748,11 @@ flowchart TD
 | `smart_pi_model_kept_for_water` | thermostat | les entrées d'eau (source et capteur de départ) pour lesquelles l'utilisateur a gardé le modèle appris à l'étape de remise à zéro |
 | `smart_pi_reset_token` | thermostat | posé par l'étape de remise à zéro pour remettre à zéro le modèle appris une seule fois (comme pour les voisins et la zone) |
 
-Une entrée sans ces clés fonctionne comme avant (section 2). L'entrée que le formulaire de zone crée
-pour une source additionnelle ne copie pas les signaux des valeurs par défaut : elle les prend dans
-les valeurs par défaut.
+Une entrée sans ces clés fonctionne comme avant (section 2). Une entrée que SmartPI crée lui-même
+(pour un membre d'une zone, ou à la migration de l'entrée « SmartPI defaults ») ne contient que les
+réglages de ce seul thermostat : elle prend les réglages partagés et les signaux de la chaudière dans
+les valeurs par défaut. L'endroit où chaque autre réglage est lu est décrit dans
+[SmartPI, « Configuration »](vtherm_smartpi.md#configuration).
 
 **L'état de l'algorithme.** `SmartPI.save_state()` ajoute une clé `water` dès que l'entrée eau a vu
 des données ou une raison durable. Ainsi, un thermostat sans données d'eau garde l'ancien format. La

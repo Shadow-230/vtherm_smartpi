@@ -96,9 +96,9 @@ Decyzje i powody:
 
 ## 2. Konfiguracja
 
-**Rodzaj ogrzewania** (`smart_pi_heating_type`) — ustawiany w ustawieniach regulatora we wpisie
-globalnym „SmartPI defaults” (jako domyślny) i w każdym wpisie termostatu. Domyślnie: grzejnik
-wodny. Tylko rodzaj wodny odczytuje dane o wodzie i wezwanie kotła.
+**Rodzaj ogrzewania** (`smart_pi_heating_type`) — pierwsze z ustawień termostatu, ustawiane tylko
+w jego własnym wpisie (nie we wpisie „SmartPI defaults”). Domyślnie: nieustawiony. Tylko rodzaj
+wodny odczytuje dane o wodzie i wezwanie kotła.
 
 | Wartość | Rodzaj ogrzewania | Wykładnik `n` | Woda odniesienia `T_wref` | Korzysta z wejść |
 |---|---|---|---|---|
@@ -182,8 +182,9 @@ flowchart TD
   dostawca je podaje).
 - W diagnostyce `water.source` ma wartość `live`, a `inputs.*.source` ma wartość `provider:<name>`.
 
-Wpis bez własnego rodzaju ogrzewania bierze rodzaj domyślny, czyli grzejnik wodny. Dla emitera
-elektrycznego ustaw rodzaj elektryczny: nie odczytuje on ani wody, ani wezwania kotła.
+Termostat bez rodzaju ogrzewania (bez własnego wpisu albo z „Not set”) nie odczytuje ani wody, ani
+wezwania kotła, tak jak w wersji 0.4.0: żeby z nich korzystać, ustaw rodzaj wodny. Dla emitera
+elektrycznego ustaw rodzaj elektryczny: on też ich nie odczytuje.
 
 ## 3. Dane o wodzie
 
@@ -718,9 +719,10 @@ flowchart TD
 | `smart_pi_model_kept_for_water` | termostat | wejścia wody (źródło i czujnik zasilania), dla których użytkownik zachował nauczony model w kroku resetu |
 | `smart_pi_reset_token` | termostat | ustawiany przez krok resetu, żeby jeden raz zresetować nauczony model (tak jak dla sąsiadów i strefy) |
 
-Wpis bez tych kluczy działa jak dotąd (sekcja 2). Wpis, który formularz strefy tworzy dla
-dodatkowego źródła, nie kopiuje sygnałów z wpisu globalnego: bierze je bezpośrednio z wpisu
-globalnego.
+Wpis bez tych kluczy działa jak dotąd (sekcja 2). Wpis, który SmartPI tworzy sam (dla członka
+strefy albo przy migracji wpisu „SmartPI defaults”), ma tylko ustawienia tego jednego termostatu:
+ustawienia wspólne i sygnały kotła bierze z wartości domyślnych. Skąd jest odczytywane każde inne
+ustawienie, opisuje [SmartPI, „Konfiguracja”](vtherm_smartpi.md#konfiguracja).
 
 **Stan algorytmu.** `SmartPI.save_state()` dodaje klucz `water`, gdy wejście wody zobaczyło już
 dane albo trwały powód. Termostat bez danych o wodzie zachowuje więc dotychczasowy format. Klucz

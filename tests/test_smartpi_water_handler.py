@@ -74,23 +74,26 @@ def _provide(runtime, data=None, **kwargs) -> _Provider:
     """Register a test provider and choose it as the water source."""
     provider = _Provider(data, **kwargs)
     runtime.hass.data.setdefault(PROVIDERS_KEY, {})["test"] = provider
-    runtime.entry_infos[CONF_SMART_PI_WATER_SOURCE] = PROVIDER
+    runtime.smartpi_options[CONF_SMART_PI_WATER_SOURCE] = PROVIDER
     return provider
 
 
 def _entities(runtime, states, own=True) -> _States:
     """Choose entities as the water source, the boiler's signals the thermostat's own."""
     runtime.hass.states = _States(states)
-    runtime.entry_infos.update({CONF_SMART_PI_WATER_SOURCE: "entities", CONF_SMART_PI_SUPPLY_ENTITY: SUPPLY})
+    runtime.smartpi_options.update({CONF_SMART_PI_WATER_SOURCE: "entities", CONF_SMART_PI_SUPPLY_ENTITY: SUPPLY})
     if own:
-        runtime.entry_infos.update(
+        runtime.smartpi_options.update(
             {CONF_SMART_PI_BOILER_SIGNALS: "own", CONF_SMART_PI_HEAT_AVAILABLE_ENTITY: HEAT, CONF_SMART_PI_DHW_ENTITY: DHW}
         )
     return runtime.hass.states
 
 
 def _handler(runtime, heating_type="radiator"):
-    runtime.entry_infos[CONF_SMART_PI_HEATING_TYPE] = heating_type
+    if heating_type is None:
+        runtime.smartpi_options.pop(CONF_SMART_PI_HEATING_TYPE, None)
+    else:
+        runtime.smartpi_options[CONF_SMART_PI_HEATING_TYPE] = heating_type
     handler = SmartPIHandler(runtime)
     handler.init_algorithm()
     handler._async_save = AsyncMock()
@@ -116,7 +119,7 @@ def test_reads_the_chosen_provider_by_entity_id(fake_handler_runtime):
 
 def test_a_registered_provider_is_not_read_unless_chosen(fake_handler_runtime):
     provider = _provide(fake_handler_runtime, {fake_handler_runtime.entity_id: _water(52.5)})
-    fake_handler_runtime.entry_infos.pop(CONF_SMART_PI_WATER_SOURCE)
+    fake_handler_runtime.smartpi_options.pop(CONF_SMART_PI_WATER_SOURCE)
     reading, inputs = _handler(fake_handler_runtime)._read_water()
     assert reading is None
     assert provider.calls == []
@@ -133,7 +136,7 @@ def test_a_registered_provider_is_not_read_unless_chosen(fake_handler_runtime):
     ],
 )
 def test_any_failure_means_no_data(fake_handler_runtime, setup, reason):
-    fake_handler_runtime.entry_infos[CONF_SMART_PI_WATER_SOURCE] = PROVIDER
+    fake_handler_runtime.smartpi_options[CONF_SMART_PI_WATER_SOURCE] = PROVIDER
     if setup == "not_served":
         _provide(fake_handler_runtime, {})
     elif setup == "raises":
@@ -173,7 +176,7 @@ def test_the_boiler_s_signals_from_the_defaults_entry(fake_handler_runtime):
     )
     fake_handler_runtime.hass.config_entries._entries.append(defaults)
     # The thermostat's own values count only when it chose its own.
-    fake_handler_runtime.entry_infos[CONF_SMART_PI_DHW_ENTITY] = DHW
+    fake_handler_runtime.smartpi_options[CONF_SMART_PI_DHW_ENTITY] = DHW
     reading, inputs = _handler(fake_handler_runtime)._read_water()
     assert reading.heat_reason == "dhw_active"
     assert inputs["dhw"]["entity"] == "binary_sensor.shared_dhw"
@@ -238,10 +241,12 @@ async def test_a_momentary_gap_keeps_publishing_the_average(fake_handler_runtime
     )
 
 
-async def test_an_electric_type_neither_reads_nor_publishes(fake_handler_runtime, no_registry):
+@pytest.mark.parametrize("heating_type", ["electric_fast", None])
+async def test_an_electric_or_no_type_neither_reads_nor_publishes(fake_handler_runtime, no_registry, heating_type):
+    """Not set is not used: no water data, as in the release."""
     provider = _provide(fake_handler_runtime, {fake_handler_runtime.entity_id: _water(40.0)})
     fake_handler_runtime._attr_extra_state_attributes = {"specific_states": {WATER_FACTOR_KEY: 0.5}}
-    handler = _handler(fake_handler_runtime, heating_type="electric_fast")
+    handler = _handler(fake_handler_runtime, heating_type=heating_type)
     await _control(handler)
     handler.update_attributes()
     assert provider.calls == []
@@ -282,7 +287,7 @@ async def test_the_options_settle_the_first_data_of_the_inputs_they_kept_the_mod
     monkeypatch.setattr("custom_components.vtherm_smartpi.handler.ir.async_create_issue", create_issue)
     provider = _provide(fake_handler_runtime, {})
     if kept is not None:
-        fake_handler_runtime.entry_infos[CONF_SMART_PI_MODEL_KEPT_FOR_WATER] = kept
+        fake_handler_runtime.smartpi_options[CONF_SMART_PI_MODEL_KEPT_FOR_WATER] = kept
     handler = _handler(fake_handler_runtime)
     await _control(handler)
     provider.data[fake_handler_runtime.entity_id] = _water(45.0)
@@ -295,7 +300,7 @@ async def test_kept_inputs_still_offer_the_reset_when_their_data_go_and_come_bac
     create_issue = MagicMock()
     monkeypatch.setattr("custom_components.vtherm_smartpi.handler.ir.async_create_issue", create_issue)
     provider = _provide(fake_handler_runtime, {fake_handler_runtime.entity_id: _water(45.0)})
-    fake_handler_runtime.entry_infos[CONF_SMART_PI_MODEL_KEPT_FOR_WATER] = PROVIDER
+    fake_handler_runtime.smartpi_options[CONF_SMART_PI_MODEL_KEPT_FOR_WATER] = PROVIDER
     handler = _handler(fake_handler_runtime)
     await _control(handler)
     assert not create_issue.called
@@ -339,7 +344,7 @@ async def test_no_source_chosen_drops_the_water_at_once_without_a_repair(fake_ha
     algo = fake_handler_runtime.prop_algorithm
     assert algo.water.availability == AVAILABILITY_USED
     create_issue.reset_mock()
-    fake_handler_runtime.entry_infos[CONF_SMART_PI_WATER_SOURCE] = "none"
+    fake_handler_runtime.smartpi_options[CONF_SMART_PI_WATER_SOURCE] = "none"
     await _control(handler)
     assert algo.water_factor == 1.0
     assert algo.water.state.source == "none"
@@ -349,7 +354,7 @@ async def test_no_source_chosen_drops_the_water_at_once_without_a_repair(fake_ha
 
 
 async def test_a_chosen_provider_missing_for_long_is_reported_once(fake_handler_runtime, monkeypatch, no_registry, caplog):
-    fake_handler_runtime.entry_infos[CONF_SMART_PI_WATER_SOURCE] = PROVIDER
+    fake_handler_runtime.smartpi_options[CONF_SMART_PI_WATER_SOURCE] = PROVIDER
     clock = [1000.0]
     monkeypatch.setattr("custom_components.vtherm_smartpi.handler.time.monotonic", lambda: clock[0])
     handler = _handler(fake_handler_runtime)
@@ -383,7 +388,7 @@ async def test_other_inputs_kept_in_the_options_ask_nothing_after_a_lasting_stat
     monkeypatch.setattr("custom_components.vtherm_smartpi.handler.ir.async_create_issue", create_issue)
     monkeypatch.setattr("custom_components.vtherm_smartpi.handler.ir.async_delete_issue", delete_issue)
     _entities(fake_handler_runtime, {SUPPLY: "45.0", HEAT: "on", DHW: "off"})
-    fake_handler_runtime.entry_infos[CONF_SMART_PI_MODEL_KEPT_FOR_WATER] = f"entities|{SUPPLY}"
+    fake_handler_runtime.smartpi_options[CONF_SMART_PI_MODEL_KEPT_FOR_WATER] = f"entities|{SUPPLY}"
     handler = _handler(fake_handler_runtime)
     _saved_water(handler, "lasting", inputs=PROVIDER)
     await _control(handler)
@@ -397,7 +402,7 @@ async def test_other_inputs_kept_in_the_options_ask_nothing_after_a_lasting_stat
 async def test_other_inputs_do_not_use_the_old_inputs_average(fake_handler_runtime, monkeypatch, no_registry):
     """The old source's long-term average is not applied to a new source that has no data yet."""
     monkeypatch.setattr("custom_components.vtherm_smartpi.handler.ir.async_delete_issue", MagicMock())
-    fake_handler_runtime.entry_infos[CONF_SMART_PI_WATER_SOURCE] = "provider:other"
+    fake_handler_runtime.smartpi_options[CONF_SMART_PI_WATER_SOURCE] = "provider:other"
     handler = _handler(fake_handler_runtime)
     _saved_water(handler, "used", long_average=0.9, inputs=PROVIDER)
     await _control(handler)
@@ -410,7 +415,7 @@ async def test_other_inputs_do_not_use_the_old_inputs_average(fake_handler_runti
 async def test_the_same_inputs_keep_their_state_across_a_restart(fake_handler_runtime, monkeypatch, no_registry):
     delete_issue = MagicMock()
     monkeypatch.setattr("custom_components.vtherm_smartpi.handler.ir.async_delete_issue", delete_issue)
-    fake_handler_runtime.entry_infos[CONF_SMART_PI_WATER_SOURCE] = PROVIDER
+    fake_handler_runtime.smartpi_options[CONF_SMART_PI_WATER_SOURCE] = PROVIDER
     handler = _handler(fake_handler_runtime)
     _saved_water(handler, "used", long_average=0.6, inputs=PROVIDER)
     await _control(handler)  # the provider is not registered yet: a momentary gap

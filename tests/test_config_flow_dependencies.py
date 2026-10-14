@@ -66,7 +66,8 @@ async def test_thermostat_entry_opens_a_menu(hass) -> None:
     result = await hass.config_entries.options.async_init(entry.entry_id)
 
     assert result["type"] == FlowResultType.MENU
-    assert result["menu_options"] == ["settings", "zone", "dependencies", "heating_inputs"]
+    # No heating type set: no "Water and boiler".
+    assert result["menu_options"] == ["settings", "zone", "dependencies"]
 
 
 async def test_global_entry_opens_the_settings_and_the_boiler_signals(hass) -> None:
@@ -177,4 +178,5 @@ async def test_valve_curve_is_offered_only_with_linearization(hass, monkeypatch)
     result = await hass.config_entries.options.async_init(entry.entry_id)
 
     assert result["type"] == FlowResultType.MENU
-    assert result["menu_options"] == ["settings", "zone", "dependencies", "heating_inputs"]
+    # No heating type set: no "Water and boiler".
+    assert result["menu_options"] == ["settings", "zone", "dependencies"]
