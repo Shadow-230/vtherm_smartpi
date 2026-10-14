@@ -16,6 +16,7 @@ from .const import (
     CONF_PROP_FUNCTION,
     CONF_SMART_PI_DEBUG,
     CONF_TARGET_VTHERM,
+    DATA_DIAGNOSTIC_SENSORS,
     DIAGNOSTIC_SENSOR_UNIQUE_ID_PREFIX,
     DOMAIN,
     PROP_FUNCTION_SMART_PI,
@@ -50,6 +51,11 @@ def _get_climate_entity_id(
         VT_DOMAIN,
         target_unique_id,
     )
+
+
+def _live_diagnostic_sensors(hass: HomeAssistant) -> dict[str, "SmartPIDiagnosticSensor"]:
+    """The diagnostic sensors added to Home Assistant now, by thermostat unique id."""
+    return hass.data.setdefault(DATA_DIAGNOSTIC_SENSORS, {})
 
 
 def _get_diagnostic_entity_id(
@@ -150,6 +156,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
             if not climate_entity_id:
                 continue
             tracked_unique_ids.add(target_unique_id)
+            held = _live_diagnostic_sensors(hass).get(target_unique_id)
             debug_mode = entry.options.get(
                 CONF_SMART_PI_DEBUG,
                 entry.data.get(CONF_SMART_PI_DEBUG, False),
@@ -159,12 +166,29 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
                 if debug_mode
                 else SmartPIDiagnosticSensor
             )
-            new_entities.append(
-                sensor_class(hass, climate_entity_id, target_unique_id)
-            )
+            sensor = sensor_class(hass, climate_entity_id, target_unique_id)
+            held_by = getattr(getattr(held, "platform", None), "config_entry", None)
+            if held_by is not None and held_by.entry_id != entry.entry_id:
+                # The defaults entry still shows this thermostat, which now has its own
+                # entry: the own entry takes the sensor over (same unique id).
+                entry.async_create_task(
+                    hass,
+                    _async_take_over(held, sensor),
+                    f"{DOMAIN} diagnostics of {target_unique_id}",
+                    eager_start=False,
+                )
+                continue
+            new_entities.append(sensor)
 
         if new_entities:
             async_add_entities(new_entities)
+
+    async def _async_take_over(
+        held: "SmartPIDiagnosticSensor", sensor: "SmartPIDiagnosticSensor"
+    ) -> None:
+        """Remove the other entry's sensor, then add this entry's in its place."""
+        await held.async_remove()
+        async_add_entities([sensor])
 
     if _is_global_entry(entry):
         target_unique_ids = _get_default_target_unique_ids(hass)
@@ -245,6 +269,7 @@ class SmartPIDiagnosticSensor(SensorEntity):
 
     async def async_added_to_hass(self):
         """Run when entity about to be added to hass."""
+        _live_diagnostic_sensors(self.hass)[self._unique_id_base] = self
         self._unsub = async_track_state_change_event(
             self.hass, [self._climate_entity_id], self._async_climate_changed
         )
@@ -255,6 +280,9 @@ class SmartPIDiagnosticSensor(SensorEntity):
 
     async def async_will_remove_from_hass(self):
         """Clean up on removal."""
+        live = _live_diagnostic_sensors(self.hass)
+        if live.get(self._unique_id_base) is self:
+            del live[self._unique_id_base]
         if self._unsub:
             self._unsub()
             self._unsub = None

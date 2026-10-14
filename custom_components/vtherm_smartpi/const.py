@@ -78,6 +78,9 @@ DATA_SERVICES_REGISTERED = "services_registered"
 DATA_SOURCE_LINK = "source_link"
 SIGNAL_SMARTPI_TARGET_UPDATED = "vtherm_smartpi_target_updated"
 DIAGNOSTIC_SENSOR_UNIQUE_ID_PREFIX = "smartpi_diag"
+# The diagnostic sensors added to Home Assistant now, by thermostat unique id (sensor.py).
+# Kept outside hass.data[DOMAIN], whose other keys tell whether a SmartPI entry is still loaded.
+DATA_DIAGNOSTIC_SENSORS = f"{DOMAIN}_diagnostic_sensors"
 
 SERVICE_RESET_SMARTPI_LEARNING = "reset_smartpi_learning"
 SERVICE_SET_SMARTPI_LEARNING = "set_smartpi_learning"

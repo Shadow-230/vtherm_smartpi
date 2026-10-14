@@ -15,6 +15,9 @@ from .registry import scenario
 # The thermostat is rebuilt at each reload: a zone's master with exactly its two devices is not
 # reported (they are compared by unique id, the entity id is not set yet at that moment).
 MASTER_WARNING = "no longer has exactly this thermostat"
+# A thermostat's own entry takes its diagnostic sensor over from the defaults entry: Home Assistant
+# refuses no duplicate unique ID.
+DUPLICATE_ID = "does not generate unique IDs"
 
 # New interface texts of the fork: shown in Polish they must read as text, not as raw keys
 # (Home Assistant falls back to English where a language has no text of its own).
@@ -42,7 +45,7 @@ async def _updates(r: Any, entity_id: str, seconds: float) -> int:
 
 @scenario("QZ1", ("base", "neighbours", "zone", "zone-ref", "zone-valve", "central-boiler", "ref-0.4.0", "electric"), 25, "—", minimum=True)
 async def QZ1(r: Any) -> None:
-    """SmartPI logs no error and each of its warnings is listed, the recorder refuses none of the diagnostics' attributes, the forms read in Polish show text and not keys, and after three reloads of an entry its thermostat does not calculate twice and no zone's master is reported as changed."""
+    """SmartPI logs no error and each of its warnings is listed, the recorder refuses none of the diagnostics' attributes, the forms read in Polish show text and not keys, and after three reloads of an entry its thermostat does not calculate twice, no zone's master is reported as changed and no diagnostic sensor is refused as a duplicate."""
     entries = await system_log(r)
     errors = log_lines(entries, loggers=("custom_components.vtherm_smartpi",), levels=("ERROR",))
     r.check(not errors, f"no error from SmartPI: {len(errors)}")
@@ -74,3 +77,9 @@ async def QZ1(r: Any) -> None:
     reloaded = await system_log(r)
     master = log_lines(reloaded, since, ("custom_components.vtherm_smartpi",), ("WARNING",), MASTER_WARNING)
     r.check(not master, f"no zone's master reported as changed after the reloads: {master[:2]}")
+    duplicates = [
+        line
+        for line in log_lines(reloaded, since, ("homeassistant.components.sensor",), ("ERROR",), DUPLICATE_ID)
+        if "smartpi_diag_" in line
+    ]
+    r.check(not duplicates, f"no SmartPI diagnostic sensor refused as a duplicate after the reloads: {duplicates[:2]}")

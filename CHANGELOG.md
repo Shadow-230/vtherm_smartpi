@@ -4,6 +4,15 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+- Fix a duplicate diagnostic sensor (an error already in 0.4.0). The "SmartPI defaults"
+  entry shows the diagnostic sensor of each SmartPI thermostat that has no entry of its own.
+  When such a thermostat got its own entry, the defaults entry kept the sensor, so creating
+  the own entry, reloading it or saving its options logged the error "Platform vtherm_smartpi
+  does not generate unique IDs. ID smartpi_diag_... already exists", and the own entry's
+  settings (such as recording full diagnostics) did not reach the sensor. This lasted until
+  the defaults entry was reloaded or Home Assistant restarted; after a reload of the defaults
+  entry, the thermostat had no diagnostic sensor at all until its own entry was reloaded.
+  The own entry now takes the sensor over at once (same unique ID, same entity).
 - Fix a false warning about a zone's master. After a zone was saved, or any SmartPI entry
   was reloaded, the log said that the zone's master "no longer has exactly this thermostat
   and ... as its devices", although it had exactly these two. At a reload, Versatile
