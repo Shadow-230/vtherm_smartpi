@@ -43,7 +43,7 @@ async def _updates(r: Any, entity_id: str, seconds: float) -> int:
     return count
 
 
-@scenario("QZ1", ("base", "neighbours", "zone", "zone-ref", "zone-valve", "central-boiler", "ref-0.4.0", "electric"), 25, "—", minimum=True)
+@scenario("QZ1", ("base", "neighbours", "zone", "zone-ref", "zone-valve", "central-boiler", "ref-0.4.0", "electric", "water"), 25, "—", minimum=True)
 async def QZ1(r: Any) -> None:
     """SmartPI logs no error and each of its warnings is listed, the recorder refuses none of the diagnostics' attributes, the forms read in Polish show text and not keys, and after three reloads of an entry its thermostat does not calculate twice, no zone's master is reported as changed and no diagnostic sensor is refused as a duplicate."""
     entries = await system_log(r)

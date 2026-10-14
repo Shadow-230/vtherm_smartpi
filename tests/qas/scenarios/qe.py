@@ -1,9 +1,10 @@
-"""QE: a zone with two heat sources (instances 3, 4 and 5).
+"""QE: a zone with two heat sources (roles ``zone``, ``zone-ref`` and ``zone-valve``).
 
-On instance 3 the lounge is heated by a radiator (the main source, ``Lounge radiator``) and a
-floor (``Lounge floor``), devices of the master ``Lounge`` (an over_climate VTherm with
-self-regulation off); instance 4 runs the same rooms as two independent SmartPI. On instance 5 the
-study's floor is a valve, and VTherm's power manager watches the house's power.
+In the role ``zone`` the lounge is heated by a radiator (the main source, ``Lounge radiator``)
+and a floor (``Lounge floor``), devices of the master ``Lounge`` (an over_climate VTherm with
+self-regulation off); the role ``zone-ref`` has the same rooms as two independent SmartPI. In the
+role ``zone-valve`` the study's floor is a valve, and VTherm's power manager watches the house's
+power.
 """
 
 from __future__ import annotations
@@ -191,11 +192,11 @@ async def QE2(r: Any) -> None:
     r.check((path(data, "learning.accepted_updates_a"), path(data, "learning.accepted_updates_b")) == learned, f"the floor learned nothing: {learned}")
     other_title = _title(zone.additional)
     try:
-        await options_flow(r, other_title, [Form("source_role", {"smart_pi_heating_type": "floor_electric"})])
+        await options_flow(r, other_title, [Menu("source_role", if_shown=True), Form("source_role", {"smart_pi_heating_type": "floor_electric"})])
         took, data = await wait_live(r, zone.main, lambda d: path(d, "dependencies.second_source.source_emitter") == "floor_electric", 3 * MARGIN_S, 10.0)
         r.check(took is not None, f"the main source restarted with the floor's new type: {path(data, 'dependencies.second_source.source_emitter')}")
     finally:
-        await options_flow(r, other_title, [Form("source_role", {"smart_pi_heating_type": "floor_water"})])
+        await options_flow(r, other_title, [Menu("source_role", if_shown=True), Form("source_role", {"smart_pi_heating_type": "floor_water"})])
         r.note("put back: the floor's heating type floor_water")
 
 
@@ -295,7 +296,7 @@ async def QE5(r: Any) -> None:
     """Over 48 h the zone publishes its model before about 30 h, regulates no more than 0.05 °C worse than the independent pair, the floor gives over 20 % of the heat, and a restart at 36 h keeps the model; compare.py qe5 judges it."""
     await _zone_run(r, 48.0, "qe5", 36.0)
     if role().zone is not None:
-        r.note("the zone's own checks are in compare.py qe5, with instance 4")
+        r.note("the zone's own checks are in compare.py qe5, against the instance that ran zone-ref")
 
 
 @scenario("QE5s", ("zone", "zone-ref"), 45, "Z1 compared", minimum=True, short_of=("QE5",))

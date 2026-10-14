@@ -5,7 +5,7 @@ z którego korzysta większość z nich, każdy scenariusz symulacji i to, co mu
 testy, pogrupowane według funkcji, oraz testy QAS w prawdziwym Home Assistant. Same funkcje
 opisują dokumenty [Dokumentacja techniczna](technical_doc.md),
 [Zależności stref i drugie źródło ciepła](zone_dependencies.md) oraz
-[Wejście wody](water_input.md). Własne testy autora pozostają bez zmian i są uruchamiane razem
+[Wejścia wody i kotła](water_input.md). Własne testy autora pozostają bez zmian i są uruchamiane razem
 z tymi.
 
 ## Spis treści
@@ -59,9 +59,9 @@ Długie symulacje zależą od `SMARTPI_SIM_LOCAL`. Bez tej zmiennej są pokazywa
 | Czujniki i wygładzanie VTherm | `tests/sim/sensors.py` | Czujnik jest odczytywany co 10 s i zaokrąglany (domyślnie do 0.1 °C). Jego wartość jest publikowana tylko wtedy, gdy zaokrąglona wartość się zmieni. Średnia krocząca i nachylenie (szybkość zmian) z VTherm są skopiowane: średnia ma czas połowicznego zaniku 300 s, a nachylenie jest w °C/h. |
 | Cykle grzania | `tests/sim/scheduler.py` | Kopia harmonogramu cykli VTherm (części, która zamienia wysterowanie na cykle urządzenia) dla jednego urządzenia: cykle włącz/wyłącz, minimalne czasy załączenia i wyłączenia, zawory. Własny harmonogram VTherm nie jest importowany: to wewnętrzna część VTherm, która zmienia się razem z główną gałęzią VTherm. Jest jedna celowa różnica: błąd w cyklu zatrzymuje symulację, zamiast trafić tylko do logu. |
 | Czas | `tests/sim/clock.py` | Wirtualny zegar zastępuje zegar SmartPI, więc symulowany tydzień trwa tylko kilka sekund. Zegar uruchamia też timery: wywołanie regulacji VTherm w każdym cyklu, przeliczenie SmartPI co 60 s i cykle. |
-| Kocioł i Smart Boiler | `tests/sim/boiler.py` | Woda docierająca do obiegu: o stałej temperaturze albo według krzywej grzewczej (temperatura wody ustalana z temperatury zewnętrznej). Może dodać cykliczną pracę palnika, priorytet ciepłej wody (kocioł najpierw grzeje zasobnik ciepłej wody) i kocioł, który rusza tylko wtedy, gdy strefa woła o ciepło. Zastępnik Smart Boiler podaje SmartPI dane o wodzie. |
+| Kocioł i źródła danych o wodzie | `tests/sim/boiler.py` | Woda docierająca do obiegu: o stałej temperaturze albo według krzywej grzewczej (temperatura wody ustalana z temperatury zewnętrznej). Może dodać cykliczną pracę palnika, priorytet ciepłej wody (kocioł najpierw grzeje zasobnik ciepłej wody) i kocioł, który rusza tylko wtedy, gdy strefa woła o ciepło. Jego woda dociera do SmartPI z każdego z dwóch źródeł, które może wybrać użytkownik: od testowego dostawcy zgodnego z kontraktem SmartPI (`SimHeatingProvider`, zarejestrowanego tak, jak zrobiłaby to integracja) albo z encji (czujnik zasilania dla każdego obiegu oraz sygnały kotła: ciepła woda i grzanie, w zastępniku stanów Home Assistant). Test może wymusić powód przerwy na wybrany czas: dostawca podaje ten powód, a czujnik zasilania staje się niedostępny. |
 | Pogoda | `tests/sim/weather.py` | Temperatura zewnętrzna: stała, z dobowym wahaniem albo z nagłym skokiem. |
-| Przygotowanie scenariusza | `tests/sim/runner.py` | Jedna strefa (jej `a`, `b`, opóźnienie, nastawa, cykl, zawór albo urządzenie włącz/wyłącz, czujnik, sąsiedzi, presety, kocioł), drugi termostat w strefie (jego moc, opóźnienie i bezwładność) oraz kilka stref w jednym wspólnym świecie. |
+| Przygotowanie scenariusza | `tests/sim/runner.py` | Jedna strefa (jej `a`, `b`, opóźnienie, nastawa, cykl, zawór albo urządzenie włącz/wyłącz, czujnik, sąsiedzi, presety, kocioł i źródło jej danych o wodzie: `water_data`, brak, `provider` albo `entities`), drugi termostat w strefie (jego moc, opóźnienie i bezwładność) oraz kilka stref w jednym wspólnym świecie. |
 | Pomiary | `tests/sim/metrics.py` | Czego nauczył się SmartPI w porównaniu z prawdziwymi wartościami, kiedy zakończyła się jego faza uczenia i błąd temperatury w pomieszczeniu. |
 
 ### 2.3 Jeden krok symulacji
@@ -119,7 +119,7 @@ ciepło jest dzielone między dwa źródła) `lead_band` na 20 %.
 | — | własny SmartPI podłogówki, gdy pracuje ona jako dodatkowe źródło | krótki | niczego się nie uczy i niczego nie zmienia; podąża za wysterowaniem głównego źródła; po usunięciu głównego źródła znów sam reguluje |
 | Z6 | główne źródło przestaje odpowiadać | krótki | po 15 min dodatkowe źródło reguluje samo; temperatura w pomieszczeniu zostaje powyżej 19.3 °C; gdy główne źródło wraca, dodatkowe źródło znów za nim podąża |
 | — | główne źródło wyłączone, z cyklem 20 min | krótki | dodatkowe źródło zostaje wyłączone i nie przejmuje strefy |
-| — | podłogówka na wodzie ze Smart Boiler | krótki | podłogówka zamienia moc głównego źródła na własne wysterowanie, używając własnych danych o wodzie |
+| — | podłogówka na wodzie, jej dane o wodzie od dostawcy | krótki | podłogówka zamienia moc głównego źródła na własne wysterowanie, używając własnych danych o wodzie |
 | — | zrzut mocy (VTherm wyłącza urządzenia, gdy dom pobiera za dużo mocy) | krótki | główne źródło objęte zrzutem nadal wysyła swoje wysterowanie; dodatkowe źródło objęte zrzutem zostaje wyłączone |
 | — | restart Home Assistant po 36 h | krótki | model strefy jest zachowany; potem błąd poniżej 0.15 °C |
 | Z7 | chłodzenie z dwoma źródłami | krótki | osobny model chłodzenia, ±25 %; błąd poniżej 0.15 °C |
@@ -146,21 +146,23 @@ niezależnymi SmartPI. Dla każdego pomieszczenia:
   przy niezależnej parze.
 
 Te same sprawdzenia są wykonywane dla podłogówki za zaworem, płyty, która nagrzewa się przez całą
-grubość, i wody na krzywych grzewczych. Dwie strefy obok siebie (zawsze otwarte albo z drzwiami
+grubość, i wody na krzywych grzewczych (dane o wodzie z encji). Dwie strefy obok siebie (zawsze otwarte albo z drzwiami
 otwartymi 6:00–23:00) muszą każda utrzymać błąd nie większy niż 0.02 °C ponad błąd niezależnej
 pary. Wyniki są w
 [Zależności stref, §5.8](zone_dependencies.md#58-wyniki-i-ograniczenia-symulacja).
 
 ### 3.4 Woda — `test_smartpi_sim_water.py` (krótki)
 
-Grzejnik (`a` 0.06 przy wodzie 60 °C) na kotle z krzywą grzewczą.
+Grzejnik (`a` 0.06 przy wodzie 60 °C) na kotle z krzywą grzewczą. Dane o wodzie pochodzą od
+dostawcy albo z encji; scenariusze oznaczone „oba” są uruchamiane z każdym z tych źródeł.
 
-| Scenariusz | Co musi pokazać |
-|---|---|
-| z danymi o wodzie ze Smart Boiler i bez nich, 48 h | bez danych SmartPI uczy się mniej niż połowy `a`; z danymi od 0.5 do 1.2 `a` i ponad 1.5 raza tyle, ile bez nich |
-| ciepła woda dwa razy dziennie, cykliczna praca palnika | gdy kocioł grzeje ciepłą wodę, całka (część wysterowania, która narasta w czasie) i wysterowanie się nie zmieniają; błąd poniżej 0.3 °C |
-| brak danych o wodzie przez 2 h, potem na dobre | krótka przerwa zachowuje współczynnik wody (ciepło, które daje woda, w porównaniu z wodą odniesienia); trwała przerwa ustawia współczynnik na 1 i raz proponuje reset |
-| kocioł, który rusza tylko wtedy, gdy strefa woła o ciepło | temperatura w pomieszczeniu zostaje powyżej 19 °C; SmartPI kończy uczenie i uczy się `a` w zakresie 0.5–1.2 |
+| Oznaczenie | Scenariusz | Co musi pokazać |
+|---|---|---|
+| W1 | bez danych o wodzie oraz z nimi od dostawcy i z encji, 48 h | bez danych SmartPI uczy się mniej niż połowy `a`; z danymi z każdego z tych źródeł od 0.5 do 1.2 `a` i ponad 1.5 raza tyle, ile bez nich |
+| — | ciepła woda dwa razy dziennie, cykliczna praca palnika (oba) | gdy kocioł grzeje ciepłą wodę, całka (część wysterowania, która narasta w czasie) i wysterowanie się nie zmieniają; błąd poniżej 0.3 °C |
+| — | brak danych od dostawcy przez 2 h, potem na dobre (`not_mapped`) | krótka przerwa zachowuje współczynnik wody (ciepło, które daje woda, w porównaniu z wodą odniesienia); trwała przerwa ustawia współczynnik na 1 i raz proponuje reset |
+| — | czujnik zasilania niedostępny od 24. godziny (encje) | przez 24 h zachowuje współczynnik (powód `unavailable`) i niczego nie proponuje; potem przerwa liczy się jako trwała: współczynnik 1 i raz zaproponowany reset |
+| — | kocioł, który rusza tylko wtedy, gdy strefa woła o ciepło (oba) | temperatura w pomieszczeniu zostaje powyżej 19 °C; SmartPI kończy uczenie i uczy się `a` w zakresie 0.5–1.2 |
 
 ### 3.5 Kocioł, który nie jest wezwany do grzania — `test_smartpi_sim_boiler_call.py` (krótki)
 
@@ -170,10 +172,11 @@ Grzejnik 2000 W za zaworem, z czujnikiem 0.01 °C. Kocioł rusza dopiero przy za
 
 | Oznaczenie | Scenariusz | Co musi pokazać |
 |---|---|---|
-| B1 | kocioł centralny VTherm, bez danych o wodzie, kocioł nie pracuje 2:00–8:00 | SmartPI nie wie, że kocioł nie jest wezwany: `a` poniżej połowy; SmartPI wie: `a` w zakresie 0.85–1.2, `b` w zakresie 0.95–1.05, `a` nie jest uczone, gdy kocioł nie jest wezwany, opóźnienie 9–13 min |
-| B2 | wezwanie od Smart Boiler z danymi o wodzie, kocioł nie pracuje 10:00–16:00 | `b` w zakresie 0.95–1.05, `a` w zakresie 0.9–1.15, `a` nie jest uczone, gdy kocioł nie jest wezwany |
+| B1 | wezwanie od kotła centralnego VTherm (z jego bieżących encji), bez danych o wodzie, kocioł nie pracuje 2:00–8:00 | SmartPI nie wie, że kocioł nie jest wezwany: `a` poniżej połowy; SmartPI wie: `a` w zakresie 0.85–1.2, `b` w zakresie 0.95–1.05, `a` nie jest uczone, gdy kocioł nie jest wezwany, opóźnienie 9–13 min; powód z VTherm `below_threshold` (a na chwilę przy przełączeniu `activation_delay`) |
+| B1 encja | to samo, wezwanie z czujnika binarnego (encje) | to samo; powód `not_called` (bez encji powodu) |
+| B2 | wezwanie od dostawcy, woda od dostawcy albo z encji, kocioł nie pracuje 10:00–16:00 | `b` w zakresie 0.95–1.05, `a` w zakresie 0.9–1.15, `a` nie jest uczone, gdy kocioł nie jest wezwany; powód od dostawcy `below_threshold` |
 
-Wyniki są w [Wejście wody, §4.4](water_input.md#44-wyniki-symulacja).
+Wyniki są w [Wejścia wody i kotła, §4.4](water_input.md#44-wyniki-symulacja).
 
 ### 3.6 Sam SmartPI, dwa termostaty i sam symulator
 
@@ -201,7 +204,7 @@ Wyniki są w [Wejście wody, §4.4](water_input.md#44-wyniki-symulacja).
 | `test_smartpi_learning_window_known_inputs.py` | okna uczenia odejmują ciepło znanych wejść |
 | `test_smartpi_dependencies_algo.py` | algorytm używa `b_eff` i `T_ref` wszędzie w sterowaniu, zachowuje surowe wartości do uczenia, zatrzymuje uczenie, gdy ustawiona jest bramka uczenia (warunek taki jak otwarte drzwi do sąsiada), oraz zapisuje i wczytuje swój stan |
 | `test_smartpi_dependencies.py`, `test_smartpi_dependency_inputs.py` | skonfigurowane elementy, sposób ich sprawdzania, odczyty używane w jednym obliczeniu |
-| `test_config_flow.py`, `test_config_flow_dependencies.py` | menu opcji wpisu termostatu i lista zależności |
+| `test_config_flow.py`, `test_config_flow_dependencies.py` | menu opcji wpisu termostatu (z pozycją Woda i kocioł dla wodnego rodzaju ogrzewania) i wpisu globalnego oraz lista zależności |
 
 ### 4.3 Strefy sąsiednie
 
@@ -222,24 +225,26 @@ Wyniki są w [Wejście wody, §4.4](water_input.md#44-wyniki-symulacja).
 | `test_smartpi_source_link.py` | łącze między dwoma termostatami: wysterowania, cykle, główne źródło, które przestaje odpowiadać, limit mocy |
 | `test_smartpi_dependency_model_source.py` | bloki uczenia, zegar uczenia i jego limit czasu, hamowanie, szybszy powrót do nastawy po nocy, restart, chłodzenie |
 | `test_smartpi_dependencies_handler.py` | rodzaje ogrzewania odczytane z obu wpisów, reset zamówiony z formularza, zmieniony termostat nadrzędny (jego urządzenia porównane po unikalnym ID, także przy przeładowaniu wpisu, gdy termostat nie ma jeszcze ID encji) |
-| `test_config_flow_zone.py` | formularz strefy: termostat nadrzędny i jego sprawdzenia, zalecenie, przeniesienie głównego źródła, wpis drugiego termostatu, własne opóźnienie i bezwładność, usunięcie, krok resetu |
+| `test_config_flow_zone.py` | formularz strefy: termostat nadrzędny i jego sprawdzenia, zalecenie, przeniesienie głównego źródła, wpis drugiego termostatu (jego opcje otwierają menu, gdy jest grzany wodą), własne opóźnienie i bezwładność, usunięcie, krok resetu |
 
 ### 4.5 Woda
 
 | Plik | Co sprawdza |
 |---|---|
-| `test_smartpi_water_input.py` | współczynnik wody, jego średnie, ciepła woda, krótkie i trwałe przerwy, zapis i wczytanie stanu |
+| `test_smartpi_water_input.py` | współczynnik wody, jego średnie, ciepła woda, krótkie i trwałe przerwy, zapis i wczytanie stanu (z wejściami, do których należy), zapominanie danych |
 | `test_smartpi_water_algo.py` | wysterowanie = moc / współczynnik, uczenie = wysterowanie × współczynnik, limit mocy, wstrzymania w czasie grzania ciepłej wody i przy zimnej wodzie |
-| `test_smartpi_water_handler.py` | odczyt ze Smart Boiler, publikacja `water_factor`, reset proponowany, gdy dane się pojawiają albo znikają |
+| `test_smartpi_heating_inputs.py` | źródła, odczytywane osobno: encje (liczby, °F i K, unavailable, unknown albo tekst, brakująca encja, połączenia sygnałów grzania, ciepłej wody i awarii, encja powodu, encja odnaleziona po identyfikatorze z rejestru mimo zmiany nazwy); rejestr dostawców (rejestracja, wyrejestrowanie, dwóch dostawców, nietypowe nazwy), ostrożny odczyt dostawcy (niezarejestrowany, `None`, zła wersja, wyjątek, odpowiedź, która nie jest słownikiem, słownik, którego odczyt zgłasza błąd, brak metody, złe typy, za duże liczby, powody, których SmartPI nie zna, pola zapotrzebowania) i jednorazowe zgłoszenie, gdy długo go nie ma; kocioł centralny VTherm z jego bieżących encji (wezwany, trzy wyliczane powody, moce w W i kW, brakujące encje, termostat, którego kocioł nie liczy); odczyt opcji: sygnały z wpisu globalnego albo własne, wpisy bez tych kluczy, nieznane źródła |
+| `test_smartpi_water_handler.py` | moduł obsługi odczytuje wybrane źródło (testowego dostawcę albo encje z własnymi sygnałami termostatu lub z sygnałami z wpisu globalnego), publikuje `water_factor`, proponuje reset, gdy dane się pojawiają albo znikają, ale nie dla wejść, dla których w opcjach zachowano model; inne wejścia wybrane w opcjach kasują stan wody starych wejść (stan trwałej przerwy, długoterminową średnią) i otwarte zgłoszenie naprawy, te same wejścia zachowują swój stan po restarcie, a wpis sprzed wprowadzenia źródeł zachowuje dzisiejsze zasady przerw, gdy nie ma danych; wybrany dostawca, którego nie ma przez 10 minut, jest zgłaszany raz ostrzeżeniem |
+| `test_config_flow_heating_inputs.py` | formularze: menu wpisu globalnego i sygnały kotła (zapisane po identyfikatorze z rejestru, puste pole usunięte); Woda i kocioł: listy budowane z zarejestrowanych dostawców, kocioł centralny VTherm do wyboru (i domyślny) tylko tam, gdzie obsługuje termostat, dostawca, który nie jest już zarejestrowany, pokazany jako niedostępny, czujnik zasilania, sygnały z wpisu globalnego albo własne (wstępnie wypełnione z wpisu globalnego; własny sygnał zostawiony pusty zostaje pusty), krok resetu tylko przy zmianie źródła wody albo jego czujnika (reset albo zachowany model), wpisy bez tych kluczy; rodzaj elektryczny bez tej pozycji; dodatkowe źródło strefy, które wybiera tylko swoją wodę; nowy wpis tworzony przez formularz strefy, bez kopii sygnałów z wpisu globalnego |
 | `test_config_flow_heating_type.py` | rodzaj ogrzewania w ustawieniach; krok zgłoszenia naprawy (powiadomienia w „Naprawach” Home Assistant) |
 
 ### 4.6 Kocioł, który nie jest wezwany do grzania
 
 | Plik | Co sprawdza |
 |---|---|
-| `test_smartpi_boiler_call.py` | tryby: kocioł, który odpowiada w ciągu 15 min, niczego nie zmienia; przy wołaniu o ciepło bez odpowiedzi najpierw emiter stygnie, potem wstrzymanie, potem emiter się nagrzewa po starcie kotła; urządzenia włącz/wyłącz i ich cykl; utracony odczyt; powody podawane przez Smart Boiler |
+| `test_smartpi_boiler_call.py` | tryby: kocioł, który odpowiada w ciągu 15 min, niczego nie zmienia; przy wołaniu o ciepło bez odpowiedzi najpierw emiter stygnie, potem wstrzymanie, potem emiter się nagrzewa po starcie kotła; urządzenia włącz/wyłącz i ich cykl; utracony odczyt; powody podawane przez dostawców; diagnostyka z wybranym źródłem i jego wejściami, także bez odczytu |
 | `test_smartpi_boiler_algo.py` | uczenie nie widzi ciepła w czasie wstrzymania i czeka przed tym okresem i po nim; opóźnienie nie jest uczone ze startu kotła; korekta części wyprzedzającej jest zamrożona; kalibracja jest anulowana |
-| `test_smartpi_boiler_handler.py` | pola Smart Boiler i kocioł centralny VTherm, z każdym rodzajem złej lub brakującej wartości |
+| `test_smartpi_boiler_handler.py` | moduł obsługi odczytuje wybrane źródło wezwania: dostawcę (jego powody i zapotrzebowanie; żadnego innego źródła, gdy dostawca nic nie mówi), encje (własne sygnały termostatu albo sygnały z wpisu globalnego), kocioł centralny VTherm (domyślny tam, gdzie obsługuje termostat, jego powód i zapotrzebowanie), brak; blok `boiler` widoczny dla wybranego źródła bez danych; rodzaj elektryczny niczego nie odczytuje |
 
 ### 4.7 Czujnik diagnostyczny
 
@@ -264,8 +269,8 @@ Wyniki są w [Wejście wody, §4.4](water_input.md#44-wyniki-symulacja).
 Powyższe testy uruchamiają SmartPI wewnątrz procesu testów, na kopii harmonogramu cykli Versatile
 Thermostat. Sprawdzają fizykę, uczenie i reguły podziału, ale nie to, co pokazuje tylko prawdziwy
 Home Assistant. Robią to testy QAS (QAS od ang. quality assurance, czyli zapewnienie jakości; to
-też nazwa gałęzi `qas`, którą testują). Działają na ławce testowej z ośmioma instancjami
-Home Assistant (osobny projekt `ha-testbed`) i sprawdzają:
+też nazwa gałęzi `qas`, którą testują). Działają na ławce testowej z instancjami Home Assistant
+(osobny projekt `ha-testbed`; 2026-10-14: osiem instancji dla dziewięciu ról) i sprawdzają:
 
 - prawdziwy Versatile Thermostat 10.5.1, z jego kotłem centralnym, menedżerem mocy i wykrywaniem
   okna, dwa termostaty połączone przez Home Assistant i termostat nadrzędny over_climate;
@@ -285,38 +290,57 @@ go nie uruchamia: program uruchamiający potrzebuje `lib/` z ławki.
 | Ścieżka | Co to jest |
 |---|---|
 | `custom_components/smartpi_room_sim/` | symulator pomieszczeń jako integracja Home Assistant: pomieszczenia, grzejniki, zawory, kocioł, drzwi, okna i otoczenie na zewnątrz. Jego fizyka (`physics.py`) to ten sam plik, którego używa symulator w procesie testów: wczytuje go `tests/sim/plant.py` |
-| `custom_components/smartpi_qas_helpers/` | narzędzia pomocnicze tylko do testów, które sięgają do działającego SmartPI: wysyłają zdarzenie AutoCalib, uciszają główne źródło strefy, wczytują nauczony stan, podają listę wysłanych zdarzeń |
-| `roles.py` | osiem ról w jednym miejscu: pomieszczenia, termostaty, wpisy SmartPI i bazowe opcje |
+| `custom_components/smartpi_qas_helpers/` | narzędzia pomocnicze tylko do testów, które sięgają do działającego SmartPI: wysyłają zdarzenie AutoCalib, uciszają główne źródło strefy, wczytują nauczony stan, podają listę wysłanych zdarzeń; oraz dostawca danych o ogrzewaniu zgodny z kontraktem SmartPI, zasilany przez symulator, którego scenariusz może wyrejestrować albo kazać mu podać powód (kocioł nie jest wezwany, woda nieprzypisana do obiegu) |
+| `roles.py` | dziewięć ról w jednym miejscu: pomieszczenia, termostaty, wpisy SmartPI i bazowe opcje (ze źródłami wody i kotła) |
 | `config/<role>.yaml` | `configuration.yaml` każdej roli, zapisany przez `config/build.py` na podstawie `roles.py` |
-| `setup/setup_role.py` | przygotowuje instancję przez API, etapami (`setup/stages.py`), a potem ją restartuje |
+| `setup/setup_role.py` | przygotowuje instancję jako daną rolę, przez API, etapami (`setup/stages.py`), a potem ją restartuje |
 | `run.py`, `scenarios/` | program uruchamiający i scenariusze, oparte na `lib/harness.py` z ławki |
-| `compare.py` | porównuje to, co zmierzyły dwie instancje (QB1, QE5) |
+| `compare.py` | porównuje to, co zmierzyły dwie instancje (QB1, QE5), na podstawie dwóch plików wyników, które dostaje |
 | `README.md` | w skrócie: jak to uruchomić |
 
 **Symulator.** Pomieszczenie ma straty ciepła na zewnątrz `b` i pojemność cieplną. Grzejnik ma
 wzmocnienie grzania `a`, opóźnienie i bezwładność emitera (jeden stopień albo dwa dla płyty).
 Pomieszczenia są połączone cały czas albo przez drzwi, a okno łączy pomieszczenie z otoczeniem na
-zewnątrz. Emiter wodny grzeje tylko wodą z kotła: nagrzewa się w stronę 60 °C, gdy przełącznik
-kotła jest włączony, i stygnie do 12 °C (poniżej temperatury pomieszczeń), gdy jest wyłączony.
-Czujniki temperatury zaokrąglają do 0.1 albo 0.01 °C i zapisują wartość tylko wtedy, gdy odczyt
-się zmieni. Usługi (services) ustawiają temperaturę pomieszczenia albo zmieniają ją stopniowo,
-przesuwają średnią temperaturę zewnętrzną, otwierają lub zamykają drzwi albo okno, sprawiają, że
-urządzenie przestaje odpowiadać (zachowuje swój stan, a może też stać się niedostępne), i resetują
+zewnątrz. Emiter wodny grzeje tylko wodą z kotła: nagrzewa się w stronę temperatury wody, którą
+daje pracujący kocioł (60 °C, w roli `water` 40 °C), gdy przełącznik kotła jest włączony, i stygnie
+do 12 °C (poniżej temperatury pomieszczeń), gdy jest wyłączony. Kocioł można wyłączyć albo
+wprowadzić w stan awarii (wtedy nie grzeje), a ciepła woda użytkowa może przez pewien czas mieć
+priorytet (obiegi nie dostają wtedy ciepła, a zasilanie kotła pokazuje wodę płynącą do zasobnika).
+Każdy emiter wodny ma czujnik na swojej rurze zasilającej
+(`sensor.smartpi_room_sim_<heater>_supply`), a kocioł ma trzy sygnały: może grzać, ciepła woda ma
+priorytet, awaria (czujniki binarne). Czujniki temperatury zaokrąglają do 0.1 albo 0.01 °C
+i zapisują wartość tylko wtedy, gdy odczyt się zmieni. Usługi (services) ustawiają temperaturę
+pomieszczenia albo zmieniają ją stopniowo, przesuwają średnią temperaturę zewnętrzną, otwierają lub
+zamykają drzwi albo okno, sprawiają, że urządzenie przestaje odpowiadać (zachowuje swój stan, a może
+też stać się niedostępne), ustawiają stan kotła, uruchamiają grzanie ciepłej wody i resetują
 wejścia. Wszystkie identyfikatory encji zaczynają się od `smartpi_room_sim_`: nic nie pochodzi
 z prawdziwego domu.
 
-### 6.2 Role instancji
+**Dostawca danych o ogrzewaniu.** W rolach `water` i `electric` narzędzia pomocnicze rejestrują
+dostawcę zgodnego z kontraktem SmartPI (v1) o nazwie `qas`. Obsługuje on termostaty SmartPI danej
+roli: dla każdego podaje wodę z symulowanego kotła, to, czy kocioł może grzać (a jeśli nie, to
+dlaczego: ciepła woda, kocioł wyłączony, awaria, palnik wyłączony), czy kocioł jest wezwany, oraz
+zapotrzebowanie. Scenariusz może go wyrejestrować, wymusić powód braku zasilania (`flow_stale`,
+`not_mapped`, …) albo powiedzieć, że kocioł nie jest wezwany z danego powodu (symulowany kocioł
+przestaje wtedy grzać); `provider_status` mówi, jak często SmartPI pytał dostawcę, osobno dla
+każdego termostatu.
 
-| Inst. | Rola | Co zawiera |
-|---|---|---|
-| 1 | `base` | salon: VTherm over_switch ze SmartPI, bez rozszerzeń; nieogrzewany strych (czujnik dla QB3) |
-| 2 | `neighbours` | kuchnia (SmartPI), a jako sąsiedzi korytarz za drzwiami (TPI, z czujnikiem okna) i zawsze otwarta jadalnia (TPI) |
-| 3 | `zone` | pokój dzienny: grzejnik (główne źródło) i podłogówka (dodatkowe źródło) pod termostatem nadrzędnym `Lounge` (over_climate, samoregulacja wyłączona); zapasowe termostaty dla QE1 |
-| 4 | `zone-ref` | ten sam pokój dzienny z dwoma niezależnymi SmartPI (porównanie dla QE5) |
-| 5 | `zone-valve` | gabinet: podłogówka jest zaworem (over_valve); menedżer mocy VTherm |
-| 6 | `central-boiler` | kocioł centralny VTherm (próg mocy 2500 W): sypialnia (2000 W) nie może go sama uruchomić, biuro (3000 W) może |
-| 7 | `ref-0.4.0` | bliźniak instancji 1 na wersji 0.4.0 autora, później przeniesiony na `qas` i z powrotem |
-| 8 | `electric` | elektryczne rodzaje ogrzewania (elektryczna mata grzewcza, szybki grzejnik elektryczny); powtórne przebiegi |
+### 6.2 Role
+
+Która instancja uruchamia którą rolę i kiedy, wybiera sesja testowa ławki: rola nie wskazuje
+żadnej instancji, a przygotowanie i program uruchamiający biorą rolę z `--role`.
+
+| Rola | Co zawiera |
+|---|---|
+| `base` | salon: VTherm over_switch ze SmartPI, bez rozszerzeń; nieogrzewany strych (czujnik dla QB3) |
+| `neighbours` | kuchnia (SmartPI), a jako sąsiedzi korytarz za drzwiami (TPI, z czujnikiem okna) i zawsze otwarta jadalnia (TPI) |
+| `zone` | pokój dzienny: grzejnik (główne źródło) i podłogówka (dodatkowe źródło) pod termostatem nadrzędnym `Lounge` (over_climate, samoregulacja wyłączona); zapasowe termostaty dla QE1 |
+| `zone-ref` | ten sam pokój dzienny z dwoma niezależnymi SmartPI (porównanie dla QE5) |
+| `zone-valve` | gabinet: podłogówka jest zaworem (over_valve); menedżer mocy VTherm |
+| `central-boiler` | kocioł centralny VTherm (próg mocy 2500 W): sypialnia (2000 W) nie może go sama uruchomić, biuro (3000 W) może |
+| `ref-0.4.0` | bliźniak roli `base` na wersji 0.4.0 autora, później przeniesiony na `qas` i z powrotem |
+| `electric` | elektryczne rodzaje ogrzewania (elektryczna mata grzewcza, szybki grzejnik elektryczny), z zarejestrowanym dostawcą danych o ogrzewaniu z narzędzi pomocniczych (QW8); powtórne przebiegi |
+| `water` | kocioł od początku grzeje wodą o temperaturze 40 °C; grzejnik w pracowni odczytuje wodę z encji (swój czujnik zasilania, sygnały kotła we wpisie globalnym „SmartPI defaults”), a wezwanie kotła od dostawcy z narzędzi pomocniczych; podłogówka w pokoju dziecięcym (zawór) odczytuje wodę od dostawcy; pokój dzienny to strefa (grzejnik i podłogówka), której oba termostaty odczytują wodę od dostawcy |
 
 Każdy VTherm ma opóźnienie trybu bezpieczeństwa 1440 min. Czujnik, który zapisuje tylko przy
 zmianie, utrzymuje jedną wartość dłużej niż domyślne 60 min w VTherm, a VTherm uznałby go za
@@ -335,29 +359,34 @@ Sesja testowa ławki postępuje według własnego `docs/workflow.md`. Dla tego p
            --components stage/versatile_thermostat/custom_components \
            --config stage/vtherm_smartpi/tests/qas/config/<role>.yaml
 
-3. **Skonfiguruj ją** przez API (wpisy VTherm, obszary, progi kotła i maksymalna moc, wpisy
-   SmartPI, bazowe opcje), a potem ją zrestartuj:
+3. **Skonfiguruj ją** jako jej rolę przez API (wpisy VTherm, obszary, progi kotła i maksymalna
+   moc, wpisy SmartPI, bazowe opcje), a potem ją zrestartuj:
 
-       HA_INSTANCE=N python stage/vtherm_smartpi/tests/qas/setup/setup_role.py
+       HA_INSTANCE=N python stage/vtherm_smartpi/tests/qas/setup/setup_role.py --role ROLE
 
    Etapy, po kolei: `vtherm` (centralna konfiguracja VTherm, wpis globalny SmartPI z wartościami
    domyślnymi, termostaty, potem termostaty nadrzędne), `areas`, `inputs`, `smartpi` (jeden wpis
-   na każdy termostat SmartPI) i `options`. Każdy etap pomija to, co już istnieje; `--stage`
-   uruchamia jeden etap.
+   na każdy termostat SmartPI) i `options` (ustawienia zapisane raz, sąsiedzi, strefa, sygnały
+   kotła we wpisie globalnym oraz źródła wody i kotła każdego termostatu, z zachowanym modelem).
+   Każdy etap pomija to, co już istnieje; `--stage` uruchamia jeden etap.
 4. **Uruchom** scenariusze albo `M`, czyli zestaw minimalny roli:
 
-       HA_INSTANCE=N python stage/vtherm_smartpi/tests/qas/run.py M
-       HA_INSTANCE=N python stage/vtherm_smartpi/tests/qas/run.py QD5      # detached: 72 h
+       HA_INSTANCE=N python stage/vtherm_smartpi/tests/qas/run.py --role ROLE M
+       HA_INSTANCE=N python stage/vtherm_smartpi/tests/qas/run.py --role neighbours QD5   # detached: 72 h
 
    `run.py --list` pokazuje scenariusze. Każdy startuje tylko ze stanu bazowego swojej roli (jej
    wpisy SmartPI i ich opcje; sąsiedzi i strefa są porównywani według tego, co oznaczają, a nie
-   według identyfikatorów nadanych przez formularze). Między scenariuszami wejścia symulatora
-   i termostaty wracają do stanu bazowego.
-5. **Porównaj** pary: `python stage/vtherm_smartpi/tests/qas/compare.py qb1` (instancje 1 i 7)
-   i `compare.py qe5` (instancje 3 i 4), z katalogu ławki.
+   według identyfikatorów nadanych przez formularze; źródła wody i kotła oraz encje, które
+   odczytują, według ich identyfikatora encji). Między scenariuszami wejścia symulatora (także stan
+   kotła i ciepła woda), dostawca z narzędzi pomocniczych i termostaty wracają do stanu bazowego.
+5. **Porównaj** pary, z katalogu ławki, podając dwie instancje, które je uruchomiły (albo ich dwa
+   pliki wyników): `python stage/vtherm_smartpi/tests/qas/compare.py qb1 NEW REF` (NEW uruchomiła
+   rolę `base`, REF rolę `ref-0.4.0`) i `compare.py qe5 NEW REF` (NEW uruchomiła rolę `zone`, REF
+   rolę `zone-ref`).
 
-**Instancja 7** przechodzi z 0.4.0 na `qas` i z powrotem. Ławka wdraża fork w wersji 0.4.0
-(51db763) z `--ref`, a komponenty pakietu testów z pobranej kopii gałęzi `qas` (checkout):
+**Instancja, która uruchamia `ref-0.4.0`,** przechodzi z 0.4.0 na `qas` i z powrotem. Ławka wdraża
+fork w wersji 0.4.0 (51db763) z `--ref`, a komponenty pakietu testów z pobranej kopii gałęzi `qas`
+(checkout):
 
     QB1 / QB1s  →  QB2a (or QB2l after QB1)  →  deploy qas  →  QB2  →  QB3a  →  deploy 0.4.0  →  QB3
 
@@ -374,6 +403,7 @@ i `smartpi/source_model.py`):
 | po zamknięciu drzwi uczenie czeka | 10 min |
 | czas tolerancji kotła | 15 min, plus cykl dla urządzenia włącz/wyłącz |
 | ustalanie się emitera (opóźnienie i trzy bezwładności) | grzejnik 65 min, podłogówka na wodzie 570 min |
+| brak wybranego dostawcy, zanim SmartPI ostrzeże | 10 min |
 | główne źródło, które milczy | 15 min |
 | wykrywanie okna w VTherm | 30 s |
 
@@ -384,59 +414,62 @@ stopniowo (rampami).
 ### 6.5 Katalog testów
 
 „W tle”: dłuższy niż dwie godziny, więc ławka uruchamia go w tle. „Minimum”: należy do zestawu
-minimalnego, który uruchamia się po każdej zmianie. Zestaw „ze Smart Boilerem” jest zaplanowany.
-Nie ustalono jeszcze, jak testować ze Smart Boilerem (prawdziwa wtyczka w określonej wersji albo
-zastępnik jej interfejsu tylko do testów), i nic z tego nie jest zbudowane.
+minimalnego, który uruchamia się po każdej zmianie. „Zestaw”: scenariusze „z danymi o wodzie”
+używają roli `water` (albo dostawcy z narzędzi pomocniczych w roli `electric`); pozostałe nie
+potrzebują danych o wodzie.
 
-| ID | Co sprawdza | Instancja i rola | Czas | W tle | Odpowiednik w procesie testów | Minimum | Zestaw |
+| ID | Co sprawdza | Rola | Czas | W tle | Odpowiednik w procesie testów | Minimum | Zestaw |
 |---|---|---|---|---|---|---|---|
-| QA1 | Po restarcie na końcu przygotowania każdy wpis SmartPI i VTherm jest wczytany, ani SmartPI, ani VTherm nie zapisuje w logu ostrzeżenia ani błędu, każdy termostat SmartPI ma swoją diagnostykę i nie ma niczego ze Smart Boilera. | 1 `base`, 8 `electric` | 15 min | nie | test_factory.py | tak | bez Smart Boilera |
-| QA2 | Zapisanie ustawień wpisu termostatu bez zmian przechodzi przez menu opcji bez kroku resetu, zachowuje zapisane opcje i przeładowuje wpis raz, bez pętli. | 1 `base` | 15 min | nie | test_config_flow_dependencies.py | tak | bez Smart Boilera |
-| QA3 | Cztery usługi SmartPI działają na VTherm 10.5.1, a pauza w uczeniu trwa także po restarcie. | 1 `base` | 30 min | nie | test_services.py | nie | bez Smart Boilera |
-| QA4 | Zdarzenia AutoCalib niosą encję climate termostatu w entity_id, a jego nazwę w name, i ani rejestrator, ani dziennik nie zapisuje w logu błędu o nieprawidłowym identyfikatorze encji. | 1 `base` | 60 min | nie | test_smartpi_autocalib_events.py | tak | bez Smart Boilera |
-| QA5 | Dwa restarty zachowują nauczony stan (model, jego liczniki i zastosowany token resetu), a token resetu nie jest stosowany ponownie. | 1 `base` | 20 min | nie | test_algo_persistence.py | tak | bez Smart Boilera |
-| QA6 | Wodny rodzaj ogrzewania pokazuje blok water ze źródłem none i współczynnikiem 1, a bez kotła centralnego VTherm nie ma bloku boiler; rodzaj elektryczny nie pokazuje żadnego z nich; przy wywołaniach sterowania nic nie trafia do logu. | 1 `base`, 8 `electric` | 20 min | nie | test_smartpi_water_handler.py, test_smartpi_boiler_handler.py | tak | bez Smart Boilera |
-| QB1 | Przez 48 h bliźniacze pomieszczenie uczy się i reguluje; instancja zachowuje a, b i swój średni błąd z okresu od 24 do 48 h, a compare.py qb1 uznaje wynik za dobry, gdy a i b instancji qas są w granicach ±10 % wartości z 0.4.0, a jej średni błąd jest wyższy najwyżej o 0.03 °C. | 1 `base`, 7 `ref-0.4.0` | 48 h | tak | test_smartpi_regression_no_dependencies.py, test_smartpi_sim_baseline.py | nie | bez Smart Boilera |
-| QB1s | Przez 45 minut bliźniacze pomieszczenie reguluje, a w logu nie ma żadnego błędu; instancja zachowuje to, co odczytuje compare.py qb1s (obie instancje regulują, fazy mają nazwy). Krótki wariant QB1. | 1 `base`, 7 `ref-0.4.0` | 45 min | nie | test_smartpi_sim_baseline.py | tak | bez Smart Boilera |
-| QB2a | Na 0.4.0, przed aktualizacją: stan SmartPI to nauczony stan z pliku testowego (fixture), zapisany przez samą wersję 0.4.0 z pauzą w uczeniu, a jego model jest zachowany dla QB2. | 7 `ref-0.4.0` | 10 min | nie | test_algo_persistence.py | tak | bez Smart Boilera |
-| QB2 | Po aktualizacji z 0.4.0 do qas stan zapisany przez 0.4.0 jest wczytany bez zmian, w logu nie ma ostrzeżenia o jego formacie, nic nie jest resetowane, a menu opcji starego wpisu działa. | 7 `ref-0.4.0` | 30 min | nie | test_algo_persistence.py | tak | bez Smart Boilera |
-| QB3a | Na qas, przed powrotem do 0.4.0: do wpisu jest dodany sąsiad (czujnik strychu), włączona zostaje pauza w uczeniu, a model jest zachowany dla QB3; zostaje tak celowo. | 7 `ref-0.4.0` | 10 min | nie | — | nie | bez Smart Boilera |
-| QB3 | Po powrocie na 0.4.0, ze skonfigurowanym sąsiadem, wpis wczytuje się bez błędów, stan również; zapisanie opcji w 0.4.0 usuwa klucze forka, co jest znanym zachowaniem. | 7 `ref-0.4.0` | 30 min | nie | — | nie | bez Smart Boilera |
-| QB2l | Na 0.4.0 po QB1, przed aktualizacją: model, którego wersja 0.4.0 nauczyła się sama, jest zachowany dla QB2 z pauzą w uczeniu, bez wczytywania gotowego stanu. | 7 `ref-0.4.0` | 5 min | nie | test_algo_persistence.py | nie | bez Smart Boilera |
-| QC1 | Dla termostatu obsługiwanego przez kocioł centralny VTherm blok boiler pokazuje źródło vtherm_central_boiler, a jego pole called podąża za czujnikiem binarnym kotła centralnego. | 6 `central-boiler` | 30 min | nie | test_smartpi_boiler_handler.py | tak | bez Smart Boilera |
-| QC2 | Mała strefa, która sama woła o ciepło poniżej progów, przechodzi w emitter_cooling po czasie tolerancji, w held po czasie ustalania się swojego emitera, bez uczenia a, w emitter_warming, gdy duża strefa uruchomi kocioł, i wraca do zwykłego uczenia jeden czas ustalania się później. | 6 `central-boiler` | 2.5 h | tak | test_smartpi_boiler_call.py, test_smartpi_boiler_algo.py | nie | bez Smart Boilera |
-| QC2s | Mała strefa, która sama woła o ciepło poniżej progów, przechodzi w emitter_cooling po czasie tolerancji i w held po czasie ustalania się swojego emitera, bez uczenia a, a potem w emitter_warming, gdy duża strefa uruchomi kocioł. Krótki wariant QC2, QC4. | 6 `central-boiler` | 95 min | nie | test_smartpi_boiler_call.py, test_smartpi_boiler_algo.py | tak | bez Smart Boilera |
-| QC3 | Gdy czujnika binarnego kotła centralnego nie ma (jest wyłączony), SmartPI nie odczytuje żadnego wezwania kotła i uczy się jak wcześniej, bez błędów w logu; potem czujnik wraca. | 6 `central-boiler` | 20 min | nie | test_smartpi_boiler_handler.py | tak | bez Smart Boilera |
-| QC4 | Codziennie od 2:00 do 8:00 duża strefa jest wyłączona, więc mała strefa woła o ciepło, a kocioł nie pracuje; po 48 h jej nauczone a mieści się w zakresie 0.85–1.2 prawdziwego a jej grzejnika. | 6 `central-boiler` | 48 h | tak | B1 (test_smartpi_sim_boiler_call.py) | nie | bez Smart Boilera |
-| QD1 | Formularze sąsiadów pokazują każdy błąd i każde ostrzeżenie, podpowiadają czujnik drzwi z obszarów obu stref, edytują i usuwają z własnym krokiem resetu oraz zatrzymują się z neighbour_missing, dependencies_unchanged i zone_changed. | 2 `neighbours` | 45 min | nie | test_config_flow_neighbours.py | tak | bez Smart Boilera |
-| QD2 | Reset wybrany w formularzu sąsiada resetuje model kuchni raz, a następny restart nie resetuje go ponownie. | 2 `neighbours` | 20 min | nie | test_smartpi_dependencies_handler.py | tak | bez Smart Boilera |
-| QD3 | Sąsiad, który jest niedostępny albo w trybie none, nie bierze udziału: jego połączenie jest nieaktywne, a model kuchni nie ma od niego znanego wejścia. | 2 `neighbours` | 30 min | nie | N1, N4 | tak | bez Smart Boilera |
-| QD4 | Przy otwartych drzwiach otwarte okno korytarza sprawia, że kuchnia reaguje tak, jak mówi jej ustawienie (nic, wyłączenie, ochrona przed mrozem, eco), i w tym czasie nie uczy się żadnego k; kuchnia wraca do normalnej pracy, gdy okno i drzwi się zamkną. | 2 `neighbours` | 60 min | nie | N6 | tak | bez Smart Boilera |
-| QD5 | Przy drzwiach otwartych codziennie 7–9, 12–13:30 i 18–22 przez 72 h kuchnia uczy się k korytarza w granicach ±25 % prawdziwej wymiany ciepła i nie uczy się czasu martwego, gdy drzwi są otwarte. | 2 `neighbours` | 72 h | tak | N2, N5 | nie | bez Smart Boilera |
-| QD5s | Drzwi otwarte dwa razy na 8 minut wstrzymują uczenie kuchni (door_open, potem door_settling), a gdy są otwarte, czas martwy nie jest uczony. Krótki wariant QD5. | 2 `neighbours` | 40 min | nie | N2 | tak | bez Smart Boilera |
-| QD6 | Przy zawsze otwartej jadalni, której temperatura przez 72 h sama zmienia się skokami, kuchnia uczy się jej k w granicach ±20 % prawdziwej wymiany ciepła albo oznacza ją jako indistinguishable (nie do odróżnienia). | 2 `neighbours` | 72 h | tak | N3 | nie | bez Smart Boilera |
-| QD6s | Gdy temperatura zawsze otwartej jadalni skacze, kuchnia nadal ma ją podłączoną, nie wstrzymuje uczenia i nie zapisuje błędu w logu. Krótki wariant QD6. | 2 `neighbours` | 30 min | nie | N3 | tak | bez Smart Boilera |
-| QE1 | Formularz strefy odrzuca każdy zły termostat nadrzędny, tworzy brakujący wpis urządzenia i restartuje przy tym tylko ten termostat, przenosi strefę skonfigurowaną od strony dodatkowego źródła do głównego, zatrzymuje się z zone_changed i usuwa strefę. | 3 `zone` | 60 min | nie | test_config_flow_zone.py | tak | bez Smart Boilera |
-| QE2 | W działającej strefie dodatkowe źródło niczego się nie uczy i stosuje wysterowanie głównego źródła, a zmiana jego rodzaju ogrzewania restartuje główne źródło. | 3 `zone` | 60 min | nie | test_smartpi_sim_second_source.py | tak | bez Smart Boilera |
-| QE3 | Gdy główne źródło milknie, po 15 minutach dodatkowe źródło samo reguluje strefę, a temperatura w pomieszczeniu zostaje powyżej 19.3 °C; gdy główne źródło wraca, dodatkowe znów za nim podąża. | 3 `zone` | 60 min | nie | Z6 | tak | bez Smart Boilera |
-| QE4 | Gdy urządzenia termostatu nadrzędnego zmienią się w VTherm, SmartPI przy starcie zapisuje ostrzeżenie w logu, a strefa dalej działa. | 3 `zone` | 15 min | nie | test_smartpi_dependencies_handler.py | tak | bez Smart Boilera |
-| QE5 | Przez 48 h strefa publikuje swój model przed około 30 h, reguluje najwyżej o 0.05 °C gorzej niż niezależna para, podłogówka daje ponad 20 % ciepła, a restart po 36 h zachowuje model; ocenia to compare.py qe5. | 3 `zone`, 4 `zone-ref` | 48 h | tak | Z1 porównanie | nie | bez Smart Boilera |
-| QE5s | Przez 45 minut strefa (albo niezależna para) reguluje, a w logu nie ma żadnego błędu; w strefie podłogówka podąża za grzejnikiem. Krótki wariant QE5. | 3 `zone`, 4 `zone-ref` | 45 min | nie | Z1 porównanie | tak | bez Smart Boilera |
-| QE6 | Gdy menedżer mocy VTherm odcina urządzenia strefy (zrzut mocy), główne źródło objęte zrzutem nadal wysyła swoje wysterowanie, a dodatkowe źródło objęte zrzutem zostaje wyłączone. | 5 `zone-valve` | 60 min | nie | zrzut mocy | nie | bez Smart Boilera |
-| QE7 | Przez 2 h zawór jako dodatkowe źródło podąża za wysterowaniem głównego źródła. | 5 `zone-valve` | 2 h | nie | zawór jako dodatkowe źródło | nie | bez Smart Boilera |
-| QZ1 | SmartPI nie zapisuje w logu żadnego błędu, a każde jego ostrzeżenie jest na liście; rejestrator nie odrzuca żadnego atrybutu diagnostyki; formularze czytane po polsku pokazują tekst, a nie klucze; po trzech przeładowaniach wpisu jego termostat nie liczy podwójnie, żaden termostat nadrzędny strefy nie jest zgłaszany jako zmieniony i żaden czujnik diagnostyczny nie jest odrzucany jako duplikat. | wszystkie | 25 min | nie | — | tak | bez Smart Boilera |
-| QW1 | Dane o wodzie dostępne przez 48 h: źródło live, a w zakresie 0.5–1.2 prawdziwej wartości i ponad 1.5 raza tyle, ile wartość nauczona bez danych (zaplanowany, nie zbudowany) | — | — | — | woda z danymi i bez nich | — | ze Smart Boilerem |
-| QW2 | Ciepła woda z priorytetem (dhw_active): φ = 0, wysterowanie i całka wstrzymane (zaplanowany, nie zbudowany) | — | — | — | ciepła woda | — | ze Smart Boilerem |
-| QW3 | Brak danych przez 2 h, potem na dobre: długa średnia zachowana, potem φ = 1 i raz zgłoszenie naprawy water_data_gone; jego naprawa resetuje model (zaplanowany, nie zbudowany) | — | — | — | przerwy w danych; test_config_flow_heating_type.py | — | ze Smart Boilerem |
-| QW4 | Dane pojawiają się po uczeniu: raz zgłoszenie naprawy water_data_appeared (zaplanowany, nie zbudowany) | — | — | — | test_smartpi_water_handler.py | — | ze Smart Boilerem |
-| QW5 | Wezwanie od Smart Boilera (below_threshold, no_demand, activation_delay, boiler_fault): źródło smart_boiler, wstrzymanie jak w QC2, pola zapotrzebowania (zaplanowany, nie zbudowany) | — | — | — | B2; test_smartpi_boiler_handler.py | — | ze Smart Boilerem |
-| QW6 | Podłogówka strefy na wodzie ze Smart Boilera: dodatkowe źródło zamienia moc głównego źródła na własne wysterowanie, używając własnych danych o wodzie (zaplanowany, nie zbudowany) | — | — | — | podłogówka na wodzie | — | ze Smart Boilerem |
-| QW7 | Termostat nieprzypisany albo Smart Boiler usunięty: lasting, φ = 1 (zaplanowany, nie zbudowany) | — | — | — | test_smartpi_water_input.py | — | ze Smart Boilerem |
-| QW8 | Elektryczny rodzaj ogrzewania przy obecnym Smart Boilerze: nigdy nie odczytuje Smart Boilera (zaplanowany, nie zbudowany) | — | — | — | test_smartpi_water_handler.py | — | ze Smart Boilerem |
+| QA1 | Po restarcie na końcu przygotowania każdy wpis SmartPI i VTherm jest wczytany, ani SmartPI, ani VTherm nie zapisuje w logu ostrzeżenia ani błędu, każdy termostat SmartPI ma swoją diagnostykę, nie jest zarejestrowany żaden dostawca danych o ogrzewaniu poza dostawcą z narzędzi pomocniczych tam, gdzie rola go ma, i żaden wpis nie wybiera źródła wody ani źródła wezwania kotła. | `base`, `electric` | 15 min | nie | test_factory.py | tak | bez danych o wodzie |
+| QA2 | Zapisanie ustawień wpisu termostatu bez zmian przechodzi przez menu opcji bez kroku resetu, zachowuje zapisane opcje i przeładowuje wpis raz, bez pętli. | `base` | 15 min | nie | test_config_flow_dependencies.py | tak | bez danych o wodzie |
+| QA3 | Cztery usługi SmartPI działają na VTherm 10.5.1, a pauza w uczeniu trwa także po restarcie. | `base` | 30 min | nie | test_services.py | nie | bez danych o wodzie |
+| QA4 | Zdarzenia AutoCalib niosą encję climate termostatu w entity_id, a jego nazwę w name, i ani rejestrator, ani dziennik nie zapisuje w logu błędu o nieprawidłowym identyfikatorze encji. | `base` | 60 min | nie | test_smartpi_autocalib_events.py | tak | bez danych o wodzie |
+| QA5 | Dwa restarty zachowują nauczony stan (model, jego liczniki i zastosowany token resetu), a token resetu nie jest stosowany ponownie. | `base` | 20 min | nie | test_algo_persistence.py | tak | bez danych o wodzie |
+| QA6 | Wodny rodzaj ogrzewania bez źródła danych o wodzie pokazuje blok water ze źródłem none, współczynnikiem 1 i wejściami bez źródła, a bez źródła wezwania nie ma bloku boiler; rodzaj elektryczny nie pokazuje żadnego z nich; przy wywołaniach sterowania nic nie trafia do logu. | `base`, `electric` | 20 min | nie | test_smartpi_water_handler.py, test_smartpi_boiler_handler.py | tak | bez danych o wodzie |
+| QB1 | Przez 48 h bliźniacze pomieszczenie uczy się i reguluje; instancja zachowuje a, b i swój średni błąd z okresu od 24 do 48 h, a compare.py qb1 uznaje wynik za dobry, gdy a i b instancji qas są w granicach ±10 % wartości z 0.4.0, a jej średni błąd jest wyższy najwyżej o 0.03 °C. | `base`, `ref-0.4.0` | 48 h | tak | test_smartpi_regression_no_dependencies.py, test_smartpi_sim_baseline.py | nie | bez danych o wodzie |
+| QB1s | Przez 45 minut bliźniacze pomieszczenie reguluje, a w logu nie ma żadnego błędu; instancja zachowuje to, co odczytuje compare.py qb1s (obie instancje regulują, fazy mają nazwy). Krótki wariant QB1. | `base`, `ref-0.4.0` | 45 min | nie | test_smartpi_sim_baseline.py | tak | bez danych o wodzie |
+| QB2a | Na 0.4.0, przed aktualizacją: stan SmartPI to nauczony stan z pliku testowego (fixture), zapisany przez samą wersję 0.4.0 z pauzą w uczeniu, a jego model jest zachowany dla QB2. | `ref-0.4.0` | 10 min | nie | test_algo_persistence.py | tak | bez danych o wodzie |
+| QB2 | Po aktualizacji z 0.4.0 do qas stan zapisany przez 0.4.0 jest wczytany bez zmian, w logu nie ma ostrzeżenia o jego formacie, nic nie jest resetowane, a menu opcji starego wpisu działa. | `ref-0.4.0` | 30 min | nie | test_algo_persistence.py | tak | bez danych o wodzie |
+| QB3a | Na qas, przed powrotem do 0.4.0: do wpisu jest dodany sąsiad (czujnik strychu), włączona zostaje pauza w uczeniu, a model jest zachowany dla QB3; zostaje tak celowo. | `ref-0.4.0` | 10 min | nie | — | nie | bez danych o wodzie |
+| QB3 | Po powrocie na 0.4.0, ze skonfigurowanym sąsiadem, wpis wczytuje się bez błędów, stan również; zapisanie opcji w 0.4.0 usuwa klucze forka, co jest znanym zachowaniem. | `ref-0.4.0` | 30 min | nie | — | nie | bez danych o wodzie |
+| QB2l | Na 0.4.0 po QB1, przed aktualizacją: model, którego wersja 0.4.0 nauczyła się sama, jest zachowany dla QB2 z pauzą w uczeniu, bez wczytywania gotowego stanu. | `ref-0.4.0` | 5 min | nie | test_algo_persistence.py | nie | bez danych o wodzie |
+| QC1 | Dla termostatu obsługiwanego przez kocioł centralny VTherm blok boiler pokazuje źródło vtherm_central_boiler, jego pole called podąża za czujnikiem binarnym kotła centralnego, a przy wyłączonym kotle powód i zapotrzebowanie pochodzą z bieżących encji VTherm (nic nie woła o ciepło: no_demand, próg mocy 2.5 kW). | `central-boiler` | 30 min | nie | test_smartpi_boiler_handler.py | tak | bez danych o wodzie |
+| QC2 | Mała strefa, która sama woła o ciepło poniżej progów, przechodzi w emitter_cooling po czasie tolerancji, w held po czasie ustalania się swojego emitera (powód z VTherm: below_threshold), bez uczenia a, w emitter_warming, gdy duża strefa uruchomi kocioł, i wraca do zwykłego uczenia jeden czas ustalania się później. | `central-boiler` | 2.5 h | tak | test_smartpi_boiler_call.py, test_smartpi_boiler_algo.py | nie | bez danych o wodzie |
+| QC2s | Mała strefa, która sama woła o ciepło poniżej progów, przechodzi w emitter_cooling po czasie tolerancji i w held po czasie ustalania się swojego emitera (powód z VTherm: below_threshold), bez uczenia a, a potem w emitter_warming, gdy duża strefa uruchomi kocioł. Krótki wariant QC2, QC4. | `central-boiler` | 95 min | nie | test_smartpi_boiler_call.py, test_smartpi_boiler_algo.py | tak | bez danych o wodzie |
+| QC3 | Gdy czujnika binarnego kotła centralnego nie ma (jest wyłączony), SmartPI nie odczytuje żadnego wezwania kotła (jego źródło jest pokazane bez danych) i uczy się jak wcześniej, bez błędów w logu; potem czujnik wraca. | `central-boiler` | 20 min | nie | test_smartpi_boiler_handler.py | tak | bez danych o wodzie |
+| QC4 | Codziennie od 2:00 do 8:00 duża strefa jest wyłączona, więc mała strefa woła o ciepło, a kocioł nie pracuje; po 48 h jej nauczone a mieści się w zakresie 0.85–1.2 prawdziwego a jej grzejnika. | `central-boiler` | 48 h | tak | B1 (test_smartpi_sim_boiler_call.py) | nie | bez danych o wodzie |
+| QD1 | Formularze sąsiadów pokazują każdy błąd i każde ostrzeżenie, podpowiadają czujnik drzwi z obszarów obu stref, edytują i usuwają z własnym krokiem resetu oraz zatrzymują się z neighbour_missing, dependencies_unchanged i zone_changed. | `neighbours` | 45 min | nie | test_config_flow_neighbours.py | tak | bez danych o wodzie |
+| QD2 | Reset wybrany w formularzu sąsiada resetuje model kuchni raz, a następny restart nie resetuje go ponownie. | `neighbours` | 20 min | nie | test_smartpi_dependencies_handler.py | tak | bez danych o wodzie |
+| QD3 | Sąsiad, który jest niedostępny albo w trybie none, nie bierze udziału: jego połączenie jest nieaktywne, a model kuchni nie ma od niego znanego wejścia. | `neighbours` | 30 min | nie | N1, N4 | tak | bez danych o wodzie |
+| QD4 | Przy otwartych drzwiach otwarte okno korytarza sprawia, że kuchnia reaguje tak, jak mówi jej ustawienie (nic, wyłączenie, ochrona przed mrozem, eco), i w tym czasie nie uczy się żadnego k; kuchnia wraca do normalnej pracy, gdy okno i drzwi się zamkną. | `neighbours` | 60 min | nie | N6 | tak | bez danych o wodzie |
+| QD5 | Przy drzwiach otwartych codziennie 7–9, 12–13:30 i 18–22 przez 72 h kuchnia uczy się k korytarza w granicach ±25 % prawdziwej wymiany ciepła i nie uczy się czasu martwego, gdy drzwi są otwarte. | `neighbours` | 72 h | tak | N2, N5 | nie | bez danych o wodzie |
+| QD5s | Drzwi otwarte dwa razy na 8 minut wstrzymują uczenie kuchni (door_open, potem door_settling), a gdy są otwarte, czas martwy nie jest uczony. Krótki wariant QD5. | `neighbours` | 40 min | nie | N2 | tak | bez danych o wodzie |
+| QD6 | Przy zawsze otwartej jadalni, której temperatura przez 72 h sama zmienia się skokami, kuchnia uczy się jej k w granicach ±20 % prawdziwej wymiany ciepła albo oznacza ją jako indistinguishable (nie do odróżnienia). | `neighbours` | 72 h | tak | N3 | nie | bez danych o wodzie |
+| QD6s | Gdy temperatura zawsze otwartej jadalni skacze, kuchnia nadal ma ją podłączoną, nie wstrzymuje uczenia i nie zapisuje błędu w logu. Krótki wariant QD6. | `neighbours` | 30 min | nie | N3 | tak | bez danych o wodzie |
+| QE1 | Formularz strefy odrzuca każdy zły termostat nadrzędny, tworzy brakujący wpis urządzenia i restartuje przy tym tylko ten termostat, przenosi strefę skonfigurowaną od strony dodatkowego źródła do głównego, zatrzymuje się z zone_changed i usuwa strefę. | `zone` | 60 min | nie | test_config_flow_zone.py | tak | bez danych o wodzie |
+| QE2 | W działającej strefie dodatkowe źródło niczego się nie uczy i stosuje wysterowanie głównego źródła, a zmiana jego rodzaju ogrzewania restartuje główne źródło. | `zone` | 60 min | nie | test_smartpi_sim_second_source.py | tak | bez danych o wodzie |
+| QE3 | Gdy główne źródło milknie, po 15 minutach dodatkowe źródło samo reguluje strefę, a temperatura w pomieszczeniu zostaje powyżej 19.3 °C; gdy główne źródło wraca, dodatkowe znów za nim podąża. | `zone` | 60 min | nie | Z6 | tak | bez danych o wodzie |
+| QE4 | Gdy urządzenia termostatu nadrzędnego zmienią się w VTherm, SmartPI przy starcie zapisuje ostrzeżenie w logu, a strefa dalej działa. | `zone` | 15 min | nie | test_smartpi_dependencies_handler.py | tak | bez danych o wodzie |
+| QE5 | Przez 48 h strefa publikuje swój model przed około 30 h, reguluje najwyżej o 0.05 °C gorzej niż niezależna para, podłogówka daje ponad 20 % ciepła, a restart po 36 h zachowuje model; ocenia to compare.py qe5. | `zone`, `zone-ref` | 48 h | tak | Z1 porównanie | nie | bez danych o wodzie |
+| QE5s | Przez 45 minut strefa (albo niezależna para) reguluje, a w logu nie ma żadnego błędu; w strefie podłogówka podąża za grzejnikiem. Krótki wariant QE5. | `zone`, `zone-ref` | 45 min | nie | Z1 porównanie | tak | bez danych o wodzie |
+| QE6 | Gdy menedżer mocy VTherm odcina urządzenia strefy (zrzut mocy), główne źródło objęte zrzutem nadal wysyła swoje wysterowanie, a dodatkowe źródło objęte zrzutem zostaje wyłączone. | `zone-valve` | 60 min | nie | zrzut mocy | nie | bez danych o wodzie |
+| QE7 | Przez 2 h zawór jako dodatkowe źródło podąża za wysterowaniem głównego źródła. | `zone-valve` | 2 h | nie | zawór jako dodatkowe źródło | nie | bez danych o wodzie |
+| QW1 | Z danymi o wodzie przez 48 h (pracownia z encji, pokój dziecięcy od dostawcy) oba bloki water pokazują źródło live ze współczynnikiem dla wody 40 °C z kotła, a każde nauczone a mieści się w zakresie 0.5–1.2 prawdziwego a swojego emitera przy wodzie odniesienia. | `water` | 48 h | tak | W1 (test_smartpi_sim_water.py) | nie | z danymi o wodzie |
+| QW1s | Przez 45 minut oba bloki water pokazują źródło live, z danymi z ich źródeł, ze współczynnikiem dla wody 40 °C z kotła, water_factor jest publikowany w każdym termostacie, a w logu nie ma żadnego błędu. Krótki wariant QW1. | `water` | 45 min | nie | W1 (test_smartpi_sim_water.py) | tak | z danymi o wodzie |
+| QW2 | Ciepła woda użytkowa przez 20 minut: blok water pracowni pokazuje źródło dhw, współczynnik 0 i no_heat, jej wysterowanie zostaje bez zmian (a całka także, gdy SmartPI już reguluje), a jej wejście ciepłej wody to pokazuje; potem źródło znów jest live. | `water` | 30 min | nie | ciepła woda (test_smartpi_sim_water.py) | tak | z danymi o wodzie |
+| QW3 | Przy nauczonym modelu brak danych od dostawcy (flow_stale) zachowuje długoterminową średnią pokoju dziecięcego; trwały brak (not_mapped) daje współczynnik 1 i raz zgłoszenie naprawy water_data_gone; jego naprawa resetuje model. | `water` | 50 min | nie | przerwy w danych (test_smartpi_sim_water.py); test_smartpi_water_handler.py | tak | z danymi o wodzie |
+| QW4 | Przy nauczonym modelu dane pokoju dziecięcego znikają na dobre i wracają: zgłoszenie naprawy water_data_gone, a potem raz water_data_appeared; gdy przy naprawie model zostaje zachowany, nie zmienia się. | `water` | 40 min | nie | test_smartpi_water_handler.py | tak | z danymi o wodzie |
+| QW5 | Dostawca mówi, że kocioł nie jest wezwany (below_threshold), gdy pracownia woła o ciepło: jej blok boiler pokazuje źródło provider:qas, called false, powód i zapotrzebowanie od dostawcy, emitter_cooling po czasie tolerancji i held po czasie ustalania się, bez uczenia a; pozostałe powody też są widoczne; po ponownym wezwaniu kotła emitter_warming. | `water` | 95 min | nie | B2 (test_smartpi_sim_boiler_call.py); test_smartpi_boiler_handler.py | tak | z danymi o wodzie |
+| QW6 | W strefie pokoju dziennego podłogówka (dodatkowe źródło, woda od dostawcy) stosuje moc głównego źródła z własnym współczynnikiem wody: jej blok water jest live ze współczynnikiem podłogówki, a jej wysterowanie to moc głównego źródła podzielona przez ten współczynnik (najwyżej 100 %). | `water` | 60 min | nie | test_smartpi_sim_second_source.py | tak | z danymi o wodzie |
+| QW7 | Dostawca zgłasza, że obieg pokoju dziecięcego nie jest przypisany: jego woda od razu jest lasting ze współczynnikiem 1 i powodem podanym przez dostawcę; po ponownym przypisaniu jest live. | `water` | 15 min | nie | test_smartpi_water_input.py | tak | z danymi o wodzie |
+| QW8 | Gdy dostawca danych o ogrzewaniu z narzędzi pomocniczych jest zarejestrowany, rodzaje elektryczne nigdy go nie odczytują: dla ich termostatów nie dostaje żadnego pytania, a ich diagnostyka nie ma bloku water ani boiler. | `electric` | 15 min | nie | test_smartpi_water_handler.py | tak | z danymi o wodzie |
+| QW9 | Źródło wody pracowni zmienione w opcjach: po zmianie na none pojawia się pytanie o reset (model zachowany), współczynnik od razu wynosi 1 i nie ma zgłoszenia naprawy; po powrocie do entities znów pojawia się pytanie (model zachowany), a dane od razu są live, bez zgłoszenia naprawy. | `water` | 25 min | nie | test_config_flow_heating_inputs.py, test_smartpi_water_handler.py | tak | z danymi o wodzie |
+| QW10 | Dostawca wyrejestrowany: wejścia pokoju dziecięcego pokazują go jako niedostępnego, jego długoterminowa średnia nadal jest używana, a SmartPI po 10 minutach ostrzega raz dla każdego termostatu; po ponownej rejestracji dane są live. | `water` | 25 min | nie | test_smartpi_water_handler.py, test_smartpi_heating_inputs.py | tak | z danymi o wodzie |
+| QZ1 | SmartPI nie zapisuje w logu żadnego błędu, a każde jego ostrzeżenie jest na liście; rejestrator nie odrzuca żadnego atrybutu diagnostyki; formularze czytane po polsku pokazują tekst, a nie klucze; po trzech przeładowaniach wpisu jego termostat nie liczy podwójnie, żaden termostat nadrzędny strefy nie jest zgłaszany jako zmieniony i żaden czujnik diagnostyczny nie jest odrzucany jako duplikat. | wszystkie | 25 min | nie | — | tak | bez danych o wodzie |
 
-Zestaw minimalny trwa na każdej instancji od około 1 h (instancje 4, 5 i 8) do około 4.5 h
-(instancja 3); wszystkie instancje pracują równolegle. Długie scenariusze (QB1, QC2, QC4, QD5, QD6,
-QE5) działają w tle; razem zajmują około trzech dni.
+Zestaw minimalny trwa dla każdej roli od około 25 min (`zone-valve`) do około 6.5 h (`water`);
+instancje pracują równolegle. Długie scenariusze (QB1, QC2, QC4, QD5, QD6, QE5, QW1) działają w tle,
+każdy od 2.5 h do 72 h.
 
 **W każdym przebiegu** QZ1 sprawdza, że: SmartPI nie zgłasza błędu, każde jego ostrzeżenie jest
 na liście, rejestrator nie odrzuca żadnego atrybutu diagnostyki, formularze po polsku pokazują
@@ -448,14 +481,17 @@ i żaden czujnik diagnostyczny nie jest odrzucany jako duplikat.
 
 | Plik | Co sprawdza | Gdzie jest uruchamiany |
 |---|---|---|
-| `test_qas_room_sim.py` | fizykę symulatora w porównaniu z modelem pierwszego rzędu (prostym modelem z jedną bezwładnością) i z siecią pomieszczeń symulatora w procesie testów, jego drzwi, okna, kocioł, urządzenia i reset; jego encje i usługi w Home Assistant | CI |
-| `test_qas_pack.py` | pytest nie zbiera żadnego pliku pakietu; pliki ról są aktualne i poprawne; pakiet kompiluje się i importuje bez ławki; każdy scenariusz z planu jest zarejestrowany z oczekiwanym wynikiem w jednym zdaniu i jest w tym katalogu; stan bazowy programu uruchamiającego; `compare.py`; przygotowany nauczony stan daje się wczytać | CI |
-| `test_qas_setup_flows.py` | przygotowanie każdej roli przez prawdziwe formularze Versatile Thermostat 10.5.1 i SmartPI, bez błędu w logu, a powtórzone niczego nie zmienia; role strefy z przeładowaniem każdego wpisu SmartPI, bez ostrzeżenia, że termostat nadrzędny strefy się zmienił; własny wpis termostatu przejmujący jego czujnik diagnostyczny od wpisu globalnego (wpis utworzony, przeładowany, zapisane opcje, formularz strefy, przeładowany wpis globalny) bez zdublowanego unikalnego ID; ścieżki formularzy z QD1, QE1, QE2 i QE4 | lokalnie, z `SMARTPI_QAS_LOCAL=1` |
+| `test_qas_room_sim.py` | fizykę symulatora w porównaniu z modelem pierwszego rzędu (prostym modelem z jedną bezwładnością) i z siecią pomieszczeń symulatora w procesie testów, jego drzwi, okna, kocioł (wyłączony, awaria, ciepła woda), urządzenia i reset; jego encje (także czujniki zasilania i sygnały kotła) i usługi w Home Assistant; dostawcę danych o ogrzewaniu z narzędzi pomocniczych, odczytywanego przez własny czytnik SmartPI tak, jak mówi kontrakt, jego odpowiedzi na stan kotła i jego usługi | CI |
+| `test_qas_pack.py` | pytest nie zbiera żadnego pliku pakietu; pliki ról są aktualne i poprawne, a żadna rola nie wskazuje instancji; pakiet kompiluje się i importuje bez ławki; każdy scenariusz z planu jest zarejestrowany z oczekiwanym wynikiem w jednym zdaniu i jest w tym katalogu; stan bazowy programu uruchamiającego (także źródła i encje roli `water`) i rola wymagana do uruchomienia; `compare.py` z dwoma plikami wyników, które dostaje; przygotowany nauczony stan daje się wczytać | CI |
+| `test_qas_setup_flows.py` | przygotowanie każdej roli przez prawdziwe formularze Versatile Thermostat 10.5.1 i SmartPI, bez błędu w logu, a powtórzone niczego nie zmienia; role strefy z przeładowaniem każdego wpisu SmartPI, bez ostrzeżenia, że termostat nadrzędny strefy się zmienił; własny wpis termostatu przejmujący jego czujnik diagnostyczny od wpisu globalnego (wpis utworzony, przeładowany, zapisane opcje, formularz strefy, przeładowany wpis globalny) bez zdublowanego unikalnego ID; źródła roli `water` i sygnały kotła we wpisie globalnym zgodne z rolą; ścieżki formularzy z QD1, QE1, QE2, QE4 i QW9 | lokalnie, z `SMARTPI_QAS_LOCAL=1` |
 
 ### 6.7 Znane kwestie
 
 - **Powrót do 0.4.0.** Zapisanie opcji w 0.4.0 usuwa klucze forka (sąsiedzi, strefa, rodzaj
   ogrzewania). Pokazuje to QB3.
-- **Nauczony stan**, który wczytują QB2a i QD2 (`smartpi_qas_helpers/fixtures/learned_room.json`),
+- **Dostawca danych o ogrzewaniu w zestawie QAS „z danymi o wodzie”** to testowy zastępnik
+  z narzędzi pomocniczych, zasilany przez symulator: pokazuje, że SmartPI odczytuje każdego
+  dostawcę zgodnego ze swoim kontraktem, a nie to, że konkretna integracja podaje właściwe wartości.
+- **Nauczony stan**, który wczytują QB2a, QD2, QW3 i QW4 (`smartpi_qas_helpers/fixtures/learned_room.json`),
   pochodzi z symulatora w procesie testów (a = 0.035, b = 0.0012, po zakończeniu fazy uczenia).
   SmartPI 0.4.0 wczytuje go bez zmian.

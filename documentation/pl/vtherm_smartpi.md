@@ -102,9 +102,9 @@ Aby dodać SmartPI do kolejnego termostatu, otwórz konfigurację integracji Sma
 
 Dostępne parametry są takie same jak w globalnych wartościach domyślnych. Parametr ustawiony tutaj zastępuje globalną wartość domyślną, ale tylko dla wybranego termostatu.
 
-Opcje wpisu termostatu otwierają menu z pozycjami: ustawienia regulatora (Regulator settings); strefa z dwoma źródłami ciepła (Zone with two heat sources); zależności stref (Zone dependencies); a dla zaworu z linearyzacją także krzywa zaworu (Valve curve). Strefa z dwoma źródłami ciepła to pomieszczenie grzane przez dwa termostaty ze SmartPI, na przykład grzejnik i pętlę ogrzewania podłogowego. Ustawia się ją z poziomu termostatu nadrzędnego (Master thermostat). To Versatile Thermostat, którego urządzeniami są te dwa termostaty. Zależności stref to strefy sąsiednie, które wymieniają ciepło z tą strefą, przez drzwi albo stale. Termostat, który pracuje jako dodatkowe źródło strefy, otwiera zamiast tego inny formularz. Ten formularz pokazuje, gdzie ustawiono jego strefę, oraz ustawienia, które nadal go dotyczą: minimalne czasy załączenia i wyłączenia, rodzaj ogrzewania i krzywą zaworu. Jak SmartPI się tego wszystkiego uczy i jak z tego korzysta, opisuje dokument [Zależności stref i drugie źródło ciepła](zone_dependencies.md).
+Opcje wpisu globalnego „SmartPI defaults” otwierają menu z pozycjami: ustawienia regulatora (Regulator settings) oraz sygnały kotła (Boiler signals: encje, które mówią SmartPI, co robi kocioł, wspólne dla każdego termostatu, który odczytuje encje). Opcje wpisu termostatu otwierają menu z pozycjami: ustawienia regulatora (Regulator settings); strefa z dwoma źródłami ciepła (Zone with two heat sources); zależności stref (Zone dependencies); dla wodnego rodzaju ogrzewania **woda i kocioł** (Water and boiler: skąd pochodzą dane o wodzie i wezwanie kotła); a dla zaworu z linearyzacją także krzywa zaworu (Valve curve). Strefa z dwoma źródłami ciepła to pomieszczenie grzane przez dwa termostaty ze SmartPI, na przykład grzejnik i pętlę ogrzewania podłogowego. Ustawia się ją z poziomu termostatu nadrzędnego (Master thermostat). To Versatile Thermostat, którego urządzeniami są te dwa termostaty. Zależności stref to strefy sąsiednie, które wymieniają ciepło z tą strefą, przez drzwi albo stale. Termostat, który pracuje jako dodatkowe źródło strefy, otwiera zamiast tego inny formularz (przy wodnym rodzaju ogrzewania — menu z tym formularzem i jego danymi o wodzie). Ten formularz pokazuje, gdzie ustawiono jego strefę, oraz ustawienia, które nadal go dotyczą: minimalne czasy załączenia i wyłączenia, rodzaj ogrzewania i krzywą zaworu. Jak SmartPI się tego wszystkiego uczy i jak z tego korzysta, opisuje dokument [Zależności stref i drugie źródło ciepła](zone_dependencies.md).
 
-W ustawieniach regulatora jest **rodzaj ogrzewania** (Heating type): grzejnik wodny (Water radiator, domyślnie), wodne ogrzewanie podłogowe (Water underfloor heating), elektryczna mata grzewcza (Electric heating mat) albo szybki grzejnik elektryczny (Fast electric heater). Przy rodzaju wodnym SmartPI korzysta z temperatury wody zasilającej (temperatury wody wysyłanej do obiegu), którą wtyczka Smart Boiler publikuje dla obiegu tego termostatu, o ile jest dostępna. Bez niej wysterowanie jest takie samo jak wcześniej. Rodzaj wodny bierze też pod uwagę, bez żadnych ustawień, czy kocioł jest wezwany do grzania, czyli czy dostał polecenie grzania (tak podaje Smart Boiler albo kocioł centralny Versatile Thermostat). Gdy strefa woła o ciepło, a ono nie przychodzi, SmartPI w uczeniu nie traktuje jej wysterowania jako ciepła. Dla elektrycznego emitera (urządzenia, które oddaje ciepło do pokoju) wybierz rodzaj elektryczny. Zobacz [Wejście wody](water_input.md), zwłaszcza [sekcję 4](water_input.md#4-kocioł-który-nie-jest-wezwany-do-grzania).
+W ustawieniach regulatora jest **rodzaj ogrzewania** (Heating type): grzejnik wodny (Water radiator, domyślnie), wodne ogrzewanie podłogowe (Water underfloor heating), elektryczna mata grzewcza (Electric heating mat) albo szybki grzejnik elektryczny (Fast electric heater). Rodzaj wodny korzysta z danych o wodzie i z wezwania kotła ze źródeł wybranych w pozycji **Woda i kocioł** (Water and boiler). Dane o wodzie to temperatura wody zasilającej (temperatura wody wysyłanej do obiegu termostatu) i sygnały kotła; pochodzą z encji Home Assistant (z dowolnej integracji albo z czujnika na rurze zasilającej) albo od dostawcy (integracji, która implementuje kontrakt SmartPI). Wezwanie kotła mówi, czy kocioł dostał polecenie grzania; pochodzi z kotła centralnego Versatile Thermostat (domyślnie tam, gdzie obsługuje on termostat), z encji albo od dostawcy. Bez danych o wodzie wysterowanie jest takie samo jak wcześniej. Gdy strefa woła o ciepło, a ono nie przychodzi, SmartPI w uczeniu nie traktuje jej wysterowania jako ciepła. Dla elektrycznego emitera (urządzenia, które oddaje ciepło do pokoju) wybierz rodzaj elektryczny: nie odczytuje on ani danych o wodzie, ani wezwania kotła. Zobacz [Wejścia wody i kotła](water_input.md), zwłaszcza [sekcję 4](water_input.md#4-kocioł-który-nie-jest-wezwany-do-grzania).
 
 Strefę sąsiednią najlepiej ustawić we wpisach obu stref, żeby każda widziała drugą. Gdy u sąsiada jest otwarte okno, SmartPI stosuje wybraną reakcję w swojej własnej regulacji. Versatile Thermostat strefy dalej pokazuje własny stan okna, tryb i preset, a diagnostyka pokazuje reakcję, która właśnie obowiązuje.
 
@@ -306,7 +306,23 @@ W pierwszym okresie uczenia nie dostrajaj kilku parametrów naraz. Lepiej pozwol
 | **Zapotrzebowanie w punkcie załamania** (Demand at knee) | Zapotrzebowanie SmartPI, przy którym zmienia się nachylenie krzywej zaworu. | `80%` |
 | **Otwarcie zaworu w punkcie załamania** (Valve opening at knee) | Fizyczne otwarcie zaworu w miejscu zmiany nachylenia. | `15%` |
 | **Maksymalne otwarcie zaworu** (Maximum valve opening) | Największe dozwolone otwarcie, gdy linearyzacja jest włączona. | `100%` |
-| **Rodzaj ogrzewania** (Heating type) | Grzejnik wodny, wodne ogrzewanie podłogowe, elektryczna mata grzewcza albo szybki grzejnik elektryczny. Rodzaj wodny korzysta z danych o wodzie ze Smart Boiler i z informacji, czy kocioł jest wezwany do grzania ([Wejście wody, §2](water_input.md#2-konfiguracja)). | grzejnik wodny |
+| **Rodzaj ogrzewania** (Heating type) | Grzejnik wodny, wodne ogrzewanie podłogowe, elektryczna mata grzewcza albo szybki grzejnik elektryczny. Rodzaj wodny korzysta z danych o wodzie i z wezwania kotła ze źródeł wybranych w pozycji Woda i kocioł (Water and boiler) ([Wejścia wody i kotła, §2](water_input.md#2-konfiguracja)). | grzejnik wodny |
+
+Pozycja **Woda i kocioł** (Water and boiler) w opcjach termostatu oraz pozycja **Sygnały kotła** (Boiler signals) we wpisie globalnym „SmartPI defaults” ([Wejścia wody i kotła, §2](water_input.md#2-konfiguracja)):
+
+| Pole | Rola | Wartość domyślna |
+| ---- | ---- | ---------------- |
+| **Dane o wodzie** (Water data) | Skąd pochodzą dane o wodzie: brak (None), encje Home Assistant (Home Assistant entities) albo dostawca, pokazany na liście pod swoją nazwą. | brak (None) |
+| **Wezwanie kotła** (Boiler's call) | Skąd pochodzi wezwanie kotła: brak (None), kocioł centralny Versatile Thermostat (Versatile Thermostat's central boiler, do wyboru, gdy obsługuje termostat), encje Home Assistant albo dostawca. | kocioł centralny Versatile Thermostat tam, gdzie obsługuje termostat, w przeciwnym razie brak |
+| **Temperatura wody zasilającej** (Supply water temperature) | Czujnik temperatury wody, która dociera do obiegu tego termostatu (dane o wodzie z encji). | — |
+| **Sygnały kotła** (Boiler signals) | Jak we wpisie „SmartPI defaults” (As in SmartPI defaults) albo własne tego termostatu (This thermostat's own). | Jak we wpisie „SmartPI defaults” |
+| **Kocioł może grzać** (Boiler can heat) | Ma stan on, gdy kocioł może teraz grzać obiegi. | — |
+| **Ciepła woda ma priorytet** (Hot water has priority) | Ma stan on, gdy kocioł grzeje ciepłą wodę użytkową zamiast obiegów. | — |
+| **Awaria kotła** (Boiler fault) | Ma stan on, gdy kocioł zgłasza awarię. | — |
+| **Kocioł jest wezwany do grzania** (Boiler is called for heat) | Ma stan on, gdy kocioł dostał polecenie grzania. | — |
+| **Dlaczego kocioł nie jest wezwany** (Why the boiler is not called) | Czujnik z tekstem: `below_threshold`, `no_demand`, `activation_delay` albo `boiler_fault`. | — |
+
+Zmiana danych o wodzie albo czujnika zasilania wywołuje pytanie, czy zresetować nauczony model (zalecane), bo nauczona moc ma wtedy inne jednostki.
 
 ### Restart cyklu PWM przy zmianie pasma
 
@@ -351,8 +367,8 @@ Inne przydatne bloki w `live`:
 - `autocalib`: stan automatycznego nadzoru,
 - `calibration`: stan wymuszonej kalibracji,
 - `dependencies`: zależności stref i strefa z dwoma źródłami ciepła, gdy są ustawione ([Zależności stref, §9](zone_dependencies.md#9-diagnostyka)),
-- `water`: wejście wody, dla wodnego rodzaju ogrzewania ([Wejście wody, §8](water_input.md#8-diagnostyka)),
-- `boiler`: czy kocioł jest wezwany do grzania i jak uczenie traktuje strefę, która woła o ciepło, a go nie dostaje ([Wejście wody, §4](water_input.md#4-kocioł-który-nie-jest-wezwany-do-grzania)).
+- `water`: dane o wodzie, dla wodnego rodzaju ogrzewania, i to, skąd pochodzi każdy z ich sygnałów ([Wejścia wody i kotła, §8](water_input.md#8-diagnostyka)),
+- `boiler`: czy kocioł jest wezwany do grzania, z jakiego źródła i jak uczenie traktuje strefę, która woła o ciepło, a go nie dostaje ([Wejścia wody i kotła, §4](water_input.md#4-kocioł-który-nie-jest-wezwany-do-grzania)).
 
 W trybie normalnym blok `setpoint` może pokazywać:
 
@@ -375,7 +391,7 @@ https://github.com/KipK/vtherm_smartpi/tree/master/cards
 
 ## Panel regulacji w Equinox
 
-SmartPI publikuje też w encji termostatu podsumowanie `specific_states.smart_pi` i odnośnik do encji `specific_states.regulation_diagnostics`. Gdy SmartPI korzysta z danych o wodzie ze Smart Boiler, zapisuje też `specific_states.water_factor`. To współczynnik wody, którego używa: ile ciepła daje emiter przy obecnej wodzie w porównaniu z wodą odniesienia. Smart Boiler odczytuje tę wartość ([Wejście wody, §3.4](water_input.md#34-użycie-w-smartpi)). [Karta Lovelace Equinox](https://github.com/KipK/equinox) używa tych atrybutów, żeby w menu karty termostatu (climate) pokazać osobny panel **Regulation** (regulacja).
+SmartPI publikuje też w encji termostatu podsumowanie `specific_states.smart_pi` i odnośnik do encji `specific_states.regulation_diagnostics`. Gdy SmartPI korzysta z danych o wodzie, zapisuje też `specific_states.water_factor`. To współczynnik wody, którego używa: ile ciepła daje emiter przy obecnej wodzie w porównaniu z wodą odniesienia. To wyjście SmartPI dla każdej integracji, która je odczytuje ([Wejścia wody i kotła, §3.4](water_input.md#34-użycie-w-smartpi)). [Karta Lovelace Equinox](https://github.com/KipK/equinox) używa tych atrybutów, żeby w menu karty termostatu (climate) pokazać osobny panel **Regulation** (regulacja).
 
 W Equinox możesz śledzić postęp uczenia SmartPI, zaufanie do modelu, rozbicie mocy na składniki, „lądowanie” przy nastawie, wykresy historii i dostępne działania serwisowe. Nie musisz przy tym kopiować karty diagnostycznej Markdown.
 
@@ -403,7 +419,7 @@ Użyj tej usługi, gdy pokój zaczął się wyraźnie inaczej nagrzewać i stygn
 
 Ta usługa kasuje to, czego nauczył się SmartPI, i wymusza powrót do fazy startowej.
 
-Kasuje też to, czego nauczyły się zależności stref (wymianę ciepła z sąsiadami, dopasowanie strefy z dwoma źródłami ciepła). Zostawia średnie z wejścia wody. Reset dostępny w formularzu strefy oraz w zgłoszeniu naprawy wejścia wody w Home Assistant (w sekcji „Naprawy”) to ten sam reset; zobacz [Zależności stref, §2.2](zone_dependencies.md#22-reset-nauczonego-modelu).
+Kasuje też to, czego nauczyły się zależności stref (wymianę ciepła z sąsiadami, dopasowanie strefy z dwoma źródłami ciepła). Zostawia średnie z wejścia wody. Reset dostępny w formularzu strefy, w formularzu Woda i kocioł (Water and boiler) oraz w zgłoszeniu naprawy wejścia wody w Home Assistant (w sekcji „Naprawy”) to ten sam reset; zobacz [Zależności stref, §2.2](zone_dependencies.md#22-reset-nauczonego-modelu).
 
 ### `force_smartpi_calibration`
 

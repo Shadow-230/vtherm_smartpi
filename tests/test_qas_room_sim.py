@@ -170,6 +170,50 @@ def test_a_water_emitter_heats_only_while_the_boiler_does() -> None:
     assert sim.heat["heater"] > 0.03 * 45.0
 
 
+def test_a_boiler_off_or_in_a_fault_does_not_fire() -> None:
+    """Whatever its switch, a boiler off or in a fault lets its water cool; back to normal it fires."""
+    sim = _sim(_boiler_room())
+    sim.set_boiler(True)
+    sim.advance(3600.0)
+    assert sim.firing and sim.water_at(sim.t_s) == pytest.approx(60.0, abs=0.01)
+    for state in ("off", "fault"):
+        sim.set_boiler_state(state)
+        assert not sim.firing and not sim.heat_available()
+        sim.advance(sim.t_s + 3 * 3600.0)
+        assert sim.water_at(sim.t_s) == pytest.approx(12.0, abs=0.1)
+        sim.set_boiler_state("normal")
+        sim.advance(sim.t_s + 3600.0)
+        assert sim.water_at(sim.t_s) == pytest.approx(60.0, abs=0.01)
+    with pytest.raises(ValueError):
+        sim.set_boiler_state("broken")
+
+
+def test_hot_water_gives_the_circuits_no_heat() -> None:
+    """While hot water has priority the radiator gets no heat and its supply shows the boiler's
+    flow to the tank; afterwards it heats again from the circuits' water."""
+    config = _boiler_room()
+    config["boiler"]["dhw_flow_c"] = 70.0
+    config["boiler"]["on_at_start"] = True
+    sim = _sim(config)
+    assert sim.boiler_on
+    sim.set_command("heater", 1.0)
+    sim.advance(3600.0)
+    sim.start_hot_water(20.0)
+    assert sim.dhw_active() and not sim.heat_available()
+    assert sim.supply_c() == 70.0
+    heat = sim.heat["heater"]
+    sim.advance(sim.t_s + 15 * 60.0)
+    assert sim.heat["heater"] == pytest.approx(heat, abs=1e-9)
+    sim.advance(sim.t_s + 10 * 60.0)
+    assert not sim.dhw_active() and sim.heat_available()
+    assert sim.supply_c() == pytest.approx(60.0, abs=0.01)
+    assert sim.heat["heater"] > heat
+    sim.start_hot_water(30.0)
+    sim.set_boiler_state("fault")
+    sim.reset(rooms=False)
+    assert not sim.dhw_active() and sim.boiler_state == "normal" and sim.boiler_on
+
+
 def test_a_device_that_stops_responding_keeps_what_it_did() -> None:
     """``ignore`` keeps the device's last state whatever is asked; ``ok`` applies the last ask."""
     sim = _sim(_room())
@@ -335,6 +379,53 @@ async def test_the_scenario_services(sim_hass: HomeAssistant) -> None:
         await hass.services.async_call("smartpi_room_sim", "set_room", {"room": "attic", "temperature": 20}, blocking=True)
 
 
+async def test_the_boiler_s_signals_and_the_supply_sensors(sim_hass: HomeAssistant) -> None:
+    """A supply sensor per water emitter and the boiler's three signals follow its services."""
+    hass = sim_hass
+    ids = set(hass.states.async_entity_ids())
+    assert "binary_sensor.smartpi_room_sim_boiler_heat_available" in ids
+    # Only water emitters have a supply pipe: these two are electric.
+    assert not {"sensor.smartpi_room_sim_radiator_supply", "sensor.smartpi_room_sim_floor_supply"} & ids
+
+    def state(name: str) -> str:
+        return hass.states.get(f"binary_sensor.smartpi_room_sim_boiler_{name}").state
+
+    assert (state("heat_available"), state("dhw"), state("fault")) == ("on", "off", "off")
+    await hass.services.async_call("smartpi_room_sim", "start_hot_water", {"minutes": 10}, blocking=True)
+    await hass.async_block_till_done()
+    assert (state("heat_available"), state("dhw")) == ("off", "on")
+    _advance(hass, 11 * 60.0)
+    await hass.async_block_till_done()
+    assert (state("heat_available"), state("dhw")) == ("on", "off")
+    await hass.services.async_call("smartpi_room_sim", "set_boiler_state", {"state": "fault"}, blocking=True)
+    await hass.async_block_till_done()
+    assert (state("heat_available"), state("fault")) == ("off", "on")
+    assert hass.states.get("binary_sensor.smartpi_room_sim_boiler_fault").attributes["device_class"] == "problem"
+    await hass.services.async_call("smartpi_room_sim", "reset", {"rooms": False}, blocking=True)
+    await hass.async_block_till_done()
+    assert (state("heat_available"), state("fault")) == ("on", "off")
+
+
+async def test_a_water_emitter_has_a_supply_sensor(hass: HomeAssistant) -> None:
+    config = {"smartpi_room_sim": _boiler_room() | {"boiler": {"fire_c": 40.0, "on_at_start": True}}}
+    assert await async_setup_component(hass, "smartpi_room_sim", config)
+    await hass.async_block_till_done()
+    supply = hass.states.get("sensor.smartpi_room_sim_heater_supply")
+    assert supply.attributes["device_class"] == "temperature"
+    assert supply.attributes["unit_of_measurement"] == "°C"
+    _advance(hass, 3600.0)
+    await hass.async_block_till_done()
+    assert float(hass.states.get("sensor.smartpi_room_sim_heater_supply").state) == pytest.approx(40.0, abs=0.1)
+
+
+async def test_the_boiler_s_services_need_a_boiler(hass: HomeAssistant) -> None:
+    assert await async_setup_component(hass, "smartpi_room_sim", {"smartpi_room_sim": _room()})
+    await hass.async_block_till_done()
+    for service, data in (("start_hot_water", {"minutes": 1}), ("set_boiler_state", {"state": "off"})):
+        with pytest.raises(ServiceValidationError):
+            await hass.services.async_call("smartpi_room_sim", service, data, blocking=True)
+
+
 async def test_the_boiler_switch_warms_the_water(sim_hass: HomeAssistant) -> None:
     hass = sim_hass
     await hass.services.async_call("switch", "turn_on", {"entity_id": "switch.smartpi_room_sim_boiler"}, blocking=True)
@@ -363,3 +454,84 @@ def test_a_reset_between_scenarios_keeps_what_vtherm_drives() -> None:
     assert sim.boiler_on and not sim.is_open("door")
     assert sim.modes["heater"] == "ok" and sim.applied["heater"] == 0.0
     assert sim.outdoor_c(sim.t_s) == pytest.approx(5.0)
+
+
+# --- the helpers' heating provider (smartpi_qas_helpers) ------------------------------------
+
+
+@pytest.fixture
+async def provider_hass(hass: HomeAssistant):
+    room = _boiler_room() | {"boiler": {"fire_c": 40.0, "on_at_start": True}}
+    assert await async_setup_component(hass, "smartpi_room_sim", {"smartpi_room_sim": room})
+    helpers = {"provider": {"name": "qas", "circuits": {"climate.room": "heater"}}}
+    assert await async_setup_component(hass, "smartpi_qas_helpers", {"smartpi_qas_helpers": helpers})
+    await hass.async_block_till_done()
+    _advance(hass, 3600.0)
+    yield hass
+
+
+async def test_the_helpers_provider_follows_smartpi_s_contract(provider_hass: HomeAssistant) -> None:
+    """Registered as SmartPI's contract v1 says, read by SmartPI's own reader: the simulated
+    boiler's water for its circuits, nothing for another thermostat."""
+    from custom_components.vtherm_smartpi import heating_inputs as hi  # noqa: PLC0415
+
+    hass = provider_hass
+    assert hi.provider_names(hass) == ["qas"]
+    answer = hi.ask_provider(hass, "qas", "climate.room")
+    assert answer.status == hi.PROVIDER_OK
+    reading, _ = hi.water_from_provider(answer, "provider:qas")
+    assert reading.supply_c == pytest.approx(40.0, abs=0.1)
+    assert (reading.heat_available, reading.heat_reason) == (True, None)
+    call, _ = hi.boiler_from_provider(answer, "provider:qas")
+    assert call.called is True and call.demand == {"demand_count": 0, "count_threshold": 2, "count_by": "zones"}
+    assert hi.ask_provider(hass, "qas", "climate.other").status == hi.PROVIDER_NOT_SERVED
+
+
+@pytest.mark.parametrize(
+    "service, data, heat",
+    [
+        ("start_hot_water", {"minutes": 10}, (False, "dhw_active")),
+        ("set_boiler_state", {"state": "off"}, (False, "boiler_off")),
+        ("set_boiler_state", {"state": "fault"}, (False, "fault")),
+    ],
+)
+async def test_the_helpers_provider_tells_the_boiler_s_state(provider_hass: HomeAssistant, service, data, heat) -> None:
+    hass = provider_hass
+    await hass.services.async_call("smartpi_room_sim", service, data, blocking=True)
+    fields = hass.data["vtherm_smartpi_heating_providers"]["qas"].heating_inputs("climate.room")
+    assert (fields["heat_available"], fields["heat_reason"]) == heat
+    if data.get("state") == "fault":
+        assert (fields["boiler_called"], fields["call_reason"]) == (False, "boiler_fault")
+
+
+async def test_the_helpers_provider_is_set_by_its_services(provider_hass: HomeAssistant) -> None:
+    """Reasons forced, the boiler not called (it then stops firing), unregistered and back; its
+    status says how often it was asked."""
+    hass = provider_hass
+    provider = hass.data["vtherm_smartpi_heating_providers"]["qas"]
+    await hass.services.async_call("smartpi_qas_helpers", "set_provider", {"supply_reason": "not_mapped"}, blocking=True)
+    fields = provider.heating_inputs("climate.room")
+    assert (fields["supply_temperature"], fields["supply_reason"]) == (None, "not_mapped")
+    await hass.services.async_call("smartpi_qas_helpers", "set_provider", {"supply_reason": "", "call_reason": "below_threshold"}, blocking=True)
+    fields = provider.heating_inputs("climate.room")
+    assert fields["supply_reason"] is None
+    assert (fields["boiler_called"], fields["call_reason"]) == (False, "below_threshold")
+    assert not hass.data["smartpi_room_sim"].sim.firing
+    await hass.services.async_call("smartpi_qas_helpers", "set_provider", {"call_reason": ""}, blocking=True)
+    assert hass.data["smartpi_room_sim"].sim.firing
+    assert provider.heating_inputs("climate.room")["boiler_called"] is True
+    await hass.services.async_call("smartpi_qas_helpers", "set_provider", {"registered": False}, blocking=True)
+    assert "qas" not in hass.data["vtherm_smartpi_heating_providers"]
+    status = await hass.services.async_call("smartpi_qas_helpers", "provider_status", {}, blocking=True, return_response=True)
+    assert status["registered"] is False and status["providers"] == []
+    assert status["calls"] == {"climate.room": 3}
+    await hass.services.async_call("smartpi_qas_helpers", "set_provider", {"registered": True}, blocking=True)
+    assert hass.data["vtherm_smartpi_heating_providers"]["qas"] is provider
+
+
+async def test_without_a_provider_configured_the_helpers_register_none(hass: HomeAssistant) -> None:
+    assert await async_setup_component(hass, "smartpi_qas_helpers", {"smartpi_qas_helpers": None})
+    status = await hass.services.async_call("smartpi_qas_helpers", "provider_status", {}, blocking=True, return_response=True)
+    assert status == {"configured": False, "providers": []}
+    with pytest.raises(ServiceValidationError):
+        await hass.services.async_call("smartpi_qas_helpers", "set_provider", {"registered": True}, blocking=True)

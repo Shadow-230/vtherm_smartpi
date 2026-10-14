@@ -1,4 +1,4 @@
-# QAS role 'electric', instance 8: SmartPI QAS electric.
+# QAS role 'electric': SmartPI QAS electric.
 # Written by tests/qas/config/build.py from tests/qas/roles.py; do not edit by hand.
 homeassistant:
   name: SmartPI QAS electric
@@ -19,6 +19,11 @@ logger:
     custom_components.smartpi_room_sim: info
     custom_components.smartpi_qas_helpers: info
 smartpi_qas_helpers:
+  provider:
+    name: qas
+    circuits:
+      climate.den: den_mat
+      climate.workshop: workshop_heater
 smartpi_room_sim:
   rooms:
     den:

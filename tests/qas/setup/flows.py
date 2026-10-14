@@ -25,6 +25,8 @@ class FlowError(RuntimeError):
 @dataclass(frozen=True)
 class Menu:
     choice: str
+    # a menu the flow shows only sometimes (the additional source of a zone heated by water)
+    if_shown: bool = False
 
 
 @dataclass(frozen=True)
@@ -96,6 +98,8 @@ async def walk(
     for index, step in enumerate(steps):
         where = f"{kind} flow {handler}, step {index + 1} ({step})"
         if isinstance(step, Menu):
+            if step.if_shown and result.get("type") != "menu":
+                continue
             if result.get("type") != "menu" or step.choice not in (result.get("menu_options") or []):
                 await _abort(transport, kind, result)
                 raise FlowError(f"{where}: found {summary(result)}")

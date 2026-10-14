@@ -57,8 +57,8 @@ The `live` block is organized by responsibility:
 | `calibration` | Calibration state, retry count and last completion time |
 | `analysis` | Advanced fields used by the supplied diagnostic cards |
 | `dependencies` | Only with zone dependencies: the composed model, learning gate, window reaction, neighbours and the zone with two heat sources |
-| `water` | Only for a water heating type: the water's factor, its source and the holds |
-| `boiler` | Only when SmartPI knows whether the boiler is called: the call and the learning mode that follows from it |
+| `water` | Only for a water heating type: the water's factor, where it comes from, the holds, and the source of each water signal |
+| `boiler` | Only for a water heating type with a boiler's call source chosen: the source, the call and the learning mode that follows from it |
 
 `analysis` groups the advanced live values into `control`, `learning`,
 `trajectory`, `landing`, `deadtime`, `governance`, `feedforward` and, when
@@ -97,21 +97,23 @@ Without dependencies, the block is absent. Its fields are listed in
 ### `water`
 
 For a thermostat with a water heating type, `live` gains a `water` block. It holds the
-water factor applied, its source, the heating type, the averaged supply water temperature,
-the last reasons from Smart Boiler, the hot-water hold (`no_heat`), the low-heat integral
-hold (`low_heat`) and the "water too cold" flag. With water data, the `power` values are
-power at the reference water, while `current_cycle_percent` and `next_cycle_percent` are the
-command sent to the emitter. Its fields are listed in
-[Water input, §8](water_input.md#8-diagnostics).
+water factor applied, where it comes from, the heating type, the averaged supply water
+temperature, the last reasons the water data source gave, the hot-water hold (`no_heat`), the
+low-heat integral hold (`low_heat`), the "water too cold" flag, and `inputs`: for each water
+signal, its source (an entity, a provider, or none) and whether it gives data now. With water
+data, the `power` values are power at the reference water, while `current_cycle_percent` and
+`next_cycle_percent` are the command sent to the emitter. Its fields are listed in
+[Water and boiler inputs, §8](water_input.md#8-diagnostics).
 
 ### `boiler`
 
-For a water heating type, when SmartPI knows whether the boiler is called (from Smart Boiler,
-or from Versatile Thermostat's central boiler), `live` gains a `boiler` block. It holds the
-source, whether the boiler is called and, if not, why not, how learning treats this
-(`emitter_cooling`, `held`, `emitter_warming`) and, from Smart Boiler, the demand compared
-with its start thresholds. Its fields are listed in
-[Water input, §8](water_input.md#8-diagnostics) and explained in
+For a water heating type with a boiler's call source chosen in its options (Versatile
+Thermostat's central boiler, entities or a provider), `live` gains a `boiler` block, also while
+the source gives no data. It holds the source, whether the boiler is called and, if not, why
+not, how learning treats this (`emitter_cooling`, `held`, `emitter_warming`), the demand
+compared with the boiler's start thresholds where the source gives it, and `inputs`: where each
+signal comes from. Its fields are listed in
+[Water and boiler inputs, §8](water_input.md#8-diagnostics) and explained in
 [§4](water_input.md#4-a-boiler-that-is-not-called).
 
 ## Publication cadence

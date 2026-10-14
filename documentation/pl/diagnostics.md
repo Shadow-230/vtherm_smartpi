@@ -57,8 +57,8 @@ Blok `live` jest podzielony według zadań:
 | `calibration` | Stan kalibracji, liczba ponownych prób i czas ostatniego zakończenia |
 | `analysis` | Zaawansowane pola używane przez dołączone karty diagnostyczne |
 | `dependencies` | Tylko przy zależnościach stref: złożony model, bramka uczenia (czy uczenie jest teraz dozwolone), reakcja na okno, sąsiedzi i strefa z dwoma źródłami ciepła |
-| `water` | Tylko dla wodnego rodzaju ogrzewania: współczynnik wody, jego źródło i wstrzymania |
-| `boiler` | Tylko gdy SmartPI wie, czy kocioł jest wezwany do grzania: to wezwanie i wynikający z niego tryb uczenia |
+| `water` | Tylko dla wodnego rodzaju ogrzewania: współczynnik wody, to, skąd pochodzi, wstrzymania i źródło każdego sygnału wody |
+| `boiler` | Tylko dla wodnego rodzaju ogrzewania z wybranym źródłem wezwania kotła: to źródło, wezwanie i wynikający z niego tryb uczenia |
 
 `analysis` dzieli zaawansowane bieżące wartości na `control`, `learning`,
 `trajectory`, `landing`, `deadtime`, `governance`, `feedforward` oraz, gdy jest
@@ -97,22 +97,24 @@ Bez zależności tego bloku nie ma. Jego pola opisuje
 ### `water`
 
 Dla termostatu z wodnym rodzajem ogrzewania w `live` pojawia się blok `water`. Zawiera on
-zastosowany współczynnik wody, jego źródło, rodzaj ogrzewania, uśrednioną temperaturę wody
-zasilającej, ostatnie powody podane przez Smart Boiler, wstrzymanie na czas grzania ciepłej
-wody użytkowej, CWU (`no_heat`), wstrzymanie całki, gdy woda daje bardzo mało ciepła
-(`low_heat`), oraz znacznik „woda za zimna”. Przy danych o wodzie wartości w `power` to moc
-przy wodzie odniesienia, a `current_cycle_percent` i `next_cycle_percent` to wysterowanie
+zastosowany współczynnik wody, to, skąd pochodzi, rodzaj ogrzewania, uśrednioną temperaturę wody
+zasilającej, ostatnie powody podane przez źródło danych o wodzie, wstrzymanie na czas grzania
+ciepłej wody użytkowej, CWU (`no_heat`), wstrzymanie całki, gdy woda daje bardzo mało ciepła
+(`low_heat`), znacznik „woda za zimna” oraz `inputs`: dla każdego sygnału wody jego źródło
+(encja, dostawca albo brak) i to, czy teraz podaje dane. Przy danych o wodzie wartości w `power`
+to moc przy wodzie odniesienia, a `current_cycle_percent` i `next_cycle_percent` to wysterowanie
 wysłane do emitera (grzejnika, pętli podłogówki). Jego pola opisuje
-[Wejście wody, §8](water_input.md#8-diagnostyka).
+[Wejścia wody i kotła, §8](water_input.md#8-diagnostyka).
 
 ### `boiler`
 
-Dla wodnego rodzaju ogrzewania, gdy SmartPI wie, czy kocioł jest wezwany do grzania (ze Smart
-Boiler albo z kotła centralnego Versatile Thermostat), w `live` pojawia się blok `boiler`.
-Zawiera on źródło tej informacji, to, czy kocioł jest wezwany, a jeśli nie, to dlaczego, jak
-uczenie to traktuje (`emitter_cooling`, `held`, `emitter_warming`) oraz, ze Smart Boiler,
-zapotrzebowanie w porównaniu z jego progami startu. Jego pola opisuje
-[Wejście wody, §8](water_input.md#8-diagnostyka), a wyjaśnia
+Dla termostatu z wodnym rodzajem ogrzewania, gdy w jego opcjach wybrano źródło wezwania kotła
+(kocioł centralny Versatile Thermostat, encje albo dostawcę), w `live` pojawia się blok `boiler`, także
+wtedy, gdy źródło nie podaje danych. Zawiera on źródło, to, czy kocioł jest wezwany, a jeśli nie,
+to dlaczego, jak uczenie to traktuje (`emitter_cooling`, `held`, `emitter_warming`),
+zapotrzebowanie w porównaniu z progami startu kotła, gdy źródło je podaje, oraz `inputs`: skąd
+pochodzi każdy sygnał. Jego pola opisuje
+[Wejścia wody i kotła, §8](water_input.md#8-diagnostyka), a wyjaśnia
 [§4](water_input.md#4-kocioł-który-nie-jest-wezwany-do-grzania).
 
 ## Częstotliwość publikacji

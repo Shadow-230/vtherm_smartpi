@@ -2,9 +2,10 @@
 
 Run by the bench's testing session, from the bench's directory, after a deploy:
 
-    HA_INSTANCE=N python <stage>/tests/qas/setup/setup_role.py [--role ROLE] [--stage STAGE] [--no-restart]
+    HA_INSTANCE=N python <stage>/tests/qas/setup/setup_role.py --role ROLE [--stage STAGE] [--no-restart]
 
-- ``--role``: the instance's role; by default the one the catalogue gives instance N.
+- ``--role``: the role to set up on instance N (required): the testing session chooses which
+  instance runs which role.
 - ``--stage``: one stage only (``vtherm``, ``areas``, ``inputs``, ``smartpi``, ``options``); by
   default all of them, in that order. Each stage skips what is already there.
 - At the end Home Assistant restarts (unless ``--no-restart``), so the scenarios read a log that
@@ -22,19 +23,17 @@ import sys
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 
 from bench import BenchApi, bench_lib, instance  # noqa: E402
-from roles import INSTANCE_ROLES, ROLES  # noqa: E402
+from roles import ROLES  # noqa: E402
 from stages import SMARTPI, STAGES, run_stages  # noqa: E402
 
 
 async def main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("--role", choices=sorted(ROLES), default=None)
+    parser.add_argument("--role", choices=sorted(ROLES), required=True)
     parser.add_argument("--stage", choices=STAGES, default=None)
     parser.add_argument("--no-restart", action="store_true")
     args = parser.parse_args(argv)
-    role = ROLES[args.role or INSTANCE_ROLES[instance()]]
-    if role.instance != instance():
-        print(f"note: role {role.name} is instance {role.instance}'s; running it on {instance()}")
+    role = ROLES[args.role]
 
     bench_lib()
     from ha_client import HA  # noqa: PLC0415 — reads the bench's local.env

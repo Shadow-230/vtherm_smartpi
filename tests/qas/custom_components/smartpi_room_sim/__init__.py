@@ -6,8 +6,9 @@ file the in-process simulator uses; ``engine.py`` drives it in real time. Set up
 (``smartpi_room_sim:``); every entity id starts with ``smartpi_room_sim_``.
 
 Services (``services.yaml``): set or ramp a room's temperature, move the outdoor mean, open or
-close a door or a window (or give it back to its schedule), make a device stop responding, and
-reset everything to the configured state.
+close a door or a window (or give it back to its schedule), make a device stop responding, switch
+the boiler off or into a fault, give domestic hot water priority for a time, and reset everything
+to the configured state.
 """
 
 from __future__ import annotations
@@ -28,7 +29,7 @@ from homeassistant.helpers.event import async_track_time_interval
 from homeassistant.helpers.typing import ConfigType
 from homeassistant.util import dt as dt_util
 
-from .engine import DEVICE_MODES, ELECTRIC, Simulation, spec_from_config
+from .engine import BOILER_STATES, DEVICE_MODES, ELECTRIC, Simulation, spec_from_config
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -79,6 +80,8 @@ _BOILER = vol.Schema(
         vol.Optional("idle_c", default=12.0): vol.Coerce(float),
         vol.Optional("tau_up_min", default=4.0): vol.All(vol.Coerce(float), vol.Range(min=0.1)),
         vol.Optional("tau_down_min", default=20.0): vol.All(vol.Coerce(float), vol.Range(min=0.1)),
+        vol.Optional("on_at_start", default=False): cv.boolean,
+        vol.Optional("dhw_flow_c", default=65.0): vol.Coerce(float),
     }
 )
 _OUTDOOR = vol.Schema(
@@ -181,6 +184,22 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
         hub.sim.set_mode(_check(heaters, call.data["heater"], "heater"), call.data["mode"])
         hub.changed()
 
+    def _boiler() -> None:
+        if hub.sim.spec.boiler is None:
+            raise ServiceValidationError("the simulation has no boiler")
+
+    async def set_boiler_state(call: ServiceCall) -> None:
+        _boiler()
+        hub.changed()
+        hub.sim.set_boiler_state(call.data["state"])
+        hub.changed()
+
+    async def start_hot_water(call: ServiceCall) -> None:
+        _boiler()
+        hub.changed()
+        hub.sim.start_hot_water(call.data["minutes"])
+        hub.changed()
+
     async def reset(call: ServiceCall) -> None:
         hub.changed()
         hub.sim.reset(rooms=call.data["rooms"])
@@ -239,6 +258,15 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
         "set_device",
         set_device,
         vol.Schema({vol.Required("heater"): cv.string, vol.Required("mode"): vol.In(DEVICE_MODES)}),
+    )
+    hass.services.async_register(
+        DOMAIN, "set_boiler_state", set_boiler_state, vol.Schema({vol.Required("state"): vol.In(BOILER_STATES)})
+    )
+    hass.services.async_register(
+        DOMAIN,
+        "start_hot_water",
+        start_hot_water,
+        vol.Schema({vol.Required("minutes"): vol.All(vol.Coerce(float), vol.Range(min=0.0))}),
     )
     hass.services.async_register(
         DOMAIN, "reset", reset, vol.Schema({vol.Optional("rooms", default=True): cv.boolean})

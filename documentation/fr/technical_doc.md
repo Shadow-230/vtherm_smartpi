@@ -14,10 +14,13 @@ Ce document décrit le comportement réellement implémenté dans le code SmartP
 
 Ce fork ajoute des extensions : les entrées connues (la chaleur échangée avec les zones voisines, et la
 chaleur d'une deuxième source de chaleur dans la zone), la température de l'eau qui arrive aux émetteurs,
-et l'appel de la chaudière (si la chaudière reçoit l'ordre de chauffer). Quand une extension change le
+et l'appel de la chaudière (si la chaudière reçoit l'ordre de chauffer). L'eau et l'appel de la
+chaudière viennent d'une source que l'utilisateur choisit dans les options du thermostat : des entités
+Home Assistant, ou un fournisseur (une intégration qui implémente le contrat de SmartPI), et pour
+l'appel aussi la chaudière centrale de Versatile Thermostat. Quand une extension change le
 modèle, la chaîne de commande ou l'apprentissage, les sections ci-dessous en tiennent compte. Les
 extensions elles-mêmes sont décrites dans [Dépendances entre zones et deuxième source de chaleur](zone_dependencies.md)
-et [Entrée eau](water_input.md), et leurs tests dans [Tests](testing.md).
+et [Entrées eau et chaudière](water_input.md), et leurs tests dans [Tests](testing.md).
 
 ---
 
@@ -89,7 +92,7 @@ La sortie réellement injectée dans le calcul est `u_ff_eff + u_pi`, puis elle 
 Avec un chauffage à eau, le régulateur travaille en puissance, pour une température d'eau de
 référence. La commande envoyée à l'émetteur est `power / max(φ, 0.05)`, au plus 1, avant la courbe
 de vanne. L'apprentissage voit la commande multipliée par `φ`
-([Entrée eau, §3.4](water_input.md#34-utilisation-dans-smartpi)).
+([Entrées eau et chaudière, §3.4](water_input.md#34-utilisation-dans-smartpi)).
 
 ---
 
@@ -149,7 +152,7 @@ Le code n'utilise plus de constante `WINDOW_MIN_MINUTES`. L'apprentissage repose
 - retire de la variation de température mesurée la part causée par les entrées connues : leur
   vitesse `known_rate = Σ g_i·(T_i − T) + Σ q_j`, intégrée sur la fenêtre,
 - compte la puissance comme 0 tant que la zone demande de la chaleur et que la chaudière n'est pas
-  appelée ([Entrée eau, §4](water_input.md#4-une-chaudière-qui-nest-pas-appelée)).
+  appelée ([Entrées eau et chaudière, §4](water_input.md#4-une-chaudière-qui-nest-pas-appelée)).
 
 En pratique, la décision de soumettre ou d'étendre la fenêtre dépend de la robustesse de la pente, pas d'une durée minimale fixe.
 
@@ -433,7 +436,7 @@ Les protections complémentaires actuellement présentes sont :
 - garde intégrale signée pendant les reprises, rattrapages et changements de consigne,
 - `I:HOLD` explicite pendant la phase post-reprise liée à `deadtime_heat` pour `window_resume` et `power_shedding_resume` en chauffage,
 - logique de maintien dans la deadband,
-- avec un chauffage à eau, le maintien `no_heat` : la commande et l'intégrale sont maintenues pendant la production d'eau chaude sanitaire, et seule l'intégrale est maintenue tant que l'eau n'apporte presque pas de chaleur ([Entrée eau, §3.4](water_input.md#34-utilisation-dans-smartpi)),
+- avec un chauffage à eau, le maintien `no_heat` : la commande et l'intégrale sont maintenues pendant la production d'eau chaude sanitaire, et seule l'intégrale est maintenue tant que l'eau n'apporte presque pas de chaleur ([Entrées eau et chaudière, §3.4](water_input.md#34-utilisation-dans-smartpi)),
 - fenêtre ouverte chez un voisin, tant que la connexion avec ce voisin est active : la réaction choisie pour ce voisin. C'est soit l'arrêt, par le même chemin que l'arrêt sur fenêtre ouverte, avec sa reprise protégée, soit le preset hors-gel ou éco de la zone, et elle ne demande jamais plus de chauffage ou de refroidissement que la consigne ([Dépendances entre zones, §4.5](zone_dependencies.md#45-une-fenêtre-chez-un-voisin-connecté)).
 
 Le calcul distingue aussi deux zones autour de la consigne :
@@ -494,6 +497,10 @@ le chercher dans `name`.
 | `prop_algo_smartpi.py`    | `SmartPI`        | façade algorithmique, orchestration complète                             |
 | `prop_handler_smartpi.py` | `SmartPIHandler` | pont Home Assistant : persistance, timer périodique, services, attributs |
 
+Le handler lit les entrées venant de l'installation de chauffage par le fichier `heating_inputs.py` de
+l'extension : les données d'eau et l'appel de la chaudière venant de la source choisie dans les options
+du thermostat (des entités, un fournisseur, ou la chaudière centrale de Versatile Thermostat).
+
 ### 5.2 Modules `smartpi/` réellement utilisés
 
 | Module                 | Rôle principal                                           |
@@ -529,12 +536,12 @@ le chercher dans `name`.
 | `coupling_estimator.py` | apprentissage des coefficients d'échange `k`            |
 | `zone_fit.py`, `source_model.py`, `source_candidates.py` | l'ajustement commun de la zone, la chaleur et les échelles de temps de la deuxième source |
 | `split.py`, `source_settings.py`, `source_link.py` | règles de répartition et boucle d'allocation, réglages de la source, lien entre les sources |
-| `water_input.py`       | le facteur d'eau `φ` à partir des données de Smart Boiler |
+| `water_input.py`       | le facteur d'eau `φ` à partir des données d'eau            |
 | `boiler_call.py`       | si la chaudière chauffe une zone qui l'appelle           |
 
 Les modules des extensions sont décrits dans
 [Dépendances entre zones, §6](zone_dependencies.md#6-composants-et-interfaces) et
-[Entrée eau, §5](water_input.md#5-composants-et-interfaces).
+[Entrées eau et chaudière, §5](water_input.md#5-composants-et-interfaces).
 
 ### 5.3 Composition interne de `SmartPI`
 
@@ -622,7 +629,7 @@ Le payload actuel de `SmartPI.save_state()` contient notamment :
 ```
 
 Les clés optionnelles sont décrites dans [Dépendances entre zones, §8](zone_dependencies.md#8-état-sauvegardé)
-et [Entrée eau, §7](water_input.md#7-état-sauvegardé). Un payload sans ces clés se charge comme avant.
+et [Entrées eau et chaudière, §7](water_input.md#7-état-sauvegardé). Un payload sans ces clés se charge comme avant.
 
 Seul le trim appris reste persistant. Les fenêtres de propriété, propositions
 en attente et transferts d'intégrale sont transitoires ; après redémarrage,
@@ -663,9 +670,12 @@ publics sont exposés sous `analysis.twin`.
   fenêtre, une entrée par voisin, et `second_source` pour la source principale d'une zone à deux
   sources de chaleur ; un thermostat qui sert de source additionnelle n'affiche que son rôle
   ([Dépendances entre zones, §9](zone_dependencies.md#9-diagnostics)) ;
-- `water` : le facteur d'eau, sa source et les maintiens, pour un type de chauffage à eau ;
-- `boiler` : si la chaudière est appelée, et le mode d'apprentissage qui en découle
-  ([Entrée eau, §8](water_input.md#8-diagnostics)).
+- `water` : le facteur d'eau, d'où il vient, les maintiens, et la source de chaque signal de l'eau
+  (`inputs`), pour un type de chauffage à eau ;
+- `boiler` : si la chaudière est appelée, la source choisie (`entities`, `provider:<name>`,
+  `vtherm_central_boiler`) et ses signaux (`inputs`), la raison et la demande, et le mode
+  d'apprentissage qui en découle ; affiché quand une source de l'appel est choisie
+  ([Entrées eau et chaudière, §8](water_input.md#8-diagnostics)).
 
 Avec des données d'eau, les valeurs `power` sont des puissances pour l'eau de référence, tandis que
 `current_cycle_percent` et `next_cycle_percent` sont la commande envoyée à l'émetteur.

@@ -366,7 +366,7 @@ stateDiagram-v2
   drugiego źródła (sekcja 5.5). Poniżej nich wszystkich jest `boiler_settling`: wstrzymuje
   uczenie, gdy emiter stygnie, bo kocioł nie jest wezwany do grzania, oraz gdy emiter znów się
   nagrzewa, kiedy kocioł zaczyna grzać
-  ([Wejście wody, §4](water_input.md#4-kocioł-który-nie-jest-wezwany-do-grzania)).
+  ([Wejścia wody i kotła, §4](water_input.md#4-kocioł-który-nie-jest-wezwany-do-grzania)).
 - Sąsiad połączony na stałe nie wstrzymuje uczenia. `b` w SmartPI zawiera jego wymianę, a
   wspólne dopasowanie (sekcja 4.4) ją wydziela. Pierwszy plan miał bramkę opartą na różnicy
   temperatur względem sąsiada (`coupling_gradient`). Zrezygnowano z niej: przy sąsiedzie, który
@@ -583,7 +583,7 @@ jeszcze przez czas `L_f`. Potem przyjmuje się, że ostatnie z nich trwa dalej.
   grzeje na początku cyklu, na swoim **poziomie**, przez swój czas włączenia. Zawór trzyma swoją
   moc przez cały cykl. Bez danych o wodzie poziom wynosi 1. Z danymi o wodzie jest to współczynnik
   wody źródła (jego moc w porównaniu z mocą przy wodzie odniesienia, zobacz
-  [Wejście wody](water_input.md)). Powód: podłogówka, w której woda ma 30 degC, daje
+  [wejścia wody i kotła](water_input.md)). Powód: podłogówka, w której woda ma 30 degC, daje
   w czasie włączenia około 37 % mocy, jaką daje przy 45 degC (pokój ma 20 degC). Własne cykle
   głównego źródła zapisuje się tak samo.
 - **Typ każdego urządzenia to rodzaj ogrzewania z jego własnego wpisu SmartPI.** Formularz strefy
@@ -672,7 +672,7 @@ flowchart TD
   głównego źródła; gdy strefa jest wyłączona; bez temperatury strefy lub temperatury zewnętrznej;
   po przerwie między obliczeniami dłuższej niż `ZONE_FIT_MAX_GAP_S`. Dzięki temu żadne okno nie
   obejmuje przerwy. Okna nie zatrzymują się przy własnej pauzie w uczeniu SmartPI
-  (`set_smartpi_learning`, której Smart Boiler też używa do swojej pauzy), przy zrzucie mocy ani
+  (`set_smartpi_learning`, której mogą też używać inne integracje), przy zrzucie mocy ani
   przy odcięciu zabezpieczającym (guard cut). Moc zrealizowana w cyklach nadal
   opisuje, co dostała strefa. SmartPI dalej trzyma `a` i `b` z dopasowania (sekcja 5.5), gdy jego
   uczenie jest wstrzymane, bo to tylko stosuje model i niczego się nie uczy.
@@ -1032,7 +1032,7 @@ do 17 degC (na 6, 8 i 10 h).
 |---|---|---|---|
 | podłogówka za zaworem | 0.020 degC | 0.050 degC | 1.03/1.02/1.03 |
 | płyta nagrzewająca się w głąb (dwie bezwładności jedna po drugiej) | 0.035 degC | 0.056 degC | `a` 0.95, `b` 1.06, `a_f` 1.18 |
-| woda na krzywych grzewczych, dane z integracji Smart Boiler (powrót do nastawy 6.7 h wobec 5.9 h) | 0.053 degC | 0.094 degC | 0.99/0.97/0.94 |
+| woda na krzywych grzewczych, dane o wodzie z encji (powrót do nastawy 6.7 h wobec 5.9 h) | 0.053 degC | 0.094 degC | 0.99/0.97/0.94 |
 | dwie strefy, drzwi otwarte 6–23 h | 0.034 / 0.029 degC | 0.072 / 0.055 degC | `k` 0.89 / 0.94 |
 | dwie strefy, zawsze otwarte | 0.021 / 0.018 degC | 0.055 / 0.042 degC | `k` 1.04 / 0.96 |
 
@@ -1124,7 +1124,7 @@ Wszystkie moduły poniżej to zwykły kod w Pythonie. Można je testować bez dz
 | `smartpi/split.py` | Drugie źródło: reguły podziału, pętla przydziału, zalecenie według typu emitera |
 | `smartpi/source_settings.py` | Drugie źródło: jego reguła i emitery, odczytane ze skonfigurowanej pozycji |
 | `smartpi/source_link.py` | Drugie źródło: łącze między głównym a dodatkowym źródłem w jednym Home Assistant (wysterowania w jedną stronę, cykle i limit mocy w drugą) |
-| `smartpi/water_input.py`, `repairs.py` | Współczynnik wody każdego źródła i reset proponowany, gdy dane o wodzie się pojawią albo znikną; patrz [Wejście wody](water_input.md) |
+| `smartpi/water_input.py`, `repairs.py` | Współczynnik wody każdego źródła i reset proponowany, gdy dane o wodzie się pojawią albo znikną; patrz [Wejścia wody i kotła](water_input.md) |
 
 W istniejących plikach:
 
@@ -1327,4 +1327,4 @@ i symulacji, sam symulator oraz scenariusze N1–N7 i Z1–Z7 z ich kryteriami. 
 | `SPLIT_PREDICTED_SHARE` | 1 | część prognozowanego błędu, którą źródło może poprawić |
 | `SOURCE_BRAKE_STEPS` | 8 | liczba połowień, które wyznaczają limit hamowania |
 | `SOURCE_BOOST_ERROR_C` | 0.2 degC | strefa zimniejsza o więcej wraca do nastawy z głównym źródłem pracującym tak, jakby było samo |
-| `WATER_NO_HEAT` | 0.05 | najniższy limit mocy źródła na wodzie ([Wejście wody, §10](water_input.md#10-stałe-ograniczenia-i-otwarte-kwestie)) |
+| `WATER_NO_HEAT` | 0.05 | najniższy limit mocy źródła na wodzie ([Wejścia wody i kotła, §10](water_input.md#10-stałe-ograniczenia-i-otwarte-kwestie)) |

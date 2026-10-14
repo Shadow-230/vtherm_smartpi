@@ -6,7 +6,6 @@ from custom_components.vtherm_smartpi.smartpi.boiler_call import (
     MODE_COOLING,
     MODE_HELD,
     MODE_WARMING,
-    SOURCE_SMART_BOILER,
     SOURCE_VTHERM,
     BoilerCall,
     BoilerReading,
@@ -14,6 +13,8 @@ from custom_components.vtherm_smartpi.smartpi.boiler_call import (
 )
 from custom_components.vtherm_smartpi.smartpi.const import BOILER_CALL_GRACE_S
 
+# A provider's source, as the options name it.
+PROVIDER = "provider:test"
 SETTLE = settle_s("radiator")
 GRACE = BOILER_CALL_GRACE_S
 ON = BoilerReading(True, None, SOURCE_VTHERM)
@@ -124,18 +125,18 @@ def test_the_zone_s_own_command_off_ends_any_hold():
 
 
 def test_a_call_not_known_counts_as_given():
-    call = _call(BoilerReading(None, "not_controlling", SOURCE_SMART_BOILER))
+    call = _call(BoilerReading(None, "not_controlling", PROVIDER))
     assert call.update(calling=True, heating=True, now_s=0.0) is None
     assert call.update(calling=True, heating=True, now_s=2 * SETTLE) is None
 
 
-def test_smart_boiler_below_its_threshold_holds_a_calling_zone_only():
+def test_below_the_threshold_holds_a_calling_zone_only():
     """``below_threshold`` with the command above 0 gives no heat; ``no_demand`` with the
     command at 0 is the zone cooling as usual."""
-    below = _call(BoilerReading(False, "below_threshold", SOURCE_SMART_BOILER))
+    below = _call(BoilerReading(False, "below_threshold", PROVIDER))
     below.update(calling=True, heating=True, now_s=0.0)
     assert below.update(calling=True, heating=True, now_s=SETTLE) == MODE_HELD
-    assert _call(BoilerReading(False, "no_demand", SOURCE_SMART_BOILER)).update(
+    assert _call(BoilerReading(False, "no_demand", PROVIDER)).update(
         calling=False, heating=True, now_s=SETTLE
     ) is None
 
@@ -148,13 +149,32 @@ def test_outside_heating_nothing_is_held():
 
 def test_the_diagnostics_show_the_source_the_call_the_learning_mode_and_the_demand():
     demand = {"demand_power_kw": 0.4, "power_threshold_kw": 0.6}
-    call = _call(BoilerReading(False, "below_threshold", SOURCE_SMART_BOILER, demand))
+    call = _call(BoilerReading(False, "below_threshold", PROVIDER, demand))
     call.update(calling=True, heating=True, now_s=0.0)
     call.update(calling=True, heating=True, now_s=SETTLE)
     assert call.diagnostics() == {
-        "source": SOURCE_SMART_BOILER,
+        "source": PROVIDER,
         "called": False,
         "reason": "below_threshold",
         "learning": MODE_HELD,
         "demand": demand,
     }
+
+
+def test_the_diagnostics_show_the_chosen_source_and_its_inputs_without_a_reading():
+    inputs = {"called": {"source": "entity", "entity": "binary_sensor.boiler", "data": False}}
+    call = _call(None)
+    call.set_reading(None, "entities", inputs)
+    assert call.diagnostics() == {
+        "source": "entities",
+        "called": None,
+        "reason": None,
+        "learning": None,
+        "inputs": inputs,
+    }
+    # The source a reading names wins (it is the same, read from the chosen one).
+    call.set_reading(BoilerReading(True, None, PROVIDER), "entities", None)
+    assert call.diagnostics()["source"] == PROVIDER
+    # No source, no reading, no mode: no block.
+    call.set_reading(None)
+    assert call.diagnostics() is None

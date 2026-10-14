@@ -1,9 +1,11 @@
-"""Simulated rooms heated by water: SmartPI with Smart Boiler's water data.
+"""Simulated rooms heated by water: SmartPI with water data.
 
 The boiler follows a heating curve (and, where stated, cycles its burner and
 gives hot water priority twice a day). The room's radiator gives ``a`` at the
 reference water (60 degC); the curve's water is cooler, so without the water
-data SmartPI learns a weaker radiator than it is.
+data SmartPI learns a weaker radiator than it is. The water data come from
+either source a user can choose: a provider of SmartPI's contract, or entities
+(a supply sensor and the boiler's hot water and heat signals).
 """
 
 from unittest.mock import MagicMock
@@ -21,14 +23,17 @@ A_REFERENCE = 0.06
 DHW_H = ((6.5, 7.2), (19.0, 19.7))
 
 
-def _sim(monkeypatch, water_data: bool, boiler: SimBoiler) -> Simulation:
+SOURCES = ("provider", "entities")
+
+
+def _sim(monkeypatch, water_data: str | None, boiler: SimBoiler) -> Simulation:
     spec = ZoneSpec(
         a=A_REFERENCE,
         b=0.001,
         sensor_resolution_c=0.1,
         boiler=boiler,
         emitter="radiator",
-        smart_boiler=water_data,
+        water_data=water_data,
         options={CONF_SMART_PI_HEATING_TYPE: "radiator"},
     )
     return Simulation(monkeypatch, spec, Weather(base_c=3.0, daily_amplitude_c=3.0))
@@ -37,23 +42,25 @@ def _sim(monkeypatch, water_data: bool, boiler: SimBoiler) -> Simulation:
 async def test_water_data_let_smartpi_learn_the_radiator_at_the_reference_water(monkeypatch):
     """On a heating curve, SmartPI learns the radiator's power at the reference water."""
     results = {}
-    for water_data in (False, True):
+    for water_data in (None, *SOURCES):
         with monkeypatch.context() as patched:
             sim = _sim(patched, water_data, SimBoiler(curve_slope=1.2))
             await sim.run_for(48.0)
             results[water_data] = sim.algo.est.a
-            if water_data:
+            if water_data is not None:
                 assert sim.algo.water.state.source == "live"
                 assert 0.3 < sim.algo.water_factor < 0.7
-                assert sim.smart_boiler.calls > 0
+                assert (sim.provider.calls if water_data == "provider" else sim.states.reads) > 0
     # Without the data the curve's cooler water looks like a weaker radiator.
-    assert results[False] < 0.5 * A_REFERENCE
-    assert results[True] > 1.5 * results[False]
-    assert 0.5 * A_REFERENCE < results[True] < 1.2 * A_REFERENCE
+    assert results[None] < 0.5 * A_REFERENCE
+    for water_data in SOURCES:
+        assert results[water_data] > 1.5 * results[None]
+        assert 0.5 * A_REFERENCE < results[water_data] < 1.2 * A_REFERENCE
 
 
-async def test_hot_water_priority_holds_the_integral_and_the_command(monkeypatch):
-    sim = _sim(monkeypatch, True, SimBoiler(curve_slope=1.2, cycle_amplitude_c=5.0, dhw_daily_h=DHW_H))
+@pytest.mark.parametrize("water_data", SOURCES)
+async def test_hot_water_priority_holds_the_integral_and_the_command(monkeypatch, water_data):
+    sim = _sim(monkeypatch, water_data, SimBoiler(curve_slope=1.2, cycle_amplitude_c=5.0, dhw_daily_h=DHW_H))
     windows: dict[int, list[tuple[float, float, str, str]]] = {}
 
     def watch(s_):
@@ -85,10 +92,11 @@ async def test_hot_water_priority_holds_the_integral_and_the_command(monkeypatch
 
 
 async def test_gaps_keep_the_units_and_a_lasting_one_offers_the_reset(monkeypatch):
+    """A provider's reasons: a momentary gap keeps the long-term average, a lasting one gives 1."""
     create_issue = MagicMock()
     monkeypatch.setattr("custom_components.vtherm_smartpi.handler.ir.async_create_issue", create_issue)
-    sim = _sim(monkeypatch, True, SimBoiler(curve_slope=1.2))
-    sim.smart_boiler.forced_reasons = [(24.0, 26.0, "flow_stale"), (30.0, 99.0, "not_mapped")]
+    sim = _sim(monkeypatch, "provider", SimBoiler(curve_slope=1.2))
+    sim.force_water_reasons([(24.0, 26.0, "flow_stale"), (30.0, 99.0, "not_mapped")])
     await sim.run_for(23.9)
     learned_factor = sim.algo.water.state.factor
     long_average = sim.algo.water._long_avg
@@ -104,10 +112,32 @@ async def test_gaps_keep_the_units_and_a_lasting_one_offers_the_reset(monkeypatc
     assert create_issue.call_args.kwargs["translation_key"] == "water_data_gone"
 
 
-async def test_a_boiler_firing_on_demand_does_not_lock_the_zone(monkeypatch):
+async def test_an_unavailable_supply_sensor_is_a_gap_lasting_after_a_day(monkeypatch):
+    """Entities: an unavailable supply sensor keeps the long-term average; after 24 h it
+    counts as lasting (the factor 1) and the reset is offered."""
+    create_issue = MagicMock()
+    monkeypatch.setattr("custom_components.vtherm_smartpi.handler.ir.async_create_issue", create_issue)
+    sim = _sim(monkeypatch, "entities", SimBoiler(curve_slope=1.2))
+    sim.force_water_reasons([(24.0, 99.0, "unavailable")])
+    await sim.run_for(23.9)
+    learned_factor = sim.algo.water.state.factor
+    await sim.run_for(23.0)
+    assert sim.algo.water.state.source == "average"
+    assert sim.algo.water.state.supply_reason == "unavailable"
+    assert sim.algo.water_factor == pytest.approx(learned_factor, rel=0.2)
+    assert not create_issue.called
+    await sim.run_for(1.5)
+    assert sim.algo.water.state.source == "lasting"
+    assert sim.algo.water_factor == 1.0
+    assert create_issue.call_count == 1
+    assert create_issue.call_args.kwargs["translation_key"] == "water_data_gone"
+
+
+@pytest.mark.parametrize("water_data", SOURCES)
+async def test_a_boiler_firing_on_demand_does_not_lock_the_zone(monkeypatch, water_data):
     """The boiler heats only while the zone calls for heat: between calls its water is at the
     boiler room's temperature. That cold water must not hold the zone off."""
-    sim = _sim(monkeypatch, True, SimBoiler(curve_slope=1.2, on_demand=True, idle_c=15.0))
+    sim = _sim(monkeypatch, water_data, SimBoiler(curve_slope=1.2, on_demand=True, idle_c=15.0))
     await sim.run_for(36.0)
     after_start = [p.zone_c for p in sim.trace if p.t_h >= 6.0]
     assert min(after_start) > 19.0

@@ -14,10 +14,13 @@ This document describes the behavior that is actually implemented in the current
 
 This fork adds extensions: known inputs (heat exchanged with neighbouring zones, and heat from a
 second heat source in the zone), the temperature of the water reaching the emitters, and the
-boiler's call (whether the boiler is told to heat). Where an extension changes the model, the
-command chain or the learning, the sections below include it. The extensions themselves are
-described in [Zone dependencies and a second heat source](zone_dependencies.md) and
-[Water input](water_input.md), and their tests in [Tests](testing.md).
+boiler's call (whether the boiler is told to heat). The water and the boiler's call come from a
+source the user chooses in the thermostat's options: Home Assistant entities, or a provider (an
+integration that implements SmartPI's contract), and for the call also Versatile Thermostat's
+central boiler. Where an extension changes the model, the command chain or the learning, the
+sections below include it. The extensions themselves are described in
+[Zone dependencies and a second heat source](zone_dependencies.md) and
+[Water and boiler inputs](water_input.md), and their tests in [Tests](testing.md).
 
 ---
 
@@ -88,7 +91,7 @@ The value effectively injected into the controller is `u_ff_eff + u_pi`, then it
 
 With water heating, the controller works in power at a reference water temperature. The command
 sent to the emitter is `power / max(φ, 0.05)`, at most 1, before the valve curve. Learning sees the
-command times `φ` ([Water input, §3.4](water_input.md#34-use-in-smartpi)).
+command times `φ` ([Water and boiler inputs, §3.4](water_input.md#34-use-in-smartpi)).
 
 ---
 
@@ -147,7 +150,7 @@ The code no longer uses a `WINDOW_MIN_MINUTES` constant. Learning now relies on 
 - subtracts from the measured temperature change the part that the known inputs cause: their rate
   `known_rate = Σ g_i·(T_i − T) + Σ q_j`, integrated over the window,
 - counts the power as 0 while the zone calls for heat and the boiler is not called
-  ([Water input, §4](water_input.md#4-a-boiler-that-is-not-called)).
+  ([Water and boiler inputs, §4](water_input.md#4-a-boiler-that-is-not-called)).
 
 In practice, the decision to submit or extend the window depends on slope robustness, not on a fixed minimum duration.
 
@@ -429,7 +432,7 @@ Additional protections currently present are:
 - signed integral guard during resumes, catch-up phases, and setpoint changes,
 - explicit `I:HOLD` during the post-resume `deadtime_heat` phase for `window_resume` and `power_shedding_resume` in heating mode,
 - deadband hold logic,
-- with water heating, the `no_heat` hold: the command and the integral are held during domestic hot water, and only the integral is held while the water brings almost no heat ([Water input, §3.4](water_input.md#34-use-in-smartpi)),
+- with water heating, the `no_heat` hold: the command and the integral are held during domestic hot water, and only the integral is held while the water brings almost no heat ([Water and boiler inputs, §3.4](water_input.md#34-use-in-smartpi)),
 - a neighbour's open window, while the connection to that neighbour is active: the reaction chosen for that neighbour. It is either off, through the window-off path with its protected resume, or the zone's frost or eco preset, and it never asks for more heating or cooling than the setpoint does ([Zone dependencies, §4.5](zone_dependencies.md#45-a-window-at-a-connected-neighbour)).
 
 The calculation also distinguishes two zones around the setpoint:
@@ -490,6 +493,10 @@ in `name`.
 | `prop_algo_smartpi.py`    | `SmartPI`        | algorithm facade, full orchestration                                     |
 | `prop_handler_smartpi.py` | `SmartPIHandler` | Home Assistant bridge: persistence, periodic timer, services, attributes |
 
+The handler reads the inputs from the heating system through the plugin's `heating_inputs.py`:
+the water data and the boiler's call from the source chosen in the thermostat's options (entities,
+a provider, or Versatile Thermostat's central boiler).
+
 ### 5.2 `smartpi/` modules effectively used
 
 | Module                 | Main role                                                   |
@@ -525,12 +532,12 @@ in `name`.
 | `coupling_estimator.py` | learning of the exchange coefficients `k`                  |
 | `zone_fit.py`, `source_model.py`, `source_candidates.py` | the zone's joint fit, the second source's heat and time scales |
 | `split.py`, `source_settings.py`, `source_link.py` | split rules and allocation loop, source settings, the link between sources |
-| `water_input.py`       | the water's factor `φ` from Smart Boiler's data             |
+| `water_input.py`       | the water's factor `φ` from the water data                  |
 | `boiler_call.py`       | whether the boiler heats a calling zone                     |
 
 The modules of the extensions are described in
 [Zone dependencies, §6](zone_dependencies.md#6-components-and-interfaces) and
-[Water input, §5](water_input.md#5-components-and-interfaces).
+[Water and boiler inputs, §5](water_input.md#5-components-and-interfaces).
 
 ### 5.3 Internal composition of `SmartPI`
 
@@ -614,7 +621,7 @@ The current payload from `SmartPI.save_state()` notably contains:
 ```
 
 The optional keys are described in [Zone dependencies, §8](zone_dependencies.md#8-persistent-state)
-and [Water input, §7](water_input.md#7-persistent-state). A payload without these keys loads as before.
+and [Water and boiler inputs, §7](water_input.md#7-persistent-state). A payload without these keys loads as before.
 
 Only the learned trim remains persistent. Ownership windows, pending
 proposals, and integral transfers are transient; after restart the observer is
@@ -653,9 +660,12 @@ twin is usable, its public diagnostic fields are exposed under `analysis.twin`.
   one entry per neighbour, and `second_source` for the main source of a zone with two heat
   sources; a thermostat that works as an additional source shows only its role
   ([Zone dependencies, §9](zone_dependencies.md#9-diagnostics));
-- `water`: the water's factor, its source and the holds, for a water heating type;
-- `boiler`: whether the boiler is called, and the learning mode that follows from it
-  ([Water input, §8](water_input.md#8-diagnostics)).
+- `water`: the water's factor, where it comes from, the holds, and the source of each water signal
+  (`inputs`), for a water heating type;
+- `boiler`: whether the boiler is called, the chosen source (`entities`, `provider:<name>`,
+  `vtherm_central_boiler`) and its signals (`inputs`), the reason and the demand, and the learning
+  mode that follows from it; shown when a call source is chosen
+  ([Water and boiler inputs, §8](water_input.md#8-diagnostics)).
 
 With water data, the `power` values are power at the reference water, while
 `current_cycle_percent` and `next_cycle_percent` are the command sent to the emitter.

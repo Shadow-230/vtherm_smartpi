@@ -223,8 +223,13 @@ async def put_back_thermostats(r: Any) -> None:
 
 async def reset(r: Any) -> None:
     """Between scenarios: the simulator's inputs back to the configuration (temperatures,
-    heaters and boiler go on), the thermostats at their base, every zone's main source heard."""
+    heaters and boiler go on; the boiler's state and hot water back to normal), the helpers'
+    heating provider registered with nothing forced, the thermostats at their base, every zone's
+    main source heard."""
     await sim(r, "reset", rooms=False)
+    if role().provider:
+        # The helpers' heating provider registered again, with nothing forced.
+        await api(r).call("smartpi_qas_helpers", "set_provider", {"registered": True, "supply_reason": "", "call_reason": ""})
     await put_back_thermostats(r)
     if role().zone is not None:
         try:
@@ -309,8 +314,11 @@ def keep(name: str, data: Mapping[str, Any]) -> pathlib.Path:
     return out
 
 
-def kept(name: str, instance: int) -> dict[str, Any] | None:
-    found = results_dir() / f"{name}-instance{instance}.json"
+def kept(name: str) -> dict[str, Any] | None:
+    """What this instance kept earlier (QB2 and QB3 run on the instance that ran QB2a and QB3a)."""
+    from ha_client import N  # noqa: PLC0415
+
+    found = results_dir() / f"{name}-instance{N}.json"
     return json.loads(found.read_text(encoding="utf-8")) if found.is_file() else None
 
 

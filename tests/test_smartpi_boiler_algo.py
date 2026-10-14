@@ -12,15 +12,14 @@ from custom_components.vtherm_smartpi.smartpi.boiler_call import (
     MODE_COOLING,
     MODE_HELD,
     MODE_WARMING,
-    SOURCE_SMART_BOILER,
     BoilerReading,
 )
 from custom_components.vtherm_smartpi.smartpi.const import BOILER_CALL_GRACE_S, HEATING_RADIATOR
 from custom_components.vtherm_smartpi.smartpi.diagnostics import build_published_diagnostics
 from tests.helpers import force_smartpi_stable_mode
 
-NOT_CALLED = BoilerReading(False, "no_demand", SOURCE_SMART_BOILER)
-CALLED = BoilerReading(True, None, SOURCE_SMART_BOILER)
+NOT_CALLED = BoilerReading(False, "no_demand", "provider:test")
+CALLED = BoilerReading(True, None, "provider:test")
 
 
 class _Clock:

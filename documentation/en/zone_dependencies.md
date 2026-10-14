@@ -355,7 +355,7 @@ stateDiagram-v2
   `source_heat`, then `door_settling`. The `source_heat` gate belongs to the second source
   (section 5.5). Below all of them, `boiler_settling` pauses learning while the emitter cools down
   because the boiler is not called, and while it warms up again once the boiler starts
-  ([Water input, §4](water_input.md#4-a-boiler-that-is-not-called)).
+  ([Water and boiler inputs, §4](water_input.md#4-a-boiler-that-is-not-called)).
 - An always-connected neighbour does not pause learning. SmartPI's `b` includes its exchange, and
   the joint fit (section 4.4) separates it out. The first plan had a gate on the temperature
   difference to the neighbour (`coupling_gradient`). It was dropped: with a neighbour that is
@@ -566,7 +566,7 @@ arriving for `L_f`, and the last one is assumed to hold after that.
 - **Cycles.** The source reports each cycle it starts. A switched (on/off) actuator heats first,
   at its **level**, for its on-time. A valve keeps its power for the whole cycle. The level is 1
   without water data. With water data it is the source's water factor (its power compared with its
-  power at the reference water, see the [water input](water_input.md)). This is because a floor
+  power at the reference water, see the [water and boiler inputs](water_input.md)). This is because a floor
   whose water is at 30 degC gives about 37 % of its power at 45 degC while it is switched on (room
   at 20 degC). The main source's own cycles are recorded the same way.
 - **Each device's type is the heating type of its own SmartPI entry.** The zone form can instead
@@ -651,7 +651,7 @@ flowchart TD
   additional source does not apply the main source's commands; while the zone is off; without a
   zone or outdoor temperature; and after a gap between calculations longer than
   `ZONE_FIT_MAX_GAP_S`. So no window spans a pause. The windows do not stop for SmartPI's own
-  learning pause (`set_smartpi_learning`, which Smart Boiler also uses for its pause), for power
+  learning pause (`set_smartpi_learning`, which other integrations may use too), for power
   shedding or for the guard cut. The realized power of the cycles still describes what the zone
   got. SmartPI keeps holding the fit's `a` and `b` (section 5.5) while its learning is paused,
   because this applies a model and learns nothing.
@@ -999,7 +999,7 @@ the mean over days 3–4. Then come three nights with the setpoint lowered to 17
 |---|---|---|---|
 | floor behind a valve | 0.020 degC | 0.050 degC | 1.03/1.02/1.03 |
 | slab warming through its depth (two lags in series) | 0.035 degC | 0.056 degC | `a` 0.95, `b` 1.06, `a_f` 1.18 |
-| water on heating curves, Smart Boiler's data (recovery 6.7 h against 5.9 h) | 0.053 degC | 0.094 degC | 0.99/0.97/0.94 |
+| water on heating curves, water data from entities (recovery 6.7 h against 5.9 h) | 0.053 degC | 0.094 degC | 0.99/0.97/0.94 |
 | two zones, door open 6–23 h | 0.034 / 0.029 degC | 0.072 / 0.055 degC | `k` 0.89 / 0.94 |
 | two zones, always open | 0.021 / 0.018 degC | 0.055 / 0.042 degC | `k` 1.04 / 0.96 |
 
@@ -1088,7 +1088,7 @@ All modules below are plain Python and can be tested without a running HA.
 | `smartpi/split.py` | Second source: split rules, allocation loop, recommendation by emitter type |
 | `smartpi/source_settings.py` | Second source: its rule and emitters, read from the configured item |
 | `smartpi/source_link.py` | Second source: the link between the main and the additional source in one Home Assistant (commands one way, cycles and the power cap the other) |
-| `smartpi/water_input.py`, `repairs.py` | The water factor of each source and the reset offered when water data appear or go; see [Water input](water_input.md) |
+| `smartpi/water_input.py`, `repairs.py` | The water factor of each source and the reset offered when water data appear or go; see [Water and boiler inputs](water_input.md) |
 
 In the existing files:
 
@@ -1293,4 +1293,4 @@ simulator itself, and the scenarios N1–N7 and Z1–Z7 with their criteria. The
 | `SPLIT_PREDICTED_SHARE` | 1 | share of the predicted error the source may correct |
 | `SOURCE_BRAKE_STEPS` | 8 | halvings that find the brake's cap |
 | `SOURCE_BOOST_ERROR_C` | 0.2 degC | a zone colder than this recovers with the main source working as if alone |
-| `WATER_NO_HEAT` | 0.05 | lowest power cap of a source on water ([Water input, §10](water_input.md#10-constants-limits-and-open-points)) |
+| `WATER_NO_HEAT` | 0.05 | lowest power cap of a source on water ([Water and boiler inputs, §10](water_input.md#10-constants-limits-and-open-points)) |

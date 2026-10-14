@@ -66,17 +66,21 @@ async def test_thermostat_entry_opens_a_menu(hass) -> None:
     result = await hass.config_entries.options.async_init(entry.entry_id)
 
     assert result["type"] == FlowResultType.MENU
-    assert result["menu_options"] == ["settings", "zone", "dependencies"]
+    assert result["menu_options"] == ["settings", "zone", "dependencies", "heating_inputs"]
 
 
-async def test_global_entry_keeps_the_settings_form(hass) -> None:
+async def test_global_entry_opens_the_settings_and_the_boiler_signals(hass) -> None:
     entry = MockConfigEntry(domain=DOMAIN, title="SmartPI defaults", unique_id=DOMAIN, data=dict(DEFAULT_OPTIONS))
     entry.add_to_hass(hass)
 
     result = await hass.config_entries.options.async_init(entry.entry_id)
 
-    assert result["type"] == FlowResultType.FORM
+    assert result["type"] == FlowResultType.MENU
     assert result["step_id"] == "init"
+    assert result["menu_options"] == ["settings", "boiler_signals"]
+    result = await _next(hass, result, "settings")
+    assert result["type"] == FlowResultType.FORM
+    assert result["step_id"] == "settings"
 
 
 async def test_settings_keep_the_dependency_list(hass) -> None:
@@ -173,4 +177,4 @@ async def test_valve_curve_is_offered_only_with_linearization(hass, monkeypatch)
     result = await hass.config_entries.options.async_init(entry.entry_id)
 
     assert result["type"] == FlowResultType.MENU
-    assert result["menu_options"] == ["settings", "zone", "dependencies"]
+    assert result["menu_options"] == ["settings", "zone", "dependencies", "heating_inputs"]

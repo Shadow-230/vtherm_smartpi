@@ -4,7 +4,7 @@
   "codeowners": [],
   "config_flow": false,
   "dependencies": [],
-  "after_dependencies": ["vtherm_smartpi"],
+  "after_dependencies": ["vtherm_smartpi", "smartpi_room_sim"],
   "documentation": "https://github.com/Shadow-230/vtherm_smartpi/blob/dev/documentation/en/testing.md",
   "integration_type": "service",
   "iot_class": "calculated",

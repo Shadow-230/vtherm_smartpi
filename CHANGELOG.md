@@ -4,6 +4,28 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+- Add the sources of the inputs from the heating system. The water data (the supply water
+  temperature of a thermostat's circuit, the boiler can heat, hot water has priority, a fault)
+  and the boiler's call now come from a source chosen in a new "Water and boiler" item of a
+  thermostat's options, shown for a water heating type: none, Home Assistant entities (any
+  integration, or a sensor on the supply pipe), or a provider (an integration that implements
+  SmartPI's contract, v1: it registers in `hass.data["vtherm_smartpi_heating_providers"]`, and
+  nothing is imported either way); for the call also Versatile Thermostat's central boiler.
+  The choice is explicit, from a list built when the form opens, with the registered
+  providers. The boiler's signals are set once in the "SmartPI defaults" entry, whose options
+  now open a menu (regulator settings, boiler signals); a thermostat takes them from there or
+  sets its own. A change of the water source or of its supply sensor asks whether to reset the
+  learned model; the old source's water state and an open water repair go, and a kept model is
+  not asked about again when the new data start. With Versatile
+  Thermostat's central boiler, SmartPI now also gives the reason the boiler is not called
+  (`activation_delay`, `no_demand`, `below_threshold`) and the demand, from VTherm's live
+  entities. The diagnostics show where each signal comes from (`inputs`), and the `boiler`
+  block appears for a chosen source even without data. A zone's additional source chooses its
+  water data in a menu of its own. The reading of one integration's interface is removed:
+  such an integration becomes a provider. Entries without the new keys work as before (no
+  water data; the call from VTherm's central boiler where it serves the thermostat).
+  Documented in `documentation/en/water_input.md` ("Water and boiler inputs"); the QAS set
+  "with water data" (the role `water`, scenarios QW1–QW10) is built.
 - Fix a duplicate diagnostic sensor (an error already in 0.4.0). The "SmartPI defaults"
   entry shows the diagnostic sensor of each SmartPI thermostat that has no entry of its own.
   When such a thermostat got its own entry, the defaults entry kept the sensor, so creating
@@ -20,18 +42,22 @@ All notable changes to this project will be documented in this file.
   the check compared the master's devices with an empty ID. The devices are now compared
   by unique ID. A full restart did not show it: there, SmartPI is set up after Versatile
   Thermostat has built its thermostats, and starts later, once they have their IDs.
-- Add the QAS test pack (`tests/qas/`): tests on a real Home Assistant, run on the bench's eight
-  test instances, for the set without Smart Boiler. It holds a room simulator as a Home
-  Assistant integration (its physics is now the in-process simulator's file, which
-  `tests/sim/plant.py` loads), test-only helpers, a `configuration.yaml` per instance role,
-  setup scripts that create every entry through the API, and the runner with 35 scenarios on
-  the bench's harness. The catalogue is in `testing.md`, section 6; the set with Smart Boiler
-  is listed there as planned. New tests check the simulator and the pack in CI, and, locally,
-  each role's setup through the real forms of Versatile Thermostat 10.5.1 and SmartPI.
+- Add the QAS test pack (`tests/qas/`): tests on a real Home Assistant, run on the bench's
+  test instances, for the sets without and with water data. It holds a room simulator as a
+  Home Assistant integration (its physics is now the in-process simulator's file, which
+  `tests/sim/plant.py` loads; its boiler can be off, in a fault or give hot water priority, and
+  each water emitter has a supply sensor), test-only helpers (among them a heating provider of
+  SmartPI's contract fed by the simulator), nine roles with a `configuration.yaml` each,
+  setup scripts that create every entry through the API, and the runner with 46 scenarios on
+  the bench's harness. A role names no instance: the testing session chooses where each runs
+  (`--role`), and `compare.py` takes the two results files it compares. The catalogue is in
+  `testing.md`, section 6. New tests check the simulator, the helpers' provider and the pack
+  in CI, and, locally, each role's setup through the real forms of Versatile Thermostat 10.5.1
+  and SmartPI.
 - Rework the documentation. Where the fork changes SmartPI's existing behaviour, the
   technical, diagnostics and user documents now describe it in place. `zone_dependencies.md`
   and `water_input.md` share one layout and give the reasons behind the design, the data
-  read from Versatile Thermostat and Smart Boiler, and the formulas. All tests, the
+  read from Versatile Thermostat and from the sources of the water data, and the formulas. All tests, the
   simulator and the scenarios with their criteria are in `testing.md`. The documentation is
   written in plain language and is also in French and Polish, translated from the English.
   The French user, technical and diagnostics documents and README now say everything the
@@ -42,15 +68,16 @@ All notable changes to this project will be documented in this file.
 - Learn nothing wrong from a boiler that is not called. A zone calling for heat while
   its boiler is held off (a start threshold of devices, power or valve opening, an
   activation delay) took its command for heat and lost its learned emitter power. SmartPI
-  now reads the boiler's call — Smart Boiler's `boiler_called` and `call_reason` where
-  Smart Boiler controls the boiler, otherwise Versatile Thermostat's central boiler for a
-  thermostat it serves — and, once the call has gone unanswered for 15 min (plus the
+  now reads the boiler's call — from the source chosen in the thermostat's options:
+  Versatile Thermostat's central boiler for a thermostat it serves (the default), entities
+  or a provider — and, once the call has gone unanswered for 15 min (plus the
   cycle for a switched device), learns with the power 0 (only how the zone cools),
   waiting while the emitter cools after the stop and warms after the start; the
   dead-time estimator does not time the boiler's start, a calibration is cancelled, and
   the feed-forward trim and the zone exchanges pause. Regulation is unchanged. A `boiler`
-  block in the diagnostics shows the call and, from Smart Boiler, the demand against its
-  thresholds. Documented in `documentation/en/water_input.md`, section 11.
+  block in the diagnostics shows the call, its reason and the demand against the boiler's
+  thresholds where the source gives it. Documented in `documentation/en/water_input.md`,
+  section 4.
 - Fix the fade-in of known exchanges. Always-connected neighbours enter together once
   each is known, and the loss fitted without them replaces SmartPI's b at the pace
   their exchanges enter, so the feed-forward no longer dips for an hour when they are
@@ -91,8 +118,8 @@ All notable changes to this project will be documented in this file.
   record switched cycles at their water factor in the exchange learning.
 - Add the water input: a heating type in the regulator settings (water radiator by
   default, water underfloor heating, electric mat, fast electric). For a water type,
-  SmartPI reads the supply water of the thermostat's circuit from the Smart Boiler
-  plugin (its feature manager or public API) and turns the command into power at a
+  SmartPI reads the supply water of the thermostat's circuit from the source chosen in its
+  options (entities or a provider) and turns the command into power at a
   reference water: the emitter gets power divided by the water factor, learning sees
   the command times the factor, hot water with priority holds the command and the
   integral, the cold water of an idle boiler holds only the integral (the zone can

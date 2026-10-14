@@ -1,4 +1,4 @@
-"""QD: neighbouring zones (instance 2).
+"""QD: neighbouring zones (role ``neighbours``).
 
 The kitchen (SmartPI) has two neighbours: the hall behind a door (``kitchen_door``; the hall's
 VTherm has a window sensor), and the dining room, always open. In the simulator the kitchen–hall

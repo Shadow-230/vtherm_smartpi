@@ -1,12 +1,16 @@
-"""Compare what two instances kept: QB1 (1 against 7) and QE5 (3 against 4).
+"""Compare what two instances kept: QB1 (the role base against ref-0.4.0) and QE5 (the role zone
+against zone-ref).
 
-    python <stage>/tests/qas/compare.py qb1  [RESULTS_DIR]
-    python <stage>/tests/qas/compare.py qb1s [RESULTS_DIR]
-    python <stage>/tests/qas/compare.py qe5  [RESULTS_DIR]
-    python <stage>/tests/qas/compare.py qe5s [RESULTS_DIR]
+    python <stage>/tests/qas/compare.py qb1  NEW REF [RESULTS_DIR]
+    python <stage>/tests/qas/compare.py qb1s NEW REF [RESULTS_DIR]
+    python <stage>/tests/qas/compare.py qe5  NEW REF [RESULTS_DIR]
+    python <stage>/tests/qas/compare.py qe5s NEW REF [RESULTS_DIR]
 
-RESULTS_DIR is the bench's results/vtherm_smartpi/ (the default, from the bench's directory).
-Exit status 0: passed; 1: failed; 2: a measurement is missing.
+NEW and REF are the two results files, or the numbers of the instances that kept them (then
+``RESULTS_DIR/<name>-instance<N>.json``): for QB1 NEW ran the role ``base`` and REF ``ref-0.4.0``;
+for QE5 NEW ran ``zone`` and REF ``zone-ref``. Which instance ran which role is the testing
+session's choice. RESULTS_DIR is the bench's results/vtherm_smartpi/ (the default, from the bench's
+directory). Exit status 0: passed; 1: failed; 2: a measurement is missing.
 """
 
 from __future__ import annotations
@@ -16,11 +20,17 @@ import pathlib
 import sys
 from typing import Any
 
-PAIRS = {"qb1": (1, 7), "qb1s": (1, 7), "qe5": (3, 4), "qe5s": (3, 4)}
+NAMES = ("qb1", "qb1s", "qe5", "qe5s")
 
 
-def load(directory: pathlib.Path, name: str, instance: int) -> dict[str, Any] | None:
-    path = directory / f"{name}-instance{instance}.json"
+def results_path(directory: pathlib.Path, name: str, which: str) -> pathlib.Path:
+    """A results file named on the command line, or the one instance ``which`` kept."""
+    if which.isdigit():
+        return directory / f"{name}-instance{which}.json"
+    return pathlib.Path(which)
+
+
+def load(path: pathlib.Path) -> dict[str, Any] | None:
     return json.loads(path.read_text(encoding="utf-8")) if path.is_file() else None
 
 
@@ -48,15 +58,15 @@ def judge(name: str, new: dict[str, Any], ref: dict[str, Any]) -> list[tuple[boo
 
 
 def main(argv: list[str]) -> int:
-    if not argv or argv[0] not in PAIRS:
+    if len(argv) < 3 or argv[0] not in NAMES:
         print(__doc__)
         return 2
     name = argv[0]
-    directory = pathlib.Path(argv[1]) if len(argv) > 1 else pathlib.Path("results/vtherm_smartpi")
-    first, second = PAIRS[name]
-    new, ref = load(directory, name, first), load(directory, name, second)
+    directory = pathlib.Path(argv[3]) if len(argv) > 3 else pathlib.Path("results/vtherm_smartpi")
+    new_path, ref_path = results_path(directory, name, argv[1]), results_path(directory, name, argv[2])
+    new, ref = load(new_path), load(ref_path)
     if new is None or ref is None:
-        print(f"{name}: missing {name}-instance{first if new is None else second}.json in {directory}")
+        print(f"{name}: missing {new_path if new is None else ref_path}")
         return 2
     checks = judge(name, new, ref)
     for ok, what in checks:

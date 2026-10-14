@@ -11,9 +11,15 @@ What the in-process tests do with patches, for scenarios on a real Home Assistan
   saved by SmartPI itself, so a later version starts from what this one stored — for QB2;
 - ``recorded_events``: the AutoCalib and SmartPI events fired since the start (or since
   ``clear``), with their data, as the service's response — the bench's client hears only service
-  calls.
+  calls;
+- a heating provider of SmartPI's contract (v1), fed by the room simulator, for the thermostats
+  of its ``circuits`` (climate entity → simulated heater): ``set_provider`` registers or
+  unregisters it, forces a reason for its supply water or for a boiler not called, and
+  ``provider_status`` tells how often SmartPI asked it, by thermostat, and which providers are
+  registered.
 
-Set up from YAML (``smartpi_qas_helpers:``). Each service names the VTherm climate entity.
+Set up from YAML (``smartpi_qas_helpers:``, with ``provider: {name, circuits}`` for the provider).
+Each other service names the VTherm climate entity.
 """
 
 from __future__ import annotations
@@ -34,7 +40,13 @@ _LOGGER = logging.getLogger(__name__)
 DOMAIN = "smartpi_qas_helpers"
 SMARTPI = "vtherm_smartpi"
 FIXTURES = pathlib.Path(__file__).resolve().parent / "fixtures"
-CONFIG_SCHEMA = vol.Schema({DOMAIN: vol.Any(None, {})}, extra=vol.ALLOW_EXTRA)
+SIM = "smartpi_room_sim"
+# SmartPI's registry of heating providers (its heating_inputs.py): nothing of SmartPI is imported.
+PROVIDERS_KEY = "vtherm_smartpi_heating_providers"
+_PROVIDER = vol.Schema({vol.Required("name"): cv.string, vol.Required("circuits"): {cv.entity_id: cv.slug}})
+CONFIG_SCHEMA = vol.Schema(
+    {DOMAIN: vol.Any(None, vol.Schema({vol.Optional("provider"): _PROVIDER}))}, extra=vol.ALLOW_EXTRA
+)
 RECORDED = (
     "smartpi_autocalib_snapshot_taken",
     "smartpi_autocalib_triggered",
@@ -44,6 +56,65 @@ RECORDED = (
     "vtherm_smartpi_event",
 )
 MAX_RECORDED = 200
+
+
+class SimProvider:
+    """A heating provider of SmartPI's contract (v1): the simulated boiler's water for each of its
+    circuits, and whether the boiler is called.
+
+    ``supply_reason``: forced for every circuit (no supply temperature then); ``call_reason``: the
+    boiler not called for this reason (the simulated boiler then does not fire either).
+    """
+
+    version = 1
+
+    def __init__(self, hass: HomeAssistant, name: str, circuits: dict[str, str]) -> None:
+        self.hass = hass
+        self.name = name
+        self.circuits = dict(circuits)
+        self.calls: dict[str, int] = {}
+        self.supply_reason: str | None = None
+        self.call_reason: str | None = None
+
+    def heating_inputs(self, entity_id: str) -> dict[str, Any] | None:
+        self.calls[entity_id] = self.calls.get(entity_id, 0) + 1
+        heater = self.circuits.get(entity_id)
+        hub = self.hass.data.get(SIM)
+        if heater is None or hub is None or hub.sim.spec.boiler is None:
+            return None
+        sim = hub.sim
+        data: dict[str, Any] = {}
+        if self.supply_reason:
+            data.update(supply_temperature=None, supply_reason=self.supply_reason, heat_available=None, heat_reason=None)
+        else:
+            if sim.dhw_active():
+                heat = (False, "dhw_active")
+            elif sim.boiler_state == "fault":
+                heat = (False, "fault")
+            elif sim.boiler_state == "off":
+                heat = (False, "boiler_off")
+            elif not sim.firing:
+                heat = (False, "flame_off")
+            else:
+                heat = (True, None)
+            supply = sim.supply_c()
+            data.update(
+                supply_temperature=round(supply, 1) if supply is not None else None,
+                supply_reason=None,
+                heat_available=heat[0],
+                heat_reason=heat[1],
+            )
+        calling = sum(1 for name in self.circuits.values() if sim.applied.get(name, 0.0) > 0.0)
+        if self.call_reason:
+            data.update(boiler_called=False, call_reason=self.call_reason)
+        elif sim.boiler_state == "fault":
+            data.update(boiler_called=False, call_reason="boiler_fault")
+        elif sim.firing:
+            data.update(boiler_called=True, call_reason=None)
+        else:
+            data.update(boiler_called=False, call_reason="no_demand")
+        data["demand"] = {"demand_count": calling, "count_threshold": 2, "count_by": "zones"}
+        return data
 
 
 def _thermostat(hass: HomeAssistant, entity_id: str) -> Any:
@@ -61,8 +132,64 @@ def _source_link(hass: HomeAssistant) -> Any:
     return link
 
 
-async def async_setup(hass: HomeAssistant, _config: ConfigType) -> bool:
+async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     silenced: set[str] = set()
+    provider_config = (config.get(DOMAIN) or {}).get("provider")
+    provider = (
+        SimProvider(hass, provider_config["name"], provider_config["circuits"]) if provider_config else None
+    )
+    switched_off: dict[str, bool] = {}
+
+    def _register(registered: bool) -> None:
+        registry = hass.data.setdefault(PROVIDERS_KEY, {})
+        if registered:
+            registry[provider.name] = provider
+        else:
+            registry.pop(provider.name, None)
+
+    if provider is not None:
+        _register(True)
+
+    async def set_provider(call: ServiceCall) -> None:
+        if provider is None:
+            raise ServiceValidationError("no provider configured (smartpi_qas_helpers: provider:)")
+        if "registered" in call.data:
+            _register(call.data["registered"])
+        if "supply_reason" in call.data:
+            provider.supply_reason = call.data["supply_reason"] or None
+        if "call_reason" in call.data:
+            provider.call_reason = call.data["call_reason"] or None
+            hub = hass.data.get(SIM)
+            if hub is not None and hub.sim.spec.boiler is not None:
+                # Not called, the boiler does not fire; called again, it goes back to its switch.
+                hub.changed()
+                if provider.call_reason and "boiler_on" not in switched_off:
+                    switched_off["boiler_on"] = hub.sim.boiler_on
+                    hub.sim.set_boiler(False)
+                elif not provider.call_reason and "boiler_on" in switched_off:
+                    hub.sim.set_boiler(switched_off.pop("boiler_on"))
+                hub.changed()
+        _LOGGER.warning(
+            "smartpi_qas_helpers: provider %s %s, supply reason %s, call reason %s",
+            provider.name,
+            "registered" if hass.data.get(PROVIDERS_KEY, {}).get(provider.name) is provider else "not registered",
+            provider.supply_reason,
+            provider.call_reason,
+        )
+
+    async def provider_status(call: ServiceCall) -> ServiceResponse:
+        del call
+        providers = sorted(name for name in (hass.data.get(PROVIDERS_KEY) or {}) if isinstance(name, str))
+        if provider is None:
+            return {"configured": False, "providers": providers}
+        return {
+            "configured": True,
+            "providers": providers,
+            "registered": hass.data.get(PROVIDERS_KEY, {}).get(provider.name) is provider,
+            "calls": dict(provider.calls),
+            "supply_reason": provider.supply_reason,
+            "call_reason": provider.call_reason,
+        }
     recorded: list[dict[str, Any]] = []
 
     @callback
@@ -147,6 +274,21 @@ async def async_setup(hass: HomeAssistant, _config: ConfigType) -> bool:
         "silence_lead",
         silence_lead,
         vol.Schema({vol.Required("entity_id"): cv.entity_id, vol.Required("silent"): cv.boolean}),
+    )
+    hass.services.async_register(
+        DOMAIN,
+        "set_provider",
+        set_provider,
+        vol.Schema(
+            {
+                vol.Optional("registered"): cv.boolean,
+                vol.Optional("supply_reason"): vol.Any(None, cv.string),
+                vol.Optional("call_reason"): vol.Any(None, cv.string),
+            }
+        ),
+    )
+    hass.services.async_register(
+        DOMAIN, "provider_status", provider_status, vol.Schema({}), supports_response=SupportsResponse.ONLY
     )
     hass.services.async_register(
         DOMAIN,

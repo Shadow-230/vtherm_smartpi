@@ -47,6 +47,8 @@ async def test_global_options_store_the_heating_type(hass) -> None:
     entry = MockConfigEntry(domain=DOMAIN, title="SmartPI defaults", unique_id=DOMAIN, data=dict(DEFAULT_OPTIONS))
     entry.add_to_hass(hass)
     result = await hass.config_entries.options.async_init(entry.entry_id)
+    assert result["type"] == FlowResultType.MENU
+    result = await hass.config_entries.options.async_configure(result["flow_id"], {"next_step_id": "settings"})
     assert result["type"] == FlowResultType.FORM
     shown = {getattr(key, "schema", key) for key in result["data_schema"].schema}
     user_input = {key: value for key, value in DEFAULT_OPTIONS.items() if key in shown}

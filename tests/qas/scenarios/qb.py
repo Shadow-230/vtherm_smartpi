@@ -1,12 +1,14 @@
 """QB: the fork against the author's 0.4.0 — twins over 48 h, the way forward from 0.4.0 and the
-way back (instances 1 and 7).
+way back (roles ``base`` and ``ref-0.4.0``).
 
-QB2 and QB3 span a deploy that the bench's testing session makes between their two steps:
+QB2 and QB3 span a deploy that the bench's testing session makes between their two steps, on the
+instance that runs the role ``ref-0.4.0``:
 
-    instance 7 on 0.4.0:  QB2a  →  deploy qas  →  QB2  →  QB3a  →  deploy 0.4.0  →  QB3
+    on 0.4.0:  QB2a  →  deploy qas  →  QB2  →  QB3a  →  deploy 0.4.0  →  QB3
 
 Measurements that another step or another instance needs are kept in the bench's results
-directory (``common.keep``); ``tests/qas/compare.py`` reads QB1's from instances 1 and 7.
+directory (``common.keep``); ``tests/qas/compare.py`` reads QB1's from the two instances that ran
+it.
 """
 
 from __future__ import annotations
@@ -95,7 +97,7 @@ async def QB2a(r: Any) -> None:
 @scenario("QB2", ("ref-0.4.0",), 30, "test_algo_persistence.py", minimum=True)
 async def QB2(r: Any) -> None:
     """After the upgrade from 0.4.0 to qas, the state 0.4.0 saved is loaded unchanged, no warning about its format is logged, nothing is reset, and the old entry's options menu works."""
-    before = kept("qb2", 7)
+    before = kept("qb2")
     r.check(before is not None, "QB2a kept the 0.4.0 model on this instance")
     r.check(await wait_loaded(r, [LIVING], 600.0), "the thermostat runs on qas")
     data = await live(r, LIVING)
@@ -136,7 +138,7 @@ async def QB3a(r: Any) -> None:
 @scenario("QB3", ("ref-0.4.0",), 30, "—")
 async def QB3(r: Any) -> None:
     """Back on 0.4.0 with a neighbour configured, the entry loads without errors and the state too; saving the options in 0.4.0 drops the fork's keys, as known."""
-    before = kept("qb3", 7) or {}
+    before = kept("qb3") or {}
     r.check(await wait_loaded(r, [LIVING], 600.0), "the thermostat runs on 0.4.0")
     title = role().thermostats[0].name
     found = await entry(r, "vtherm_smartpi", title)

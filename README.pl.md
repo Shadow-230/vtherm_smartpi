@@ -76,7 +76,7 @@ Pełna dokumentacja jest dostępna po polsku:
 - 🇵🇱 [Dokumentacja użytkownika (po polsku)](documentation/pl/vtherm_smartpi.md)
 - 🇵🇱 [Dokumentacja techniczna (po polsku)](documentation/pl/technical_doc.md)
 - 🇵🇱 [Zależności stref i drugie źródło ciepła (po polsku)](documentation/pl/zone_dependencies.md)
-- 🇵🇱 [Wejście wody (po polsku)](documentation/pl/water_input.md)
+- 🇵🇱 [Wejścia wody i kotła (po polsku)](documentation/pl/water_input.md)
 - 🇵🇱 [Testy (po polsku)](documentation/pl/testing.md)
 - 🇵🇱 [Diagnostyka (po polsku)](documentation/pl/diagnostics.md)
 

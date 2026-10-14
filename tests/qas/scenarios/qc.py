@@ -1,4 +1,4 @@
-"""QC: VTherm's central boiler and the boiler's call SmartPI reads from it (instance 6).
+"""QC: VTherm's central boiler and the boiler's call SmartPI reads from it (role ``central-boiler``).
 
 The bedroom (2000 W) cannot start the boiler alone: VTherm's power threshold is 2500 W and its
 device-count threshold is off. The office (3000 W) starts it alone.
@@ -55,7 +55,7 @@ async def _state_is(r: Any, entity_id: str, want: str) -> bool:
 
 @scenario("QC1", ("central-boiler",), 30, "test_smartpi_boiler_handler.py", minimum=True)
 async def QC1(r: Any) -> None:
-    """For a thermostat VTherm's central boiler serves, the boiler block reads source vtherm_central_boiler, and its called follows the central boiler's binary sensor."""
+    """For a thermostat VTherm's central boiler serves, the boiler block reads source vtherm_central_boiler, its called follows the central boiler's binary sensor, and with the boiler off its reason and demand come from VTherm's live entities (nothing calling: no_demand, the power threshold 2.5 kW)."""
     sensor = await _boiler_sensor(r)
     await set_temperature(r, BEDROOM, OFF_SETPOINT)
     await set_temperature(r, OFFICE, 24.0)
@@ -79,6 +79,13 @@ async def QC1(r: Any) -> None:
     r.check(took is not None, f"the boiler stops with the office: off after {took}")
     took, data = await wait_live(r, BEDROOM, lambda d: path(d, "boiler.called") is False, 2 * RECALC_S + 30.0, 10.0)
     r.check(took is not None, f"the bedroom reads it: called {path(data, 'boiler.called')}")
+    took, data = await wait_live(r, BEDROOM, lambda d: path(d, "boiler.reason") == "no_demand", 2 * CYCLE_S + MARGIN_S, 15.0)
+    demand = path(data, "boiler.demand") or {}
+    r.check(took is not None, f"both off, VTherm's reason: {path(data, 'boiler.reason')}")
+    r.check(
+        demand.get("count_by") == "devices" and demand.get("power_threshold_kw") == 2.5,
+        f"VTherm's demand against its thresholds: {demand}",
+    )
 
 
 async def _alone_below_the_thresholds(r: Any, full: bool) -> None:
@@ -97,6 +104,11 @@ async def _alone_below_the_thresholds(r: Any, full: bool) -> None:
     r.check(took is not None and time.time() - t0 >= grace - MARGIN_S, f"emitter_cooling {time.time() - t0:.0f} s after the call (grace {grace:.0f} s)")
     took, data = await wait_live(r, BEDROOM, lambda d: path(d, "boiler.learning") == "held", settle - grace + 2 * MARGIN_S, 30.0)
     r.check(took is not None, f"held {time.time() - t0:.0f} s after the call (settle {settle:.0f} s)")
+    demand = path(data, "boiler.demand") or {}
+    r.check(
+        path(data, "boiler.reason") == "below_threshold" and (demand.get("demand_power_kw") or 0.0) < 2.5,
+        f"VTherm's reason: {path(data, 'boiler.reason')}, demand {demand}",
+    )
     await asyncio.sleep(10 * 60.0)
     data = await live(r, BEDROOM)
     r.check(path(data, "boiler.learning") == "held", f"still held after 10 minutes: {path(data, 'boiler.learning')}")
@@ -116,30 +128,30 @@ async def _alone_below_the_thresholds(r: Any, full: bool) -> None:
 
 @scenario("QC2", ("central-boiler",), 150, "test_smartpi_boiler_call.py, test_smartpi_boiler_algo.py")
 async def QC2(r: Any) -> None:
-    """The small zone calling alone below the thresholds goes emitter_cooling after the grace, held after its emitter's settling time without learning a, emitter_warming once the big zone starts the boiler, and back to normal learning one settling time later."""
+    """The small zone calling alone below the thresholds goes emitter_cooling after the grace, held after its emitter's settling time (VTherm's reason below_threshold) without learning a, emitter_warming once the big zone starts the boiler, and back to normal learning one settling time later."""
     await _alone_below_the_thresholds(r, full=True)
 
 
 @scenario("QC2s", ("central-boiler",), 95, "test_smartpi_boiler_call.py, test_smartpi_boiler_algo.py", minimum=True, short_of=("QC2", "QC4"))
 async def QC2s(r: Any) -> None:
-    """The small zone calling alone below the thresholds goes emitter_cooling after the grace and held after its emitter's settling time without learning a, then emitter_warming once the big zone starts the boiler."""
+    """The small zone calling alone below the thresholds goes emitter_cooling after the grace and held after its emitter's settling time (VTherm's reason below_threshold) without learning a, then emitter_warming once the big zone starts the boiler."""
     await _alone_below_the_thresholds(r, full=False)
 
 
 @scenario("QC3", ("central-boiler",), 20, "test_smartpi_boiler_handler.py", minimum=True)
 async def QC3(r: Any) -> None:
-    """With the central boiler's binary sensor gone (disabled), SmartPI reads no boiler's call and learns as before, logging no error; the sensor comes back afterwards."""
+    """With the central boiler's binary sensor gone (disabled), SmartPI reads no boiler's call (its source shown without data) and learns as before, logging no error; the sensor comes back afterwards."""
     sensor = await _boiler_sensor(r)
     since = time.time()
     try:
         await r.ha.ws_cmd({"type": "config/entity_registry/update", "entity_id": sensor, "disabled_by": "user"})
         gone = await r.ha.until(lambda: _absent(r, sensor), 180.0, 5.0)
         r.check(gone is not None, f"{sensor} gone after {gone}")
-        took, data = await wait_live(r, BEDROOM, lambda d: path(d, "boiler") is None, 3 * RECALC_S + MARGIN_S, 10.0)
-        r.check(took is not None, f"no boiler block: {path(data, 'boiler')}")
+        took, data = await wait_live(r, BEDROOM, _no_call_read, 3 * RECALC_S + MARGIN_S, 10.0)
+        r.check(took is not None, f"no call read, the source shown: {path(data, 'boiler')}")
         await asyncio.sleep(5 * 60.0)
         data = await live(r, BEDROOM)
-        r.check(path(data, "boiler") is None and bool(path(data, "control.phase")), f"still regulating, phase {path(data, 'control.phase')}")
+        r.check(_no_call_read(data) and bool(path(data, "control.phase")), f"still regulating, phase {path(data, 'control.phase')}")
         errors = log_lines(await system_log(r), since=since, loggers=("custom_components.vtherm_smartpi",), levels=("ERROR",))
         r.check(not errors, f"no error from SmartPI: {errors[:3]}")
     finally:
@@ -148,6 +160,16 @@ async def QC3(r: Any) -> None:
         r.check(back is not None, f"put back: {sensor} enabled and present after {back}")
         took, data = await wait_live(r, BEDROOM, lambda d: path(d, "boiler.source") == "vtherm_central_boiler", 3 * RECALC_S + MARGIN_S, 10.0)
         r.check(took is not None, "the bedroom reads the boiler's call again")
+
+
+def _no_call_read(data: dict[str, Any]) -> bool:
+    """The boiler block names the chosen source but gives no call: its sensor has no state."""
+    return (
+        path(data, "boiler.source") == "vtherm_central_boiler"
+        and path(data, "boiler.called") is None
+        and path(data, "boiler.learning") is None
+        and path(data, "boiler.inputs.called.data") is False
+    )
 
 
 async def _absent(r: Any, entity_id: str) -> bool:

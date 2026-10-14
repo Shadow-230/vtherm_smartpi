@@ -77,7 +77,7 @@ La documentation complète est disponible en anglais, en français et en polonai
 - 🇫🇷 [Documentation utilisateur (Français)](documentation/fr/vtherm_smartpi.md)
 - 🇫🇷 [Documentation technique (Français)](documentation/fr/technical_doc.md)
 - 🇫🇷 [Dépendances entre zones et deuxième source de chaleur (Français)](documentation/fr/zone_dependencies.md)
-- 🇫🇷 [Entrée eau (Français)](documentation/fr/water_input.md)
+- 🇫🇷 [Entrées eau et chaudière (Français)](documentation/fr/water_input.md)
 - 🇫🇷 [Tests (Français)](documentation/fr/testing.md)
 - 🇫🇷 [Diagnostics (Français)](documentation/fr/diagnostics.md)
 
