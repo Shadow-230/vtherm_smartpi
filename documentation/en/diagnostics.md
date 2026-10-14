@@ -111,6 +111,15 @@ the "water too cold" flag. With water data the `power` values are power at the r
 water, while `current_cycle_percent` and `next_cycle_percent` are the command sent to the
 emitter. Its fields are listed in [Water input, §8](water_input.md#8-diagnostics).
 
+## Boiler call
+
+For a water heating type whose boiler's call is known (from Smart Boiler, or from Versatile
+Thermostat's central boiler), `live` gains a `boiler` block: the source, whether the boiler is
+called, why not, how learning treats it (`emitter_cooling`, `held`, `emitter_warming`) and, from
+Smart Boiler, the demand against its start thresholds. Its fields are listed in
+[Water input, §8](water_input.md#8-diagnostics) and explained in
+[§11](water_input.md#11-a-boiler-that-is-not-called).
+
 ## Consumer paths
 
 Live consumers must read from `attributes.live`. Historical graph consumers

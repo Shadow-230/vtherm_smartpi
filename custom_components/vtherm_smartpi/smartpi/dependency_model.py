@@ -183,6 +183,9 @@ class ModelContext:
     lead_power_cap: float = 1.0
     # The lead's cycle.
     lead_cycle_s: float = 600.0
+    # The zone calls but its boiler does not heat it: its power is not heat, the
+    # exchanges and the zone's fit learn nothing then.
+    heat_withheld: bool = False
 
 
 class _Source:
@@ -384,6 +387,7 @@ class DependencyModel:
                 ),
                 learning_allowed=(
                     ctx.learning_allowed
+                    and not ctx.heat_withheld
                     and ctx.model_reliable
                     and ctx.deadtime_s is not None
                     and gate != GATE_NEIGHBOUR_WINDOW
@@ -682,6 +686,7 @@ class DependencyModel:
             and ctx.zone_temp is not None
             and ctx.ext_temp is not None
             and not ctx.calibrating
+            and not ctx.heat_withheld
             and not self._settling(ctx.now_s)
         )
         exchanges: dict[str, float] = {}

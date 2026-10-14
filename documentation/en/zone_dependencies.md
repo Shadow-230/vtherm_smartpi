@@ -228,7 +228,9 @@ stateDiagram-v2
 ```
 
 - Priority when several apply: `neighbour_window` over `door_open` over `source_heat` over
-  `door_settling`. The `source_heat` gate belongs to the second source (section 6.5).
+  `door_settling`. The `source_heat` gate belongs to the second source (section 6.5). Below them
+  all, `boiler_settling` pauses learning while the emitter cools or warms around a boiler that is
+  not called ([Water input, §11](water_input.md#11-a-boiler-that-is-not-called)).
 - An always-connected neighbour does not gate learning: SmartPI's `b` absorbs its exchange,
   and the joint fit (section 5.4) separates it.
 - `k` learns only when SmartPI itself could learn: learning enabled and not paused, the
@@ -951,7 +953,7 @@ absent at a calculation where the readings could not be obtained:
 |---|---|
 | `b_eff`, `t_ref` | the composed model |
 | `inputs_active` | whether known inputs are active |
-| `learning_gate` | `neighbour_window`, `door_open`, `source_heat`, `door_settling` or none |
+| `learning_gate` | `neighbour_window`, `door_open`, `source_heat`, `door_settling`, `boiler_settling` or none |
 | `neighbour_window_action` | the window reaction applied |
 | `items[]` | per neighbour: `id`, `kind`, `entity`, `mode`, `available`, `active`, `t_neighbour`, `neighbour_window`, `k`, `k_reliable`, `k_from_zone_fit`, `k_samples`, `indistinguishable`, `share_of_losses`; `available` is false also in safety mode or without a finite temperature |
 

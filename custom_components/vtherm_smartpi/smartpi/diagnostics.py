@@ -442,6 +442,9 @@ def build_published_diagnostics(algo: SmartPI) -> Dict[str, Any]:
     water = algo.water_diagnostics()
     if water is not None:
         published["water"] = water
+    boiler = algo.boiler_diagnostics()
+    if boiler is not None:
+        published["boiler"] = boiler
     return published
 
 

@@ -4,6 +4,18 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+- Learn nothing wrong from a boiler that is not called. A zone calling for heat while
+  its boiler is held off (a start threshold of devices, power or valve opening, an
+  activation delay) took its command for heat and lost its learned emitter power. SmartPI
+  now reads the boiler's call — Smart Boiler's `boiler_called` and `call_reason` where
+  Smart Boiler controls the boiler, otherwise Versatile Thermostat's central boiler for a
+  thermostat it serves — and, once the call has gone unanswered for 15 min (plus the
+  cycle for a switched device), learns with the power 0 (only how the zone cools),
+  waiting while the emitter cools after the stop and warms after the start; the
+  dead-time estimator does not time the boiler's start, a calibration is cancelled, and
+  the feed-forward trim and the zone exchanges pause. Regulation is unchanged. A `boiler`
+  block in the diagnostics shows the call and, from Smart Boiler, the demand against its
+  thresholds. Documented in `documentation/en/water_input.md`, section 11.
 - Fix the fade-in of known exchanges. Always-connected neighbours enter together once
   each is known, and the loss fitted without them replaces SmartPI's b at the pace
   their exchanges enter, so the feed-forward no longer dips for an hour when they are

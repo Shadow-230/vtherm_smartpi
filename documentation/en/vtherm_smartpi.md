@@ -350,7 +350,8 @@ Other useful blocks under `live`:
 - `autocalib`: automatic supervision state,
 - `calibration`: forced calibration state,
 - `dependencies`: zone dependencies and the zone with two heat sources, when configured ([Zone dependencies, §9](zone_dependencies.md#9-diagnostics)),
-- `water`: the water input, for a water heating type ([Water input, §8](water_input.md#8-diagnostics)).
+- `water`: the water input, for a water heating type ([Water input, §8](water_input.md#8-diagnostics)),
+- `boiler`: whether the boiler is called and how learning treats a zone calling without heat ([Water input, §11](water_input.md#11-a-boiler-that-is-not-called)).
 
 In normal mode, the `setpoint` block can show:
 

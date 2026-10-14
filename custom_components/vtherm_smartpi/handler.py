@@ -2,6 +2,7 @@
 """SmartPI algorithm handler for the plugin runtime."""
 
 import logging
+import math
 import time
 from dataclasses import replace
 from typing import TYPE_CHECKING
@@ -56,6 +57,7 @@ from .hvac_mode import VThermHvacMode_OFF, VThermHvacMode_HEAT, VThermHvacMode_C
 from .commons import write_event_log
 from .smartpi.valve_curve import ValveCurveParams
 from .smartpi.water_input import SOURCE_LASTING, WaterInput, WaterReading
+from .smartpi.boiler_call import REASON_NOT_CALLED, SOURCE_SMART_BOILER, SOURCE_VTHERM, BoilerReading
 from .smartpi.dependencies import (
     KEY_LEAD_EMITTER,
     KEY_SOURCE_EMITTER,
@@ -85,6 +87,22 @@ _LOGGER = logging.getLogger(__name__)
 SMART_BOILER_MANAGER = "vtherm_smart_boiler"
 SMART_BOILER_API_KEY = "vtherm_smart_boiler_api"
 WATER_FIELDS = ("supply_temperature", "supply_reason", "heat_available", "heat_reason")
+# Whether Smart Boiler calls the boiler (its water interface, agreed on 2026-10-14), and the
+# demand against its start criteria, for the diagnostics.
+CALL_REASONS = ("below_threshold", "no_demand", "activation_delay", "boiler_fault")
+DEMAND_FIELDS = {
+    "demand_count": int,
+    "count_threshold": int,
+    "count_by": str,
+    "demand_power_kw": float,
+    "power_threshold_kw": float,
+    "demand_opening": float,
+    "opening_threshold": float,
+}
+BOILER_FIELDS = ("boiler_called", "call_reason", *DEMAND_FIELDS)
+# Versatile Thermostat's central boiler: its binary sensor, on while VT calls the boiler.
+VT_DOMAIN = "versatile_thermostat"
+VT_CENTRAL_BOILER_UNIQUE_ID = "central_boiler_state"
 # Key SmartPI writes into the thermostat's specific_states for Smart Boiler.
 WATER_FACTOR_KEY = "water_factor"
 WATER_ISSUE_PREFIX = "water_data_changed_"
@@ -106,6 +124,48 @@ def _water_reading(fields: dict) -> WaterReading:
         heat_available=heat_available if isinstance(heat_available, bool) else None,
         heat_reason=text(fields.get("heat_reason")),
     )
+
+def _boiler_reading(fields: dict) -> BoilerReading | None:
+    """Smart Boiler's call of the boiler, or None when it does not say (it does not control the
+    boiler, an older version without the fields, a wrong type, a reason SmartPI does not know)."""
+    called = fields.get("boiler_called")
+    reason = fields.get("call_reason")
+    if called is True:
+        return BoilerReading(True, None, SOURCE_SMART_BOILER, _demand(fields))
+    if called is False and reason in CALL_REASONS:
+        return BoilerReading(False, reason, SOURCE_SMART_BOILER, _demand(fields))
+    return None
+
+
+def _demand(fields: dict) -> dict | None:
+    """The demand fields Smart Boiler gave with a well-formed value (diagnostics only)."""
+    demand = {}
+    for name, kind in DEMAND_FIELDS.items():
+        value = fields.get(name)
+        if isinstance(value, bool):
+            continue
+        if kind is str and isinstance(value, str) and value:
+            demand[name] = value
+        elif kind is int and isinstance(value, int):
+            demand[name] = value
+        elif kind is int and isinstance(value, float) and value.is_integer():
+            demand[name] = int(value)
+        elif kind is float and isinstance(value, (int, float)) and math.isfinite(value):
+            demand[name] = round(float(value), 3)
+    return demand or None
+
+
+def vtherm_central_boiler_on(hass) -> bool | None:
+    """Whether Versatile Thermostat's central boiler is on (None: no such boiler, or not known)."""
+    try:
+        entity_id = er.async_get(hass).async_get_entity_id("binary_sensor", VT_DOMAIN, VT_CENTRAL_BOILER_UNIQUE_ID)
+        state = hass.states.get(entity_id) if entity_id is not None else None
+    except Exception:  # pylint: disable=broad-except
+        return None
+    if state is None or state.state not in ("on", "off"):
+        return None
+    return state.state == "on"
+
 
 STORAGE_VERSION = 1
 STORAGE_KEY = "vtherm_smartpi.{}"
@@ -831,6 +891,10 @@ class SmartPIHandler:
                 force = True
 
             self._update_water(algo)
+            water_input = getattr(algo, "water", None)
+            # A boiler heats only a water heating type; an electric one learns as before.
+            uses_water = isinstance(water_input, WaterInput) and water_input.uses_water
+            algo.update_boiler(self._read_boiler() if uses_water else None)
 
             # Calculate uses current temp, ext temp, etc.
             # If guard_cut is active, calculate() will set on_percent=0.
@@ -1117,7 +1181,30 @@ class SmartPIHandler:
                 self._offer_model_reset(algo, gone=water.source == SOURCE_LASTING)
 
     def _read_water(self) -> WaterReading | None:
-        """Smart Boiler's water data for this thermostat (None: no data now).
+        """Smart Boiler's water data for this thermostat (None: no data now)."""
+        fields = self._smart_boiler_fields(WATER_FIELDS)
+        return _water_reading(fields) if fields is not None else None
+
+    def _read_boiler(self) -> BoilerReading | None:
+        """Whether the boiler is called (documentation/en/water_input.md, section 11).
+
+        Smart Boiler says it when it controls the boiler; otherwise Versatile
+        Thermostat's central boiler, for a thermostat VT counts for it. None: not
+        known, SmartPI learns as before.
+        """
+        fields = self._smart_boiler_fields(BOILER_FIELDS)
+        reading = _boiler_reading(fields) if fields is not None else None
+        if reading is not None:
+            return reading
+        t = self._thermostat
+        if getattr(t, "is_used_by_central_boiler", None) is True:
+            on = vtherm_central_boiler_on(getattr(t, "hass", None))
+            if on is not None:
+                return BoilerReading(on, None if on else REASON_NOT_CALLED, SOURCE_VTHERM)
+        return None
+
+    def _smart_boiler_fields(self, names: tuple[str, ...]) -> dict | None:
+        """Smart Boiler's fields for this thermostat (None: no data now).
 
         Nothing of Smart Boiler is imported. The feature manager is read where VT
         offers ``get_feature_manager`` (10.5.0.beta1 and later) and the thermostat
@@ -1129,19 +1216,17 @@ class SmartPIHandler:
             getter = getattr(t, "get_feature_manager", None)
             manager = getter(SMART_BOILER_MANAGER) if callable(getter) else None
             if manager is not None:
-                fields = {name: getattr(manager, name, None) for name in WATER_FIELDS}
-            else:
-                data = getattr(getattr(t, "hass", None), "data", None)
-                api = data.get(SMART_BOILER_API_KEY) if isinstance(data, dict) else None
-                zone_water = getattr(api, "zone_water", None)
-                mapping = zone_water(t.entity_id) if callable(zone_water) else None
-                if mapping is None:
-                    return None
-                fields = {name: mapping.get(name) for name in WATER_FIELDS}
+                return {name: getattr(manager, name, None) for name in names}
+            data = getattr(getattr(t, "hass", None), "data", None)
+            api = data.get(SMART_BOILER_API_KEY) if isinstance(data, dict) else None
+            zone_water = getattr(api, "zone_water", None)
+            mapping = zone_water(t.entity_id) if callable(zone_water) else None
+            if mapping is None:
+                return None
+            return {name: mapping.get(name) for name in names}
         except Exception as err:  # pylint: disable=broad-except
-            _LOGGER.debug("%s - Smart Boiler's water data cannot be read: %s", t, err)
+            _LOGGER.debug("%s - Smart Boiler's data cannot be read: %s", t, err)
             return None
-        return _water_reading(fields)
 
     def _offer_model_reset(self, algo: SmartPI, gone: bool) -> None:
         """Water data appeared or went for good: offer the model reset (repair issue).
