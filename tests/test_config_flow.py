@@ -22,6 +22,8 @@ from custom_components.vtherm_smartpi.const import (
 )
 from custom_components.vtherm_smartpi.config_flow import build_main_options_schema, build_options_schema
 
+from flow_helpers import choose, save
+
 VT_DOMAIN = "versatile_thermostat"
 
 
@@ -125,8 +127,12 @@ async def test_thermostat_flow_hides_valve_linearization_for_non_valve(hass) -> 
         {"target_vtherm_unique_id": climate_entry.entity_id},
     )
 
+    # A new entry opens the menu of a thermostat's sections.
+    assert result["type"] == FlowResultType.MENU
+    assert result["step_id"] == "thermostat_menu"
+    result = await choose(hass, result, "settings")
     assert result["type"] == FlowResultType.FORM
-    assert result["step_id"] == "thermostat_settings"
+    assert result["step_id"] == "settings"
     schema_keys = _schema_keys(result["data_schema"])
     assert CONF_SMART_PI_ENABLE_VALVE_LINEARIZATION not in schema_keys
 
@@ -170,8 +176,9 @@ async def test_thermostat_flow_shows_valve_linearization_from_vtherm_config_entr
         {CONF_TARGET_VTHERM: climate_entry.entity_id},
     )
 
+    result = await choose(hass, result, "settings")
     assert result["type"] == FlowResultType.FORM
-    assert result["step_id"] == "thermostat_settings"
+    assert result["step_id"] == "settings"
     schema_keys = _schema_keys(result["data_schema"])
     assert CONF_SMART_PI_ENABLE_VALVE_LINEARIZATION in schema_keys
 
@@ -208,13 +215,14 @@ async def test_thermostat_flow_shows_valve_curve_step_for_valve(hass) -> None:
         result["flow_id"],
         {"target_vtherm_unique_id": climate_entry.entity_id},
     )
+    result = await choose(hass, result, "settings")
     result = await hass.config_entries.flow.async_configure(
         result["flow_id"],
         {CONF_SMART_PI_ENABLE_VALVE_LINEARIZATION: True},
     )
 
     assert result["type"] == FlowResultType.FORM
-    assert result["step_id"] == "thermostat_valve_curve"
+    assert result["step_id"] == "valve_curve"
 
     result = await hass.config_entries.flow.async_configure(
         result["flow_id"],
@@ -239,6 +247,11 @@ async def test_thermostat_flow_shows_valve_curve_step_for_valve(hass) -> None:
         },
     )
 
+    # Back in the menu, which now offers the valve curve; nothing is created before saving.
+    assert result["type"] == FlowResultType.MENU
+    assert "valve_curve" in result["menu_options"]
+    assert not [e for e in hass.config_entries.async_entries(DOMAIN) if e.data.get(CONF_TARGET_VTHERM)]
+    result = await save(hass, result)
     assert result["type"] == FlowResultType.CREATE_ENTRY
     assert result["data"][CONF_SMART_PI_ENABLE_VALVE_LINEARIZATION] is True
 
@@ -282,7 +295,7 @@ async def test_options_flow_shows_valve_linearization_from_dedicated_target_conf
     assert result["type"] == FlowResultType.MENU
     # The valve curve entry appears only once linearization is enabled; "Water and boiler"
     # only with a water heating type (none set here).
-    assert result["menu_options"] == ["settings", "zone", "dependencies"]
+    assert result["menu_options"] == ["settings", "zone", "dependencies", "save"]
     result = await hass.config_entries.options.async_configure(
         result["flow_id"], {"next_step_id": "settings"}
     )

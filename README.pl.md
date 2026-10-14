@@ -37,7 +37,7 @@ Ta integracja rozszerza popularną integrację [Versatile Thermostat](https://gi
 - algorytmy regulacji temperatury na profesjonalnym poziomie
 - płynną współpracę z istniejącymi ustawieniami VT
 - ustawienia osobne dla każdego urządzenia
-- globalne wartości domyślne dla łatwej konfiguracji
+- wspólne wartości domyślne dla łatwej konfiguracji, z własnymi ustawieniami każdego termostatu (rodzaj ogrzewania, czasy, krzywa zaworu) tam, gdzie ich potrzebuje
 
 ## 📊 Podgląd regulacji w Equinox
 

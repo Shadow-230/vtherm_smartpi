@@ -71,55 +71,76 @@ thermostat entry.
 
 ### 2.1 Options and forms
 
+The options of a thermostat entry work like Versatile Thermostat's. Each section is reached from a
+menu and comes back to it. The changes stay in the open window (the "draft") until the last item,
+**Save and finish**, writes them. Closing the window discards them. The menu says which sections
+have unsaved changes. A new thermostat entry is made with the same menu: nothing is created before
+**Save and finish**.
+
 ```mermaid
 flowchart TD
     O[Thermostat entry options] --> R{This thermostat is a zone's additional source?}
-    R -- yes --> SR[Its role, the main source's entry, activation delays, heating type, valve curve]
+    R -- yes --> SM{Additional source's menu}
+    SM --> SR[Settings that still apply: heating type, activation delays, valve curve]
+    SM --> SW[Water and boiler, for a water heating type]
+    SM --> SS[Save and finish]
     R -- no --> M{Menu}
-    M --> ST[Regulator settings]
+    M --> ST[Heating type and regulation]
+    M --> WB[Water and boiler, for a water heating type]
     M --> ZN[Zone with two heat sources]
-    M --> DL[Dependencies: neighbours]
+    M --> DL[Neighbouring zones]
     M --> VC[Valve curve, when linearization is on]
+    M --> SV[Save and finish]
     ZN --> ZE{A zone already?}
     ZE -- yes --> ZM[Change it or remove it]
-    ZE -- no --> MA[Master thermostat]
+    ZE -- no --> MX{A master?}
+    MX -- no --> M
+    MX -- yes --> MA[Master thermostat]
     ZM --> MA
-    ZM --> RS
+    ZM -- remove --> M
     MA --> MV{Valid?}
     MV -- no --> MA
-    MV -- yes --> SO[Source 1, Source 2: main source, split rule, custom response]
+    MV -- yes --> HT{Both sources have a heating type?}
+    HT -- no --> HQ[Heating type of the source that has none]
+    HT -- yes --> SO[Source 1, Source 2: main source, split rule, custom response]
+    HQ --> SO
     SO --> PA[Rule parameter, with the additional source's delay and lag if custom]
-    PA --> AF{Affects what was learned?}
-    AF -- yes --> RS[Reset the zone's learned model?]
-    AF -- no --> SV[Save in the main source's entry]
-    RS --> SV
+    PA --> PV{The neighbours can be merged?}
+    PV -- no --> PA
+    PV -- yes --> M
     DL --> NA[Add a neighbouring zone: entity]
     DL --> NE[Edit a neighbouring zone]
-    DL --> NR[Remove neighbours]
+    DL --> NR[Remove neighbouring zones]
     NA --> ND[Details: mode, door sensors, window reaction]
     NE --> ND
     ND --> V{Valid?}
     V -- no --> ND
     V -- yes --> W{Warnings?}
     W -- yes --> NC[Confirm the warnings]
-    W -- no --> NF{New connection?}
-    NC --> NF
-    NF -- yes --> NRS[Reset the zone's learned model?]
-    NF -- no --> NSV[Save]
-    NRS --> NSV
-    NR --> NRS
+    W -- no --> M
+    NC --> M
+    NR --> M
+    SV --> CK{Changed in another window meanwhile?}
+    CK -- yes --> AB[Stop: nothing written]
+    CK -- no --> AF{A change affects what was learned?}
+    AF -- yes --> RS[Reset the learned model?]
+    AF -- no --> WR[Write the entries, each reloads once]
+    RS --> WR
 ```
 
 **Zone with two heat sources.**
 
 - **Master thermostat.** The form lists the Versatile Thermostats over climate that have this
   thermostat among their devices. (A VTherm over climate controls other thermostats, its devices.)
-  If there is none, the form explains what to create. The master must have self-regulation off, because
+  If there is none, the section goes back to the menu, which explains what to create. The master must have self-regulation off, because
   SmartPI regulates in its devices. It must have exactly two devices. Both must be Versatile
   Thermostats that run SmartPI and measure the zone with the same temperature sensor. Neither may
   already belong to another zone.
+- **Heating types.** The zone needs the heating type of both devices. A device whose own entry sets
+  none is asked for it in a step before the sources. The type is written to that device's entry at
+  **Save and finish** (an entry is created for it if it has none).
 - **Sources.** Source 1 and Source 2 are the master's devices. The form shows each one with the
-  heating type from its own entry, and does not ask for it. In the same step, the user chooses the
+  heating type from its own entry. In the same step, the user chooses the
   **main source**: the one whose SmartPI regulates and corrects quickly. The faster device is the
   default. The user also chooses the split rule, and the form proposes the rule recommended for the
   two heating types (section 5.3). Last, the user says whether to set the additional source's delay
@@ -133,28 +154,32 @@ flowchart TD
 - **Where it is saved.** The zone is saved in the main source's entry, as its `source` item, which
   also names the master (`zone_master`). The zone's neighbours and doors are in the same entry.
   The other thermostat's entry stores nothing about the zone. That thermostat finds its role in the
-  main source's entry. A thermostat without a SmartPI entry gets one, created from the global
-  defaults. Creating it restarts only that thermostat.
+  main source's entry. A thermostat without a SmartPI entry gets one at **Save and finish**. It
+  uses the defaults' shared settings and holds its heating type. Creating it restarts only that
+  thermostat.
 - **A main source other than the thermostat whose options are open.** This happens when the zone
   is set up from the thermostat that becomes the additional source, or when the main source is
   changed. The form then moves the zone, with this entry's neighbours, to the main source's entry,
   and empties this entry's list. A former main source then works as the additional one. A neighbour
   that is now part of the zone is dropped. If a moved neighbour clashes with one of the new main
   source's own neighbours (the same neighbour or door sensor), the moved one wins. If the list still
-  does not pass validation, the move stops. The moved neighbours learn their exchange again in the
-  new main source.
-- **One form at a time.** When saving, the form checks again that the master and the entries of
-  both thermostats are still as they were when it read them. If not, it stops and asks the user to
-  open it again. This way, two forms open at the same time cannot leave each thermostat naming the
-  other.
+  does not pass validation, the parameter step shows the error `zone_move_conflict`. The moved
+  neighbours learn their exchange again in the new main source. Both entries are written at
+  **Save and finish**.
+- **One window at a time.** At **Save and finish**, the form checks again that the master and the
+  entries of both thermostats are still as they were when it read them, and that this entry's list
+  of dependencies did not change in another window. If not, it stops (`zone_changed`), writes
+  nothing and asks the user to open it again. This way, two windows open at the same time cannot
+  leave each thermostat naming the other.
 - **Neighbours of a zone.** The zone's additional source and its master cannot be added as
   neighbours of the zone, because they heat or measure the same zone.
-- **Aborts.** The form stops with a message in these cases: the zone changed while the form was
-  open (`zone_changed`); the neighbours of the two entries cannot be merged
-  (`zone_move_conflict`); the main source's entry cannot be created (`main_entry_missing`).
-- **The additional source's options** show which entry holds the zone. They also show the settings
-  that still apply while it follows the main source: its activation delays, its heating type and,
-  for a valve, its curve. Its other regulator settings keep their values. They apply only while it
+- **When the window stops.** Only **Save and finish** may end the window without writing: when the
+  zone changed while it was open (`zone_changed`), or when the entry of the zone's other
+  thermostat cannot be created (`main_entry_missing`). Inside a section, a problem is an error on its form, or the
+  section goes back to the menu with a note.
+- **The additional source's options** open a menu of their own, which shows which entry holds the
+  zone. Its first item has the settings that still apply while it follows the main source: its
+  heating type, its activation delays and, for a valve, its curve. Its other regulator settings keep their values. They apply only while it
   regulates on its own because the main source has gone silent, that is, sends no commands
   (section 5.7).
 - **Heating types at start.** Each time the main source starts, the handler reads the heating types
@@ -185,9 +210,10 @@ flowchart TD
   door.
 - **A neighbour shown `indistinguishable`** could not be told apart from the outdoors or from
   another neighbour. Nothing is published for it, and the zone runs as if it were not there.
-- **Aborts.** The form stops when the user edits a neighbour whose entity no longer exists
-  (`neighbour_missing`), removes with nothing selected (`dependencies_unchanged`), or saves after
-  the list changed in another form (`zone_changed`).
+- **Each step ends in the menu.** Editing a neighbour whose entity no longer exists is an error on
+  the form (`neighbour_missing`). Removing with nothing selected goes back to the menu, which says
+  so. Saving after the list changed in another window stops the window (`zone_changed`). The
+  neighbours' menu, like the zone's, has an item to go back to the main menu.
 
 **Stored configuration.** The items are stored in the entry's options under
 `smart_pi_dependencies`. A neighbour item holds `id`, `kind` (`neighbour`), `entity` (registry
@@ -201,18 +227,21 @@ uses.
 
 ### 2.2 Resetting the learned model
 
-When a configuration change affects what the zone has learned, the form shows a step with the
-option "Reset the zone's learned model". The option is checked by default (`zone_reset` in the
-zone form, `model_reset` in the neighbour forms):
+A change that affects what was learned is a reason for one question at **Save and finish**: a
+step "Reset the learned model" (`model_reset`), checked by default, that names the sections it
+comes from. It is asked once, even when several sections changed, and not at all without a
+reason:
 
-| Change | Shows the reset step |
+| Change | A reason for the reset question |
 |---|---|
 | a zone set up or removed, its additional source swapped, the main source changed, the additional source's custom response changed | yes |
 | a neighbour added or removed, its mode or door sensors changed | yes |
+| the heating type, the water data source or its supply sensor ([Water and boiler inputs, §2](water_input.md#2-configuration)) | yes |
 | the split rule or its parameter, a window reaction, the activation delays and other regulator settings | no |
 
-- **How it is applied.** If the user chooses the reset, the form stores a new random token in the
-  entry that holds the zone (`smart_pi_reset_token`). When the thermostat starts with that entry,
+- **How it is applied.** If the user chooses the reset, the save stores a new random token
+  (`smart_pi_reset_token`) in each entry concerned: this thermostat's, and for a zone the main
+  source's (where the zone is). When the thermostat starts with that entry,
   SmartPI resets its whole learned model once: `a`, `b`, dead times (the delays before the zone
   reacts to a command), the zone's fit and the exchanges, as the service `reset_smartpi_learning`
   does. It keeps the token in its saved state (`dependency_reset_token`), so a later restart does
@@ -323,6 +352,8 @@ identifier, so renaming the entity keeps the link.
   for a door that is "usually closed", and openings are not detected from the data.
 - **Set a neighbour up in the entries of both zones**, each one listing the other. The exchange
   works both ways, and the form warns when the neighbour's own entry does not list this zone.
+- The neighbour forms end back in the options menu; the neighbour is written at **Save and
+  finish** (section 2.1).
 - For a VTherm neighbour, the **window reaction** says what to do while the connection is
   active and the neighbour reports an open window: `nothing`, `turn_off`, `frost`, `eco`.
 - A connection is ignored while the neighbour is unavailable, is in safety mode, or has no valid
@@ -1105,11 +1136,15 @@ In the existing files:
   named as an additional source runs the executive path instead of its own controller. While the
   main source is silent, it runs its own controller (section 5.7).
 - **`config_flow.py`** gives the thermostat entry an options menu with the zone form, the
-  dependency list and the neighbour forms. A thermostat working as an additional source gets its
-  role form instead. The import step creates the entry of a zone member that has none
-  (section 2.1).
+  dependency list and the neighbour forms; one mixin (`SmartPIFlowSections`) holds every section
+  for the options and for a new entry. Each section works on the draft and ends in the menu;
+  `async_step_save` checks again, asks the reset question once and writes. A thermostat working
+  as an additional source gets a menu of its own instead. The import step creates, at save, the
+  entry of a zone member that has none (section 2.1).
 - **`__init__.py`** reloads the zone's main source when the entry of its additional source is
-  saved. When the zone form creates an entry, it reloads only the target thermostat.
+  saved, unless the same save wrote the main source's entry too (that one reloads by itself:
+  each entry reloads once). When the zone form creates an entry, it reloads only the target
+  thermostat.
 
 **Data read from Versatile Thermostat.** The readings come from the state attributes that VTherm
 publishes. These attributes may change with VTherm's `master` branch:

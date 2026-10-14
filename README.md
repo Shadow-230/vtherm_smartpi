@@ -37,7 +37,7 @@ This integration extends the popular [Versatile Thermostat](https://github.com/j
 - Professional-grade temperature control algorithms
 - Seamless integration with existing VT configurations
 - Per-device customization options
-- Global defaults for easy setup
+- Shared defaults for easy setup, with each thermostat's own settings (heating type, delays, valve curve) where it needs them
 
 ## 📊 Regulation monitoring with Equinox
 

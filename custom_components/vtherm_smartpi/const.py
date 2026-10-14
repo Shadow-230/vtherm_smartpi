@@ -138,6 +138,8 @@ DATA_SERVICES_REGISTERED = "services_registered"
 DATA_SOURCE_LINK = "source_link"
 SIGNAL_SMARTPI_TARGET_UPDATED = "vtherm_smartpi_target_updated"
 DIAGNOSTIC_SENSOR_UNIQUE_ID_PREFIX = "smartpi_diag"
+# The entries one save of the options writes (config_flow.mark_save): each reloads once.
+DATA_SAVE_GROUP = "save_group"
 # The diagnostic sensors added to Home Assistant now, by thermostat unique id (sensor.py).
 # Kept outside hass.data[DOMAIN], whose other keys tell whether a SmartPI entry is still loaded.
 DATA_DIAGNOSTIC_SENSORS = f"{DOMAIN}_diagnostic_sensors"

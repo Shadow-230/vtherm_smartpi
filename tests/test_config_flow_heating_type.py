@@ -18,6 +18,8 @@ from custom_components.vtherm_smartpi.const import (
 from custom_components.vtherm_smartpi.repairs import CONF_RESET_MODEL, WaterModelResetFlow, async_create_fix_flow
 from custom_components.vtherm_smartpi.smartpi.const import HEATING_TYPES
 
+from flow_helpers import save
+
 
 def _field(schema, name):
     for key, value in schema.schema.items():
@@ -65,11 +67,11 @@ async def test_a_thermostat_s_settings_store_the_heating_type(hass, chosen, stor
     with patch("custom_components.vtherm_smartpi.async_setup_entry", return_value=True):
         result = await hass.config_entries.options.async_init(entry.entry_id)
         result = await hass.config_entries.options.async_configure(result["flow_id"], {"next_step_id": "settings"})
-        shown = {getattr(key, "schema", key) for key in result["data_schema"].schema}
-        user_input = {key: value for key, value in DEFAULT_OPTIONS.items() if key in shown}
         result = await hass.config_entries.options.async_configure(
-            result["flow_id"], {**user_input, CONF_SMART_PI_HEATING_TYPE: chosen}
+            result["flow_id"], {CONF_SMART_PI_HEATING_TYPE: chosen, "smart_pi_use_defaults": True}
         )
+        # Another heating type changes what was learned: the reset question at save.
+        result = await save(hass, result, reset=False)
     assert result["type"] == FlowResultType.CREATE_ENTRY
     assert entry.options.get(CONF_SMART_PI_HEATING_TYPE) == stored
 
@@ -103,9 +105,9 @@ def test_english_texts_cover_the_heating_type_and_the_reset_offer():
     path = Path(__file__).parents[1] / "custom_components" / "vtherm_smartpi" / "translations" / "en.json"
     texts = json.loads(path.read_text(encoding="utf-8"))
     assert set(texts["selector"]["heating_type"]["options"]) == {"not_set", *HEATING_TYPES}
-    for section, step in (("config", "thermostat_settings"), ("options", "settings")):
+    for section, step in (("config", "settings"), ("options", "settings"), ("options", "source_role")):
         assert CONF_SMART_PI_HEATING_TYPE in texts[section]["step"][step]["data"]
-    for section, step in (("config", "global"), ("options", "init")):
+    for section, step in (("config", "global"), ("options", "regulator")):
         assert CONF_SMART_PI_HEATING_TYPE not in texts[section]["step"][step]["data"]
     for issue in ("water_data_appeared", "water_data_gone"):
         confirm = texts["issues"][issue]["fix_flow"]["step"]["confirm"]

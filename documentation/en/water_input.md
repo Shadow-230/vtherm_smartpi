@@ -107,14 +107,18 @@ water data and the boiler's call.
 The exponents and reference waters are provisional. They still need to be checked against data
 from real installations.
 
-**"SmartPI defaults" entry.** Its options open a menu: **Regulator settings** (the settings as
-before) and **Boiler signals**. Boiler signals are entities, all optional: leave a field empty if
-you have no such entity. Every thermostat that reads entities uses them, unless it sets its own.
+**"SmartPI defaults" entry.** Its options open a menu: **Regulator settings** (the shared
+settings), **Boiler signals** and **Save and finish**. Boiler signals are entities, all optional:
+leave a field empty if you have no such entity. Every thermostat that reads entities uses them,
+unless it sets its own.
 
-**A thermostat's entry.** For a water heating type, its menu has **Water and boiler**, next to
-the regulator settings, the zone and the neighbours. A thermostat that works as a zone's additional
-source opens a menu of its own: its settings, and **Water and boiler** with the water data only
-(its learning is paused while it follows the main source, so its boiler's call is not read).
+**A thermostat's entry.** For a water heating type (set in the window, even before it is saved),
+its menu has **Water and boiler**, next to the heating type and regulation, the zone and the
+neighbours. A thermostat that works as a zone's additional source opens a menu of its own: its
+settings, and **Water and boiler** with the water data only (its learning is paused while it
+follows the main source, so its boiler's call is not read). Like every section, Water and boiler
+ends back in the menu; the choices are written at **Save and finish**, and closing the window
+discards them ([Zone dependencies, §2.1](zone_dependencies.md#21-options-and-forms)).
 
 ```mermaid
 flowchart TD
@@ -123,10 +127,12 @@ flowchart TD
     E -- yes --> F[heating_entities: supply sensor if the water is from entities, boiler signals defaults or own]
     F --> O{own signals?}
     O -- yes --> G[heating_signals: the signals the chosen sources read]
-    O -- no --> R
-    G --> R{water source or supply sensor changed?}
-    E -- no --> R
-    R -- yes --> Q[heating_reset: reset the learned model, checked by default]
+    O -- no --> B[back to the menu]
+    G --> B
+    E -- no --> B
+    B --> SV[Save and finish]
+    SV --> R{water source or supply sensor changed?}
+    R -- yes --> Q[model_reset: reset the learned model, checked by default]
     R -- no --> V[saved]
     Q --> V
 ```
@@ -148,9 +154,10 @@ flowchart TD
 - An entity that has a registry entry is stored by its registry id, so it still works after a
   rename. An entity without one (for example a YAML sensor without a unique ID) is stored by its
   entity id.
-- **The reset step.** When the water source or the supply sensor changes, the learned power changes
-  units: with water data it is measured at the reference water. So the form asks whether to reset
-  SmartPI's learned model of this thermostat (checked by default). If you keep the model, SmartPI
+- **The reset question.** When the water source or the supply sensor changes, the learned power
+  changes units: with water data it is measured at the reference water. So **Save and finish**
+  asks whether to reset SmartPI's learned model of this thermostat (checked by default; one
+  question for all the reasons of the save). If you keep the model, SmartPI
   remembers it (`smart_pi_model_kept_for_water`) and does not ask again when the data of these
   inputs start (section 3.4). A change of the boiler's call or of the signals does not change units
   and asks nothing.
@@ -294,8 +301,8 @@ when the supply sensor is gone.
    `vtherm_smartpi.reset_smartpi_learning` for the thermostat. SmartPI does not rescale the learned
    model to the new units (owner's decision of 2026-10-12); it offers the reset instead. The rules:
    - a momentary gap never raises the repair;
-   - **a change made in the options is settled there.** The options' reset step already asked
-     (section 2). Other water inputs drop what was learned of the old ones' water at once (their
+   - **a change made in the options is settled there.** The reset question of the options'
+     save already asked (section 2). Other water inputs drop what was learned of the old ones' water at once (their
      availability and averages, so the new inputs start as if new), and a water repair still open is
      removed. Kept, the first data of the new inputs raise no repair. Reset, SmartPI learns again
      and asks nothing while it learns;
@@ -584,7 +591,7 @@ differences.
 | `SmartPI._apply_soft_constraints` | `algo.py` | Power limit `max_on_percent × max(φ, WATER_NO_HEAT)`; `water_too_cold`. |
 | `BoilerCall`, `BoilerReading` | `smartpi/boiler_call.py` | Pure logic: the boiler's call, the learning mode (`emitter_cooling`, `held`, `emitter_warming`), the grace and the settling time from the heating type, the `boiler` diagnostics with the chosen source and its inputs (section 4). |
 | `SmartPI.update_boiler`, `_read_known_inputs`, `_learning_power`, `_deadtime_input` | `algo.py` | The learning mode at each calculation: learning with the power 0 while held, the `boiler_settling` gate while the emitter cools or warms, the dead-time estimator's input and steps, the feed-forward trim frozen, the dependency layer informed (`heat_withheld`), a cycle's realized power recorded as 0. |
-| Options: `async_step_boiler_signals`, `async_step_heating_inputs`, `heating_entities`, `heating_signals`, `heating_reset`, `source_menu` | `config_flow.py` | The forms of section 2; the lists of sources built from the registered providers. |
+| Options: `async_step_boiler_signals`, `async_step_heating_inputs`, `heating_entities`, `heating_signals`, `source_menu`, and the reset question of `async_step_save` (`model_reset`) | `config_flow.py` | The forms of section 2; the lists of sources built from the registered providers. |
 | `WaterModelResetFlow` | `repairs.py` | The repair's step: reset the learned model (checked by default). |
 | Heating type | `config_flow.py`, `const.py` | The `smart_pi_heating_type` selector in the regulator settings. |
 
@@ -699,8 +706,8 @@ flowchart TD
 | `smart_pi_supply_entity` | thermostat | the supply sensor (registry id, or entity id) |
 | `smart_pi_boiler_signals` | thermostat | `defaults` or `own` |
 | `smart_pi_heat_available_entity`, `smart_pi_dhw_entity`, `smart_pi_fault_entity`, `smart_pi_boiler_called_entity`, `smart_pi_boiler_reason_entity` | "SmartPI defaults"; a thermostat with `own` | the boiler's signals |
-| `smart_pi_model_kept_for_water` | thermostat | the water inputs (source and supply sensor) for which the user kept the learned model in the reset step |
-| `smart_pi_reset_token` | thermostat | set by the reset step to reset the learned model once (as for the neighbours and the zone) |
+| `smart_pi_model_kept_for_water` | thermostat | the water inputs (source and supply sensor) for which the user kept the learned model at the reset question |
+| `smart_pi_reset_token` | thermostat | set by the save when the user chose the reset, to reset the learned model once (as for the neighbours and the zone) |
 
 An entry without these keys works as before (section 2). An entry that SmartPI creates itself
 (for a zone's member, or at the migration of the "SmartPI defaults" entry) holds only the

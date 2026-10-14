@@ -4,6 +4,24 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+- Rework the options forms: one save at the end, as in Versatile Thermostat. Each section is
+  reached from a menu and comes back to it; the changes stay in the open window, and only the
+  last item, "Save and finish", writes them. Closing the window discards everything, also what
+  a section would write to other entries (a zone moved to the main source's entry, an entry for
+  a zone's member). The menu names the sections with unsaved changes, with the labels of the
+  interface's language, and follows the choices (a water heating type chosen in the window
+  shows "Water and boiler" at once). A thermostat's settings start with the heating type, then
+  the "thermostat only" settings and "Use the SmartPI defaults"; with the switch off, a second
+  step holds the thermostat's own values of the shared settings. The defaults entry's menu holds
+  the shared settings, the boiler's signals and the save. Creating a thermostat's entry opens
+  the same menu, with every section; the entry is created at save. The reset question is asked
+  once, at save, with its reasons (heating type, water data, zone, neighbours). No section
+  aborts any more: a neighbour that is gone is an error on its form, a missing master or a
+  removal with nothing chosen goes back to the menu with a note, neighbours that cannot be
+  merged are an error on the zone's parameter step; only the save stops when the zone or the
+  dependencies changed in another window meanwhile. A zone's member without a heating type is
+  asked for it. The menus of the zone and of the neighbours have an item to go back. Each entry
+  written by one save reloads once.
 - Sort the settings into shared and "this thermostat only", and read them per key. The
   heating type, the activation delays, the valve curve and the PWM cycle restart belong to one
   thermostat: they leave the "SmartPI defaults" entry and are set in the thermostat's own entry;

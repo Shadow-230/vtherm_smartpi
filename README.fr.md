@@ -37,7 +37,7 @@ Cette intégration étend l'intégration populaire [Versatile Thermostat](https:
 - des algorithmes de contrôle de température professionnels
 - une intégration transparente avec les configurations VT existantes
 - des options de personnalisation par appareil
-- des valeurs par défaut globales pour une installation simplifiée
+- des valeurs par défaut partagées pour une installation simplifiée, avec les réglages propres à chaque thermostat (type de chauffage, délais, courbe de vanne) là où il en a besoin
 
 ## 📊 Suivi de régulation avec Equinox
 

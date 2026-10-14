@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import time
 from typing import Any
 
 import voluptuous as vol
@@ -31,6 +32,7 @@ from .const import (
     CONF_SMART_PI_USE_DEFAULTS,
     CONF_TARGET_VTHERM,
     DATA_FACTORY_REGISTERED,
+    DATA_SAVE_GROUP,
     DATA_SERVICES_REGISTERED,
     DATA_SOURCE_LINK,
     DEFAULT_OPTIONS,
@@ -56,6 +58,8 @@ _LOGGER = get_vtherm_logger(__name__)
 DATA_SKIP_FULL_RELOAD = "skip_full_reload"
 # An entry SmartPI updates itself (not the user): its update listener does nothing once.
 DATA_SKIP_UPDATE = "skip_update"
+# The listeners of one save run at once; an older mark is not used.
+SAVE_GROUP_MAX_AGE_S = 60.0
 
 
 def _ensure_domain_data(hass: HomeAssistant) -> dict[str, Any]:
@@ -297,6 +301,7 @@ async def _async_update_options(hass: HomeAssistant, entry: ConfigEntry) -> None
     data = _ensure_domain_data(hass)
     if data.pop(f"{DATA_SKIP_UPDATE}_{entry.entry_id}", False):
         return
+    reloading = _saved_together(data, entry.entry_id)
     data[f"{DATA_SKIP_FULL_RELOAD}_{entry.entry_id}"] = True
     await hass.config_entries.async_reload(entry.entry_id)
 
@@ -305,6 +310,9 @@ async def _async_update_options(hass: HomeAssistant, entry: ConfigEntry) -> None
         await _reload_smartpi_vtherms_for_target(hass, target_unique_id)
         # A zone's main source reads its additional source's entry (heating type) at start.
         for main_unique_id in _zone_mains_of(hass, target_unique_id):
+            if main_unique_id in reloading:
+                # The same save wrote the main source's entry: it reloads by itself.
+                continue
             await _reload_smartpi_vtherms_for_target(hass, main_unique_id)
         return
 
@@ -315,6 +323,20 @@ async def _async_update_options(hass: HomeAssistant, entry: ConfigEntry) -> None
             data[f"{DATA_SKIP_FULL_RELOAD}_{plugin_entry.entry_id}"] = True
             await hass.config_entries.async_reload(plugin_entry.entry_id)
     await _reload_smartpi_vtherms_using_defaults(hass)
+
+
+def _saved_together(data: dict[str, Any], entry_id: str) -> set[str]:
+    """The thermostats that reload by themselves after the save that wrote this entry (none if
+    the entry was not written by a save of the options, or that save is long past)."""
+    group = data.get(DATA_SAVE_GROUP)
+    if not group or entry_id not in group["pending"]:
+        return set()
+    group["pending"].discard(entry_id)
+    if not group["pending"]:
+        data.pop(DATA_SAVE_GROUP, None)
+    if time.monotonic() - group["at"] > SAVE_GROUP_MAX_AGE_S:
+        return set()
+    return group["reloading"]
 
 
 def _zone_mains_of(hass: HomeAssistant, source_unique_id: str) -> list[str]:
@@ -480,7 +502,7 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     if not [
         key
         for key in data
-        if key not in (DATA_FACTORY_REGISTERED, DATA_SERVICES_REGISTERED, DATA_SOURCE_LINK)
+        if key not in (DATA_FACTORY_REGISTERED, DATA_SERVICES_REGISTERED, DATA_SOURCE_LINK, DATA_SAVE_GROUP)
     ]:
         _unregister_factory(hass)
         _unregister_services(hass)

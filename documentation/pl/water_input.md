@@ -111,15 +111,18 @@ Wykładniki i temperatury wody odniesienia są tymczasowe. Trzeba je jeszcze spr
 z prawdziwych instalacji.
 
 **Wpis globalny „SmartPI defaults”.** Jego opcje otwierają menu: **Ustawienia regulatora**
-(Regulator settings, ustawienia takie jak dotąd) i **Sygnały kotła** (Boiler signals). Sygnały
+(Regulator settings, ustawienia wspólne), **Sygnały kotła** (Boiler signals) i **Save and finish**
+(zapisz i zakończ). Sygnały
 kotła to encje, wszystkie opcjonalne: zostaw pole puste, jeśli nie masz takiej encji. Używa ich
 każdy termostat, który odczytuje encje, chyba że ustawi własne.
 
-**Wpis termostatu.** Dla wodnego rodzaju ogrzewania jego menu ma pozycję **Woda i kocioł** (Water
-and boiler), obok ustawień regulatora, strefy i sąsiadów. Termostat, który pracuje jako dodatkowe
-źródło strefy, otwiera własne menu: swoje ustawienia oraz **Woda i kocioł** tylko z danymi o wodzie
-(jego uczenie jest wstrzymane, gdy podąża za głównym źródłem, więc jego wezwanie kotła nie jest
-odczytywane).
+**Wpis termostatu.** Dla wodnego rodzaju ogrzewania (wybranego w oknie, nawet przed zapisem) jego
+menu ma pozycję **Woda i kocioł** (Water and boiler), obok rodzaju ogrzewania i regulacji, strefy i
+sąsiadów. Termostat, który pracuje jako dodatkowe źródło strefy, otwiera własne menu: swoje
+ustawienia oraz **Woda i kocioł** tylko z danymi o wodzie (jego uczenie jest wstrzymane, gdy podąża
+za głównym źródłem, więc jego wezwanie kotła nie jest odczytywane). Jak każda sekcja, Woda i kocioł
+wraca do menu; wybory są zapisywane przy **Save and finish**, a zamknięcie okna je odrzuca
+([Zależności stref, §2.1](zone_dependencies.md#21-opcje-i-formularze)).
 
 ```mermaid
 flowchart TD
@@ -128,10 +131,12 @@ flowchart TD
     E -- tak --> F["heating_entities: czujnik zasilania, jeśli woda jest z encji, sygnały kotła domyślne albo własne"]
     F --> O{"własne sygnały?"}
     O -- tak --> G["heating_signals: sygnały, które odczytują wybrane źródła"]
-    O -- nie --> R
-    G --> R{"zmienione źródło wody albo czujnik zasilania?"}
-    E -- nie --> R
-    R -- tak --> Q["heating_reset: reset nauczonego modelu, domyślnie zaznaczony"]
+    O -- nie --> B["powrót do menu"]
+    G --> B
+    E -- nie --> B
+    B --> SV["Save and finish"]
+    SV --> R{"zmienione źródło wody albo czujnik zasilania?"}
+    R -- tak --> Q["model_reset: reset nauczonego modelu, domyślnie zaznaczony"]
     R -- nie --> V["zapisane"]
     Q --> V
 ```
@@ -154,9 +159,10 @@ flowchart TD
 - Encja, która ma wpis w rejestrze encji, jest zapisywana pod identyfikatorem z tego rejestru, więc
   działa także po zmianie nazwy. Encja bez takiego wpisu (na przykład czujnik z YAML bez
   unikalnego ID) jest zapisywana pod swoim identyfikatorem encji (entity id).
-- **Krok resetu.** Gdy zmienia się źródło wody albo czujnik zasilania, nauczona moc zmienia
-  jednostki: przy danych o wodzie jest mierzona przy wodzie odniesienia. Dlatego formularz pyta,
-  czy zresetować nauczony model SmartPI dla tego termostatu (domyślnie zaznaczone). Jeśli zachowasz
+- **Pytanie o reset.** Gdy zmienia się źródło wody albo czujnik zasilania, nauczona moc zmienia
+  jednostki: przy danych o wodzie jest mierzona przy wodzie odniesienia. Dlatego **Save and finish**
+  pyta, czy zresetować nauczony model SmartPI dla tego termostatu (domyślnie zaznaczone; jedno
+  pytanie dla wszystkich powodów zapisu). Jeśli zachowasz
   model, SmartPI to zapamiętuje (`smart_pi_model_kept_for_water`) i nie pyta ponownie, gdy dane
   z tych wejść zaczną przychodzić (sekcja 3.4). Zmiana wezwania kotła albo sygnałów nie zmienia
   jednostek i o nic nie pyta.
@@ -303,8 +309,8 @@ obsługiwać termostat albo gdy czujnika zasilania już nie ma.
    przelicza nauczonego modelu na nowe jednostki (decyzja właściciela z 2026-10-12); zamiast tego
    proponuje reset. Zasady:
    - chwilowa przerwa nigdy nie tworzy zgłoszenia;
-   - **zmiana zrobiona w opcjach jest rozstrzygana w opcjach.** Krok resetu w opcjach już o to
-     zapytał (sekcja 2). Inne wejścia wody od razu kasują to, co SmartPI wiedział o wodzie ze
+   - **zmiana zrobiona w opcjach jest rozstrzygana w opcjach.** Pytanie o reset przy zapisie opcji
+     już o to zapytało (sekcja 2). Inne wejścia wody od razu kasują to, co SmartPI wiedział o wodzie ze
      starych wejść (ich dostępność i średnie, więc nowe wejścia zaczynają tak, jakby były nowe),
      a otwarte jeszcze zgłoszenie naprawy dotyczące wody jest usuwane. Gdy model zachowano,
      pierwsze dane z nowych wejść nie tworzą zgłoszenia. Gdy model zresetowano, SmartPI uczy się od
@@ -598,7 +604,7 @@ nawet wtedy, gdy kocioł jest zawsze wezwany. To ukrywa różnice.
 | `SmartPI._apply_soft_constraints` | `algo.py` | Limit mocy `max_on_percent × max(φ, WATER_NO_HEAT)`; `water_too_cold`. |
 | `BoilerCall`, `BoilerReading` | `smartpi/boiler_call.py` | Sama logika: wezwanie kotła, tryb uczenia (`emitter_cooling`, `held`, `emitter_warming`), czas tolerancji i czas ustalania się wynikające z rodzaju ogrzewania, diagnostyka `boiler` z wybranym źródłem i jego wejściami (sekcja 4). |
 | `SmartPI.update_boiler`, `_read_known_inputs`, `_learning_power`, `_deadtime_input` | `algo.py` | Tryb uczenia przy każdym obliczeniu: uczenie z mocą 0 w czasie wstrzymania, bramka `boiler_settling`, gdy emiter stygnie lub się nagrzewa, wejście i skoki estymatora czasu martwego, zamrożona korekta części wyprzedzającej, informacja dla warstwy zależności (`heat_withheld`), moc zrealizowana w cyklu zapisana jako 0. |
-| Opcje: `async_step_boiler_signals`, `async_step_heating_inputs`, `heating_entities`, `heating_signals`, `heating_reset`, `source_menu` | `config_flow.py` | Formularze z sekcji 2; listy źródeł budowane z zarejestrowanych dostawców. |
+| Opcje: `async_step_boiler_signals`, `async_step_heating_inputs`, `heating_entities`, `heating_signals`, `source_menu` oraz pytanie o reset w `async_step_save` (`model_reset`) | `config_flow.py` | Formularze z sekcji 2; listy źródeł budowane z zarejestrowanych dostawców. |
 | `WaterModelResetFlow` | `repairs.py` | Krok zgłoszenia naprawy: reset nauczonego modelu (domyślnie zaznaczony). |
 | Rodzaj ogrzewania | `config_flow.py`, `const.py` | Pole wyboru `smart_pi_heating_type` w ustawieniach regulatora. |
 
@@ -716,8 +722,8 @@ flowchart TD
 | `smart_pi_supply_entity` | termostat | czujnik zasilania (identyfikator z rejestru encji albo identyfikator encji) |
 | `smart_pi_boiler_signals` | termostat | `defaults` albo `own` |
 | `smart_pi_heat_available_entity`, `smart_pi_dhw_entity`, `smart_pi_fault_entity`, `smart_pi_boiler_called_entity`, `smart_pi_boiler_reason_entity` | „SmartPI defaults”; termostat z `own` | sygnały kotła |
-| `smart_pi_model_kept_for_water` | termostat | wejścia wody (źródło i czujnik zasilania), dla których użytkownik zachował nauczony model w kroku resetu |
-| `smart_pi_reset_token` | termostat | ustawiany przez krok resetu, żeby jeden raz zresetować nauczony model (tak jak dla sąsiadów i strefy) |
+| `smart_pi_model_kept_for_water` | termostat | wejścia wody (źródło i czujnik zasilania), dla których użytkownik zachował nauczony model przy pytaniu o reset |
+| `smart_pi_reset_token` | termostat | ustawiany przez zapis, gdy użytkownik wybrał reset, żeby jeden raz zresetować nauczony model (tak jak dla sąsiadów i strefy) |
 
 Wpis bez tych kluczy działa jak dotąd (sekcja 2). Wpis, który SmartPI tworzy sam (dla członka
 strefy albo przy migracji wpisu „SmartPI defaults”), ma tylko ustawienia tego jednego termostatu:
