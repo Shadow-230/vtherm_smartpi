@@ -1,0 +1,60 @@
+# QAS role 'central-boiler', instance 6: SmartPI QAS central boiler.
+# Written by tests/qas/config/build.py from tests/qas/roles.py; do not edit by hand.
+homeassistant:
+  name: SmartPI QAS central boiler
+frontend:
+config:
+api:
+history:
+logbook:
+system_log:
+  max_entries: 500
+recorder:
+  purge_keep_days: 7
+logger:
+  default: info
+  logs:
+    custom_components.vtherm_smartpi: info
+    custom_components.versatile_thermostat: info
+    custom_components.smartpi_room_sim: info
+    custom_components.smartpi_qas_helpers: info
+smartpi_qas_helpers:
+smartpi_room_sim:
+  rooms:
+    bedroom:
+      temperature: 19.0
+      b: 0.001
+    office:
+      temperature: 19.0
+      b: 0.0012
+  heaters:
+    bedroom_radiator:
+      room: bedroom
+      a: 0.03
+      delay_min: 3.0
+      lag_min: 4.0
+      emitter: radiator
+      power_w: 2000.0
+    office_radiator:
+      room: office
+      a: 0.04
+      delay_min: 3.0
+      lag_min: 4.0
+      emitter: radiator
+      power_w: 3000.0
+  boiler:
+    fire_c: 60.0
+    idle_c: 12.0
+    tau_up_min: 4.0
+    tau_down_min: 20.0
+  outdoor:
+    mean: 3.0
+    swing: 3.0
+input_number:
+  qas_max_power:
+    name: QAS max power
+    min: 0
+    max: 30000
+    step: 100
+    unit_of_measurement: W
+    mode: box

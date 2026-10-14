@@ -16,12 +16,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Callable
 
-# Emitters of the plant: exponent and reference water, as SmartPI's water types.
-PLANT_EMITTERS: dict[str, tuple[float, float]] = {
-    "radiator": (1.3, 60.0),
-    "floor_water": (1.1, 45.0),
-}
-SIM_ROOM_REFERENCE_C = 20.0
+# Emitters of the plant and their factor: the shared physics (tests/sim/plant.py).
+from .plant import PLANT_EMITTERS, SIM_ROOM_REFERENCE_C, water_factor  # noqa: F401
 
 
 @dataclass
@@ -76,14 +72,11 @@ class SimBoiler:
 
     def emitter_factor(self, emitter: str) -> Callable[[float, float, float], float]:
         """Power of the emitter relative to the reference water: ((water - T) / (ref - 20)) ** n."""
-        exponent, reference_c = PLANT_EMITTERS[emitter]
-        span = reference_c - SIM_ROOM_REFERENCE_C
+        if emitter not in PLANT_EMITTERS:
+            raise KeyError(emitter)
 
         def factor(t_s: float, outdoor_c: float, temp_c: float) -> float:
-            water = self.circuit_c(t_s, outdoor_c)
-            if water is None:
-                return 0.0
-            return (max(water - temp_c, 0.0) / span) ** exponent
+            return water_factor(emitter, self.circuit_c(t_s, outdoor_c), temp_c)
 
         return factor
 

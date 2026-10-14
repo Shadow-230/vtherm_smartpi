@@ -1,0 +1,39 @@
+# QAS role 'ref-0.4.0', instance 7: SmartPI QAS 0.4.0 reference.
+# Written by tests/qas/config/build.py from tests/qas/roles.py; do not edit by hand.
+homeassistant:
+  name: SmartPI QAS 0.4.0 reference
+frontend:
+config:
+api:
+history:
+logbook:
+system_log:
+  max_entries: 500
+recorder:
+  purge_keep_days: 7
+logger:
+  default: info
+  logs:
+    custom_components.vtherm_smartpi: info
+    custom_components.versatile_thermostat: info
+    custom_components.smartpi_room_sim: info
+    custom_components.smartpi_qas_helpers: info
+smartpi_qas_helpers:
+smartpi_room_sim:
+  rooms:
+    living:
+      temperature: 19.5
+      b: 0.0012
+      resolution: 0.01
+    attic:
+      temperature: 14.0
+      b: 0.0015
+  heaters:
+    living_heater:
+      room: living
+      a: 0.035
+      delay_min: 3.0
+      power_w: 1500.0
+  outdoor:
+    mean: 3.0
+    swing: 3.0

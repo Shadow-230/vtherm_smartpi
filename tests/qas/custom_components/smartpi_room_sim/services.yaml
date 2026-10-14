@@ -1,0 +1,126 @@
+set_room:
+  name: Set a room's temperature
+  description: Set a simulated room's temperature at once (test only).
+  fields:
+    room:
+      name: Room
+      required: true
+      selector:
+        text:
+    temperature:
+      name: Temperature
+      required: true
+      selector:
+        number:
+          min: -20
+          max: 40
+          step: 0.01
+          unit_of_measurement: "°C"
+ramp_room:
+  name: Change a room's temperature gently
+  description: Move a simulated room's temperature in a straight line over some minutes (test only).
+  fields:
+    room:
+      name: Room
+      required: true
+      selector:
+        text:
+    temperature:
+      name: Temperature
+      required: true
+      selector:
+        number:
+          min: -20
+          max: 40
+          step: 0.01
+          unit_of_measurement: "°C"
+    minutes:
+      name: Minutes
+      required: true
+      selector:
+        number:
+          min: 0.1
+          max: 1440
+          step: 0.1
+set_outdoor:
+  name: Set the outdoor temperature
+  description: Move the simulated outdoor mean, at once or over some minutes, and its daily swing (test only).
+  fields:
+    mean:
+      name: Mean
+      required: true
+      selector:
+        number:
+          min: -30
+          max: 40
+          step: 0.1
+          unit_of_measurement: "°C"
+    swing:
+      name: Daily swing
+      required: false
+      selector:
+        number:
+          min: 0
+          max: 15
+          step: 0.1
+          unit_of_measurement: "°C"
+    minutes:
+      name: Minutes
+      required: false
+      selector:
+        number:
+          min: 0
+          max: 1440
+          step: 1
+set_opening:
+  name: Open or close a door or a window
+  description: Open or close a simulated door or window, or give it back to its daily schedule (test only).
+  fields:
+    opening:
+      name: Opening
+      required: true
+      selector:
+        text:
+    state:
+      name: State
+      required: true
+      selector:
+        select:
+          options:
+            - open
+            - closed
+            - schedule
+    schedule:
+      name: Schedule
+      description: Open intervals of each day, as [start_hour, end_hour] pairs; replaces the configured schedule until a reset.
+      required: false
+      selector:
+        object:
+set_device:
+  name: Make a device respond or not
+  description: A simulated heater or valve that stops responding keeps what it was doing (ignore), and may also go unavailable (test only).
+  fields:
+    heater:
+      name: Heater
+      required: true
+      selector:
+        text:
+    mode:
+      name: Mode
+      required: true
+      selector:
+        select:
+          options:
+            - ok
+            - ignore
+            - unavailable
+reset:
+  name: Reset the simulation
+  description: Put every opening, device, the boiler, the outdoors and (unless rooms is false) the rooms back to the configured state (test only).
+  fields:
+    rooms:
+      name: Rooms too
+      required: false
+      default: true
+      selector:
+        boolean:
