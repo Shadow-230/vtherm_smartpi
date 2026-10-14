@@ -39,7 +39,7 @@ Son objectif est simple : au lieu d'utiliser un comportement fixe, il apprend co
 
 Concrètement, SmartPI apprend :
 
-- à quelle vitesse l'équipement actif chauffe ou refroidit la pièce,
+- avec quelle force l'équipement actif chauffe ou refroidit la pièce,
 - à quelle vitesse l'extérieur réchauffe ou refroidit passivement la pièce,
 - combien de temps la pièce met à réagir quand l'équipement démarre ou s'arrête.
 
@@ -50,7 +50,7 @@ refroidissement généralement plus précise qu'un TPI fixe :
 - il estime la puissance nécessaire pour tenir la consigne,
 - il applique des protections près de la consigne pour limiter les dépassements et les oscillations inutiles.
 
-Il n'est pas nécessaire de connaître la théorie des boucles PI pour utiliser SmartPI. L'idée importante est surtout qu'il a besoin d'une première période d'apprentissage avant de réguler dans son mode normal.
+Il n'est pas nécessaire de connaître la théorie des boucles PI pour bien utiliser SmartPI. L'idée importante est surtout qu'il a besoin d'une première période d'apprentissage avant de réguler dans son mode normal.
 
 ## Avant de commencer
 
@@ -65,7 +65,7 @@ Pendant la première phase d'apprentissage, essayez d'éviter :
 - les fenêtres ouvertes longtemps,
 - les gros changements de planning,
 - les apports de chaleur inhabituels comme un fort ensoleillement, une cheminée ou beaucoup de présence,
-- les modifications répétées des réglages SmartPI alors que l'apprentissage est encore en cours.
+- la modification de nombreux réglages SmartPI alors que l'apprentissage est encore en cours.
 
 Deux conseils pratiques aident beaucoup :
 
@@ -101,6 +101,12 @@ Pour ajouter SmartPI à un thermostat supplémentaire, ouvrez la configuration d
 ![SmartPI — configuration par thermostat](../../assets/screens/config_smartpi.png)
 
 Les paramètres disponibles sont identiques à ceux des valeurs par défaut globales. Tout paramètre défini ici remplace la valeur globale correspondante pour ce thermostat uniquement.
+
+Les options d'une entrée par thermostat ouvrent un menu (ses libellés sont affichés en anglais) avec : les réglages du régulateur (Regulator settings) ; la zone à deux sources de chaleur (Zone with two heat sources) ; les dépendances entre zones (Zone dependencies) ; et, pour une vanne linéarisée, la courbe de vanne (Valve curve). Une zone à deux sources de chaleur est une pièce chauffée par deux thermostats SmartPI, par exemple un radiateur et une boucle de plancher chauffant. Elle se configure depuis le thermostat maître : le Versatile Thermostat dont les appareils sont ces deux thermostats. Les dépendances entre zones sont les zones voisines qui échangent de la chaleur avec celle-ci, par une porte ou en permanence. Un thermostat qui sert de source additionnelle à une zone ouvre un autre formulaire à la place. Ce formulaire montre où sa zone est configurée, et les réglages qui s'appliquent encore à lui : ses délais d'activation, son type de chauffage et la courbe de vanne. La façon dont SmartPI apprend et utilise tout cela est décrite dans [Dépendances entre zones et deuxième source de chaleur](zone_dependencies.md).
+
+Les réglages du régulateur comprennent le **type de chauffage** : radiateur à eau (par défaut), plancher chauffant à eau, tapis chauffant électrique ou radiateur électrique rapide. Pour un type à eau, SmartPI utilise la température de départ de l'eau (la température de l'eau envoyée dans le circuit) que l'extension Smart Boiler publie pour le circuit du thermostat, quand elle est disponible. Sans elle, la commande est la même qu'avant. Un type à eau tient aussi compte, sans aucun réglage, du fait que la chaudière est appelée ou non, c'est-à-dire si elle reçoit l'ordre de chauffer (selon Smart Boiler, ou selon la chaudière centrale de Versatile Thermostat). Tant qu'une zone demande une chaleur qui ne vient pas, SmartPI ne compte pas sa commande comme de la chaleur dans son apprentissage. Choisissez un type électrique pour un émetteur électrique. Voir [Entrée eau](water_input.md) et sa [section 4](water_input.md#4-une-chaudière-qui-nest-pas-appelée).
+
+Il vaut mieux configurer une zone voisine dans les entrées des deux zones, pour que chacune voie l'autre. Quand la fenêtre d'un voisin est ouverte, SmartPI applique la réaction choisie dans sa propre régulation. Le Versatile Thermostat de la zone continue d'afficher son propre état de fenêtre, son mode et son preset, et les diagnostics montrent la réaction en vigueur.
 
 ## Vannes de radiateur et linéarisation
 
@@ -236,6 +242,8 @@ Ce qu'il faut retenir pendant le bootstrap :
 - `model.confidence` indique `ab_bootstrap` jusqu'à ce que le premier modèle thermique soit disponible,
 - la vitesse dépend de la qualité des observations réelles, pas seulement du temps écoulé.
 
+Avec des dépendances entre zones, l'apprentissage se met en pause tant que la porte d'un voisin est ouverte et pendant 10 minutes après sa fermeture, et tant que la fenêtre d'un voisin est ouverte. Dans une zone à deux sources de chaleur, SmartPI part plutôt de l'ajustement commun de la zone (un seul modèle ajusté pour les deux sources ensemble) ; voir [Dépendances entre zones, §5.5](zone_dependencies.md#55-apprentissage).
+
 ### Phase stable
 
 Quand le modèle thermique devient fiable, SmartPI bascule dans son mode normal de régulation.
@@ -243,7 +251,7 @@ Quand le modèle thermique devient fiable, SmartPI bascule dans son mode normal 
 À ce moment-là, SmartPI :
 
 - calcule automatiquement ses gains PI à partir du modèle appris,
-- ajoute une part anticipative de maintien basée sur la pièce et la température extérieure,
+- ajoute une part anticipative de maintien basée sur les conditions de la pièce et de l'extérieur,
 - adapte son comportement près de la consigne avec une deadband et des protections supplémentaires.
 
 Près de la température cible, SmartPI cherche à éviter les micro-corrections permanentes. Le résultat attendu est une régulation plus stable, avec moins de corrections inutiles qu'un TPI fixe.
@@ -256,7 +264,7 @@ Avec `FF3`, activé par défaut, SmartPI peut aussi appliquer une petite correct
 
 SmartPI continue de surveiller la qualité de son modèle dans le temps.
 
-Si l'apprentissage n'évolue plus suffisamment, il peut déclencher automatiquement une séquence de recalibration pour rafraîchir le modèle et les temps morts.
+Si la qualité de l'apprentissage ne s'améliore plus assez, il peut déclencher automatiquement une séquence de recalibration pour rafraîchir le modèle et les temps morts.
 
 Points utiles à connaître :
 
@@ -284,20 +292,21 @@ Pour démarrer simplement :
 | ------------------------------------ | ------------------------------------------------------------------------------------------------------ | ----------------- |
 | **Délai minimal d'activation**       | Durée minimale pendant laquelle le chauffage reste allumé une fois activé.                             | `0 s`             |
 | **Délai minimal de désactivation**   | Durée minimale pendant laquelle le chauffage reste éteint une fois désactivé.                          | `0 s`             |
-| **Deadband**                         | Zone de tolérance autour de la consigne.                                                               | `0.05°C`          |
-| **Filtre de consigne**               | Active le lissage de consigne proportionnel et l'atterrissage de chauffe près de la cible.             | `activé`          |
-| **FF3**                              | Active une petite correction prédictive près de la consigne dans certaines situations de perturbation. | `activé`          |
-| **Autoriser P dans la deadband**     | Permet à la branche proportionnelle de rester active à l'intérieur de la deadband.                     | `désactivé`       |
+| **Bande morte**                      | Zone de tolérance autour de la consigne (deadband).                                                               | `0.05°C`          |
+| **Utiliser le filtre de consigne**   | Active le lissage de consigne proportionnel et l'atterrissage de chauffe près de la cible.             | `activé`          |
+| **Utiliser FF3**                     | Active une correction prédictive de court horizon près de la consigne, pendant la récupération après une perturbation. | `activé`          |
+| **Autoriser P amorti près du bord de bande morte** | Dans la bande morte, garde une action proportionnelle réduite près de son bord. Désactivée, la branche proportionnelle est coupée dans toute la bande morte. | `désactivé`       |
 | **Autoriser le redémarrage PWM aux transitions de bande** | Permet à SmartPI de redémarrer le cycle PWM courant lors d'une entrée ou sortie de deadband ou de near-band. | `désactivé` |
-| **Facteur release tau**              | Échelle du délai de relâchement intégral par rapport à la constante de temps apprise.                  | `0.5`             |
-| **Seuil bas d'hystérésis**           | Seuil de redémarrage pendant le bootstrap.                                                             | `0.3°C`           |
-| **Seuil haut d'hystérésis**          | Seuil d'arrêt pendant le bootstrap.                                                                    | `0.5°C`           |
-| **Mode debug SmartPI**               | Enregistre les diagnostics live complets pour l'analyse historique.                                    | `désactivé`       |
-| **Linéarisation de courbe de vanne** | Adapte la demande SmartPI aux vannes de radiateur non linéaires.                                       | `désactivé`       |
+| **Facteur tau de relâchement**       | Échelle du délai de relâchement intégral par rapport à la constante de temps apprise.                  | `0.5`             |
+| **Hystérésis marche**                | Seuil de redémarrage pendant le bootstrap.                                                             | `0.3°C`           |
+| **Hystérésis arrêt**                 | Seuil d'arrêt pendant le bootstrap.                                                                    | `0.5°C`           |
+| **Enregistrer les diagnostics complets (debug)** | Enregistre les diagnostics live complets pour l'analyse historique.                                    | `désactivé`       |
+| **Activer la linéarisation de courbe de vanne** | Adapte la demande SmartPI aux vannes de radiateur non linéaires.                                       | `désactivé`       |
 | **Ouverture minimale de vanne**      | Première ouverture utile lorsque la linéarisation est activée.                                         | `7%`              |
 | **Demande au coude**                 | Demande SmartPI correspondant au changement de pente de la vanne.                                      | `80%`             |
 | **Ouverture de vanne au coude**      | Ouverture physique de la vanne au changement de pente.                                                 | `15%`             |
 | **Ouverture maximale de vanne**      | Ouverture maximale autorisée lorsque la linéarisation est activée.                                     | `100%`            |
+| **Heating type** (type de chauffage, libellé affiché en anglais) | Radiateur à eau, plancher chauffant à eau, tapis chauffant électrique ou radiateur électrique rapide ; un type à eau utilise les données d'eau de Smart Boiler et le fait que la chaudière soit appelée ou non ([Entrée eau, §2](water_input.md#2-configuration)). | radiateur à eau |
 
 ### Redémarrage PWM aux transitions de bande
 
@@ -341,7 +350,10 @@ Autres blocs utiles sous `live` :
 - `feedforward` : état du feed-forward et de FF3,
 - `setpoint` : informations de consigne filtrée et d'atterrissage,
 - `autocalib` : état de la supervision automatique,
-- `calibration` : état d'une calibration forcée.
+- `calibration` : état d'une calibration forcée,
+- `dependencies` : dépendances entre zones et zone à deux sources de chaleur, quand elles sont configurées ([Dépendances entre zones, §9](zone_dependencies.md#9-diagnostics)),
+- `water` : l'entrée eau, pour un type de chauffage à eau ([Entrée eau, §8](water_input.md#8-diagnostics)),
+- `boiler` : si la chaudière est appelée, et comment l'apprentissage traite une zone qui demande de la chaleur et n'en reçoit pas ([Entrée eau, §4](water_input.md#4-une-chaudière-qui-nest-pas-appelée)).
 
 En mode normal, le bloc `setpoint` peut contenir :
 
@@ -365,7 +377,7 @@ https://github.com/KipK/vtherm_smartpi/tree/master/cards
 
 ## Panel de régulation avec Equinox
 
-SmartPI publie aussi le résumé `specific_states.smart_pi` et la référence d'entité `specific_states.regulation_diagnostics` sur l'entité thermostat. La [carte Lovelace Equinox](https://github.com/KipK/equinox) utilise ces attributs pour afficher un panel **Régulation** dédié depuis le menu de la carte climate.
+SmartPI publie aussi le résumé `specific_states.smart_pi` et la référence d'entité `specific_states.regulation_diagnostics` sur l'entité thermostat. Tant que SmartPI utilise les données d'eau de Smart Boiler, il écrit aussi `specific_states.water_factor` : le facteur d'eau qu'il applique (la chaleur que donne l'émetteur avec l'eau actuelle, comparée à celle donnée avec une eau de référence). Smart Boiler lit cette valeur ([Entrée eau, §3.4](water_input.md#34-utilisation-dans-smartpi)). La [carte Lovelace Equinox](https://github.com/KipK/equinox) utilise ces attributs pour afficher un panel **Régulation** dédié depuis le menu de la carte climate.
 
 Avec Equinox, vous pouvez suivre la progression d'apprentissage SmartPI, la confiance du modèle, le détail de puissance, l'atterrissage de consigne, les graphes d'historique et les actions de maintenance disponibles sans copier la carte Markdown de diagnostics.
 
@@ -389,9 +401,11 @@ Le réglage courant est disponible dans `specific_states.smartpi_learning_enable
 
 ### `reset_smartpi_learning`
 
-À utiliser quand le comportement thermique du logement a changé de manière importante, par exemple après des travaux d'isolation ou un changement d'émetteurs.
+À utiliser quand le comportement thermique de la pièce a changé de manière importante, par exemple après des travaux d'isolation ou un changement d'émetteurs.
 
 Ce service efface l'apprentissage SmartPI et force un retour en mode bootstrap.
+
+Il efface aussi ce que les dépendances entre zones ont appris (les échanges de chaleur avec les voisins, l'ajustement d'une zone à deux sources de chaleur). Il garde les moyennes de l'entrée eau. La remise à zéro proposée par le formulaire de zone, et par l'avis de réparation de l'entrée eau dans Home Assistant, est cette même remise à zéro ; voir [Dépendances entre zones, §2.2](zone_dependencies.md#22-remise-à-zéro-du-modèle-appris).
 
 ### `force_smartpi_calibration`
 

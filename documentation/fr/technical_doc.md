@@ -12,6 +12,13 @@ Le code actuel repose sur trois idées directrices :
 
 Ce document décrit le comportement réellement implémenté dans le code SmartPI actuel.
 
+Ce fork ajoute des extensions : les entrées connues (la chaleur échangée avec les zones voisines, et la
+chaleur d'une deuxième source de chaleur dans la zone), la température de l'eau qui arrive aux émetteurs,
+et l'appel de la chaudière (si la chaudière reçoit l'ordre de chauffer). Quand une extension change le
+modèle, la chaîne de commande ou l'apprentissage, les sections ci-dessous en tiennent compte. Les
+extensions elles-mêmes sont décrites dans [Dépendances entre zones et deuxième source de chaleur](zone_dependencies.md)
+et [Entrée eau](water_input.md), et leurs tests dans [Tests](testing.md).
+
 ---
 
 ## 2. Modèle thermique et loi de commande
@@ -40,6 +47,24 @@ $$ \tau = \frac{1}{b} $$
 
 Le modèle est volontairement simple. Le temps mort est appris séparément et injecté dans les heuristiques de réglage et dans les protections.
 
+**Entrées connues.** Le modèle est étendu avec la chaleur échangée avec les zones voisines et la
+chaleur apportée par une deuxième source :
+
+$$ \frac{dT_{int}}{dt} = a \cdot u - b \cdot (T_{int} - T_{ext}) + \sum_i g_i (T_i - T_{int}) + \sum_j q_j $$
+
+Ici, `g_i` (1/min) relie la zone à une température `T_i`, par exemple celle d'une zone voisine, et
+`q_j` (°C/min) est une chaleur apportée directement, par exemple la chaleur de la deuxième source.
+
+La loi de commande prend ces entrées en compte à travers deux valeurs qu'elle utilise déjà. Les deux
+sont calculées à un seul endroit :
+
+$$ b_{eff} = loss + \sum_i g_i, \quad T_{ref} = \frac{loss \cdot T_{ext} + \sum_i g_i T_i + \sum_j q_j}{b_{eff}} $$
+
+Ici, `loss` est le `b` appris, ou les déperditions ajustées sans les voisins toujours connectés. Le décalage
+de `T_ref` causé par le terme de chaleur est limité à `KNOWN_HEAT_MAX_SHIFT_C`. Sans entrées
+connues, `b_eff = b` et `T_ref = T_ext`. L'apprentissage continue d'utiliser le `b` brut et `T_ext`
+([Dépendances entre zones, §3](zone_dependencies.md#3-le-modèle-avec-entrées-connues)).
+
 ### 2.2 Chaîne de commande
 
 La commande courante suit la structure :
@@ -57,7 +82,14 @@ La sortie réellement injectée dans le calcul est `u_ff_eff + u_pi`, puis elle 
 
 - limitation de vitesse,
 - anti-windup,
-- contraintes de cycle et protections.
+- contraintes de cycle et protections ; avec un chauffage à eau, la sortie est limitée à
+  `max_on_percent × max(φ, 0.05)`. C'est ce que donne une commande pleine avec le facteur d'eau `φ`
+  (la chaleur que donne l'émetteur avec l'eau actuelle, comparée à celle donnée avec l'eau de référence).
+
+Avec un chauffage à eau, le régulateur travaille en puissance, pour une température d'eau de
+référence. La commande envoyée à l'émetteur est `power / max(φ, 0.05)`, au plus 1, avant la courbe
+de vanne. L'apprentissage voit la commande multipliée par `φ`
+([Entrée eau, §3.4](water_input.md#34-utilisation-dans-smartpi)).
 
 ---
 
@@ -84,6 +116,12 @@ SmartPI quitte `HYSTERESIS` lorsque `b` dispose de 8 mesures et `a` de
 6 mesures. Les deux buffers continuent ensuite à se remplir jusqu'à
 `AB_HISTORY_SIZE = 31` pendant la régulation SmartPI normale.
 
+Dans une zone à deux sources de chaleur, la zone a un ajustement commun : un seul modèle ajusté pour
+les deux sources ensemble. Dès que cet ajustement est publié, les valeurs `a` et `b` de SmartPI et ces
+historiques sont fixés à partir de lui, puis SmartPI quitte `HYSTERESIS`. Hors de `HYSTERESIS`, les
+valeurs `a` et `b` de l'ajustement, avec les compteurs qu'utilisent ses contrôles de fiabilité, sont
+conservées à chaque calcul ([Dépendances entre zones, §5.5](zone_dependencies.md#55-apprentissage)).
+
 La convergence de `b` utilisée pour l'apprentissage `a` avec détection de dérive repose sur `b_converged_for_a()` :
 
 1. `learn_ok_count_b >= 11`,
@@ -102,7 +140,16 @@ Le code n'utilise plus de constante `WINDOW_MIN_MINUTES`. L'apprentissage repose
 - ancre le début de fenêtre après la fin du temps mort quand c'est nécessaire,
 - surveille la stabilité de puissance via le coefficient de variation (`U_CV_MAX`),
 - prolonge la fenêtre tant que la pente n'est pas jugée robuste,
-- abandonne après `DT_MAX_MIN = 240` minutes si aucun signal robuste n'émerge.
+- abandonne après `DT_MAX_MIN = 240` minutes si aucun signal robuste n'émerge,
+- se met en pause tant qu'un verrou d'apprentissage est actif (porte d'un voisin ouverte ou en
+  stabilisation, fenêtre ouverte chez un voisin, chaleur de la deuxième source pas encore connue,
+  émetteur qui refroidit parce que la chaudière n'est pas appelée, ou qui se réchauffe une fois
+  qu'elle démarre), et abandonne la
+  fenêtre d'apprentissage en cours chaque fois qu'un verrou commence ou se termine,
+- retire de la variation de température mesurée la part causée par les entrées connues : leur
+  vitesse `known_rate = Σ g_i·(T_i − T) + Σ q_j`, intégrée sur la fenêtre,
+- compte la puissance comme 0 tant que la zone demande de la chaleur et que la chaudière n'est pas
+  appelée ([Entrée eau, §4](water_input.md#4-une-chaudière-qui-nest-pas-appelée)).
 
 En pratique, la décision de soumettre ou d'étendre la fenêtre dépend de la robustesse de la pente, pas d'une durée minimale fixe.
 
@@ -137,6 +184,8 @@ $$ a = \frac{dT/dt + b \cdot (T_{int} - T_{ext})}{u} $$
 Les historiques sont filtrés par median/MAD. La magnitude publiée de `a` est
 bornée tout en conservant le signe du mode ; `b` reste strictement positif.
 
+Avec un chauffage à eau, `u` est la puissance pour l'eau de référence (la commande multipliée par `φ`).
+
 ### 3.5 Estimation du temps mort
 
 `DeadTimeEstimator` implémente une FSM indépendante. Les canaux décrivent la
@@ -149,6 +198,13 @@ Ainsi, OFF -> ON apprend `heat` en mode HEAT mais `cool` en mode COOL.
 La transition ON -> OFF apprend la réponse passive opposée.
 
 La fiabilité devient vraie dès qu'au moins une mesure valide a été capturée sur le canal correspondant. Les valeurs publiées sont les moyennes des historiques `heat` et `cool`.
+
+L'estimateur se met en pause tant qu'un verrou d'apprentissage est actif. Chaque fois qu'un verrou
+commence ou se termine, l'observation en cours est remise à zéro. Avec un chauffage à eau, il reçoit
+la commande, pas la puissance (0 pendant la production d'eau chaude sanitaire). Tant que la zone
+demande de la chaleur et que la chaudière n'est pas appelée, il reçoit 0 : il ne chronomètre donc
+aucune réponse. Le démarrage de la chaudière après un tel maintien n'est pas chronométré non plus :
+ce retard vient de l'eau, pas de la vanne.
 
 ---
 
@@ -164,7 +220,7 @@ La fiabilité devient vraie dès qu'au moins une mesure valide a été capturée
 
 $$ K_p = \frac{1}{|a| \cdot (\lambda + L)} $$
 
-3. calcul de $K_i = K_p / \tau$,
+3. calcul de $K_i = K_p / \tau$ ; avec des échanges de chaleur actifs, $\tau = 1 / (loss + \sum_i g_i)$, que les échanges raccourcissent (section 2.1),
 4. bornage des gains puis application des gels de gouvernance.
 
 Le temps mort actif est `deadtime_heat` en HEAT et `deadtime_cool` en COOL.
@@ -178,11 +234,15 @@ Important :
 
 Le feed-forward structurel est calculé à partir de :
 
-$$ k_{ff} = \frac{b}{a} $$
+$$ k_{ff} = \frac{b_{eff}}{a} $$
 
 et :
 
-$$ u_{ff1} = clamp(k_{ff} \cdot (SP - T_{ext}), 0, 1) \cdot warmup\_scale $$
+$$ u_{ff1} = clamp(k_{ff} \cdot (SP - T_{ref}), 0, 1) \cdot warmup\_scale $$
+
+Sans entrées connues, `b_eff = b` et `T_ref = T_ext` (section 2.1). FF3, la trajectoire de
+consigne, le jumeau thermique, la near-band et les fenêtres de la correction du feed-forward (FFTrim) utilisent les mêmes `b_eff`
+et `T_ref`.
 
 En COOL, $a < 0$ et donc $k_{ff} < 0$. Lorsque l'extérieur est plus chaud que
 la consigne, les deux différences négatives produisent bien une puissance de
@@ -199,6 +259,10 @@ Le `warmup_scale` n'est pas un simple interrupteur. Il dépend :
 - `u_ff2` : correction lente `FFTrim`,
 - `ABConfidence` : politique de confiance sur `a/b`,
 - repli en mode `AB_BAD` vers un feed-forward nul après `AB_BAD_PERSIST_CYCLES = 3`.
+
+`FFTrim` est aussi gelé (`boiler_not_heating`) tant que la zone demande de la chaleur et que la
+chaudière n'est pas appelée, et tant que l'émetteur de la zone se stabilise avant ou après une telle
+période.
 
 ### 4.3 FF3
 
@@ -252,7 +316,7 @@ Le principe est le suivant :
 - la branche P conserve la consigne brute tant que la zone de freinage prédite n'est pas atteinte,
 - un changement de consigne significatif arme une seule fois le freinage tardif ; en chauffage, son déclenchement compare ensuite la hausse prédite à la distance restante jusqu'à `target - LANDING_SAFETY_MARGIN_C`, sans réappliquer le seuil d'armement,
 - un déclenchement dû à une perturbation continue d'exiger le seuil d'écart significatif,
-- le modèle 1R1C appris, `deadtime_cool`, la latence restante du cycle et la puissance engagée sur le cycle servent à détecter cette zone de freinage,
+- le modèle 1R1C exact appris, `deadtime_cool`, la latence restante du cycle et la puissance engagée sur le cycle servent à détecter cette zone de freinage,
 - une trajectoire de freinage tardif douce est ensuite appliquée près de la cible tout en conservant une demande proportionnelle minimale positive,
 - pour les trajectoires de consigne en chauffage, un cap d'atterrissage peut contraindre la commande interne après le calcul PI lorsque le modèle prédit que la chaleur stockée suffit à atteindre la cible,
 - lorsque le freinage n'est plus nécessaire, la référence filtrée remonte progressivement vers la consigne brute avant l'arrêt de la trajectoire,
@@ -292,7 +356,7 @@ d'atterrissage dans `live.analysis.trajectory` et `live.analysis.landing` :
 - `release_allowed`, `time_to_target_min`, `release_blocked_by_slope`,
 - `command_before_cap` et `command_after_cap`.
 
-Le façonnage de référence reste limité à la branche P afin de préserver la lisibilité de la consigne brute côté intégrale et d’éviter de perturber l’apprentissage. Le cap d'atterrissage est un gouverneur de commande post-PI séparé pour les trajectoires de consigne en chauffage ; il ne réécrit pas l'intégrale et ne change pas la courbe de linéarisation de vanne.
+Le façonnage de référence reste limité à la branche P : la branche intégrale garde ainsi la consigne brute intacte, et l’apprentissage n’est pas perturbé. Le cap d'atterrissage est un gouverneur de commande post-PI séparé pour les trajectoires de consigne en chauffage ; il ne réécrit pas l'intégrale et ne change pas la courbe de linéarisation de vanne.
 
 Le code actuel applique aussi une garde explicite sur la croissance positive de l'intégrale pendant les phases de rattrapage :
 
@@ -368,12 +432,14 @@ Les protections complémentaires actuellement présentes sont :
 - anti-windup par tracking,
 - garde intégrale signée pendant les reprises, rattrapages et changements de consigne,
 - `I:HOLD` explicite pendant la phase post-reprise liée à `deadtime_heat` pour `window_resume` et `power_shedding_resume` en chauffage,
-- logique de maintien dans la deadband.
+- logique de maintien dans la deadband,
+- avec un chauffage à eau, le maintien `no_heat` : la commande et l'intégrale sont maintenues pendant la production d'eau chaude sanitaire, et seule l'intégrale est maintenue tant que l'eau n'apporte presque pas de chaleur ([Entrée eau, §3.4](water_input.md#34-utilisation-dans-smartpi)),
+- fenêtre ouverte chez un voisin, tant que la connexion avec ce voisin est active : la réaction choisie pour ce voisin. C'est soit l'arrêt, par le même chemin que l'arrêt sur fenêtre ouverte, avec sa reprise protégée, soit le preset hors-gel ou éco de la zone, et elle ne demande jamais plus de chauffage ou de refroidissement que la consigne ([Dépendances entre zones, §4.5](zone_dependencies.md#45-une-fenêtre-chez-un-voisin-connecté)).
 
 Le calcul distingue aussi deux zones autour de la consigne :
 
 - la deadband hystérétique, utilisée pour stabiliser l'état `in_deadband`,
-- la deadband centrale réelle, définie par `abs(error_i) < deadband_c`, utilisée pour geler effectivement P et I.
+- la deadband centrale réelle, définie par `abs(error_i) < deadband_c` une fois la constante de temps fiable, utilisée pour geler effectivement P et I.
 
 Cette séparation évite de garder P et I gelés uniquement parce que l'hystérésis maintient encore l'état de deadband alors que l'erreur a déjà quitté la deadband configurée.
 
@@ -399,6 +465,24 @@ Le cycle forcé est géré par `CalibrationManager` :
 - `HEAT_UP`,
 - `COOL_DOWN_FINAL` jusqu'au retour à `sp`.
 
+Une calibration en cours est annulée quand la fenêtre ouverte d'un voisin déclenche une réaction.
+Elle est aussi annulée quand la zone demande de la chaleur et que la chaudière n'est pas appelée,
+car la réponse de la zone à la chaleur ne viendrait pas.
+
+Les décisions du superviseur sont publiées sous forme d'événements Home Assistant. Chaque événement porte `entity_id`, l'entité climate du thermostat, et `name`, le nom du thermostat :
+
+| Événement                          | Émis quand                                                                              | Autres champs                                                         |
+| ---------------------------------- | --------------------------------------------------------------------------------------- | --------------------------------------------------------------------- |
+| `smartpi_autocalib_snapshot_taken` | un snapshot est pris                                                                    | `reason` (`initial`, `fallback_7d`, `rolling`), `dt_cool_unavailable` |
+| `smartpi_autocalib_triggered`      | une calibration est déclenchée par la stagnation ou par `force_smartpi_calibration`     | `triggered_params`, `retry_count`                                     |
+| `smartpi_autocalib_success`        | une calibration supervisée se termine avec tous les critères remplis                    | `improved_params`, `retry_count`                                      |
+| `smartpi_autocalib_retry`          | une calibration supervisée se termine avec des critères manquants et un retry est prévu | `retry_count`, `missing_criteria`                                     |
+| `smartpi_autocalib_degraded`       | le dernier retry échoue et le modèle est marqué comme dégradé                           | `retry_count`                                                         |
+
+Avant ce format, les événements portaient le nom du thermostat dans `entity_id`, et le Recorder de
+Home Assistant le rejetait. Une automatisation qui cherchait le nom dans `entity_id` doit maintenant
+le chercher dans `name`.
+
 ---
 
 ## 5. Architecture logicielle
@@ -422,12 +506,12 @@ Le cycle forcé est géré par `CalibrationManager` :
 | `gains.py`             | calcul et gel des gains                                  |
 | `controller.py`        | PI discret, anti-windup, maintien, hystérésis            |
 | `deadband.py`          | deadband et near-band                                    |
-| `setpoint.py`          | trajectoire analytique de consigne et cap d'atterrissage |
-| `integral_guard.py`    | garde de croissance positive de l'intégrale              |
+| `setpoint.py`          | trajectoire analytique de consigne et cap d'atterrissage en chauffage |
+| `integral_guard.py`    | garde de croissance positive de l'intégrale pendant les phases de rattrapage |
 | `feedforward.py`       | orchestration `u_ff1/u_ff2/u_ff3`                        |
-| `ff_trim.py`           | biais causal et transfert borné trim/intégrale           |
+| `ff_trim.py`           | biais lent causal et plans bornés de propriété trim/intégrale |
 | `command_ownership.py` | projection de commande figée et suivi de rattachement du scheduler |
-| `ff_trim_periodic.py`  | sélection de fenêtres d’équilibre périodique par phase   |
+| `ff_trim_periodic.py`  | sélection de fenêtres d’équilibre périodique fermées sur la même phase |
 | `ff_ab_confidence.py`  | politique de confiance sur `a/b`                         |
 | `ff3.py`               | correction prédictive bornée FF3                         |
 | `governance.py`        | décisions de gel                                         |
@@ -439,6 +523,18 @@ Le cycle forcé est géré par `CalibrationManager` :
 | `diagnostic_history.py` | enveloppe versionnée et séries Recorder stables         |
 | `tint_filter.py`       | filtrage adaptatif de la température intérieure          |
 | `timestamp_utils.py`   | conversion monotonic / wall-clock                        |
+| `effective_model.py`   | entrées connues et leur composition en `b_eff`, `T_ref`  |
+| `dependencies.py`, `dependency_inputs.py` | éléments de dépendance, leur validation et leur état ; lectures d'un calcul |
+| `dependency_model.py`  | entrées connues, verrous d'apprentissage, réaction à la fenêtre d'un voisin ; la zone à deux sources |
+| `coupling_estimator.py` | apprentissage des coefficients d'échange `k`            |
+| `zone_fit.py`, `source_model.py`, `source_candidates.py` | l'ajustement commun de la zone, la chaleur et les échelles de temps de la deuxième source |
+| `split.py`, `source_settings.py`, `source_link.py` | règles de répartition et boucle d'allocation, réglages de la source, lien entre les sources |
+| `water_input.py`       | le facteur d'eau `φ` à partir des données de Smart Boiler |
+| `boiler_call.py`       | si la chaudière chauffe une zone qui l'appelle           |
+
+Les modules des extensions sont décrits dans
+[Dépendances entre zones, §6](zone_dependencies.md#6-composants-et-interfaces) et
+[Entrée eau, §5](water_input.md#5-composants-et-interfaces).
 
 ### 5.3 Composition interne de `SmartPI`
 
@@ -463,6 +559,10 @@ self._fftrim_observer = CausalFFTrimObserver(cycle_min)
 self._fftrim_periodic_observer = PeriodicFFTrimObserver(cycle_min)
 self._command_ownership = CommandOwnershipTracker()
 self._ab_confidence = ABConfidence()
+self.dependency_state = DependencyState()
+self.dependency_model = DependencyModel(self.dependency_state)
+self.water = WaterInput()
+self.boiler = BoilerCall()
 ```
 
 ### 5.4 Persistance actuelle
@@ -514,12 +614,19 @@ Le payload actuel de `SmartPI.save_state()` contient notamment :
     "ac_state": {...},
     "ff_v2_trim": {...},
     "tint_filter_state": {...},
+    # seulement si utilisées :
+    "dependencies": {...},          # échanges appris, ajustement de la zone et état de la source
+    "dependency_reset_token": "...",  # la dernière remise à zéro demandée par un formulaire, appliquée une fois
+    "water": {...},                 # disponibilité et moyennes de l'entrée eau
 }
 ```
 
+Les clés optionnelles sont décrites dans [Dépendances entre zones, §8](zone_dependencies.md#8-état-sauvegardé)
+et [Entrée eau, §7](water_input.md#7-état-sauvegardé). Un payload sans ces clés se charge comme avant.
+
 Seul le trim appris reste persistant. Les fenêtres de propriété, propositions
 en attente et transferts d'intégrale sont transitoires ; après redémarrage,
-l'observateur est reconstruit et le gel existant de trois cycles est conservé.
+l'observateur est reconstruit et le gel existant du trim pendant trois cycles s'applique toujours.
 
 Pour les commandes switch, SmartPI prépare un snapshot de propriété figé juste
 avant la soumission au scheduler. Le callback de début de cycle ne le rattache
@@ -549,6 +656,19 @@ d'exécution relatifs au processus Home Assistant courant. Les compteurs
 persistés du modèle restent internes et servent aux décisions de qualité du
 modèle et de warm-up. Quand le jumeau thermique est exploitable, ses champs
 publics sont exposés sous `analysis.twin`.
+
+`live` porte aussi ces blocs, seulement quand ils sont utilisés :
+
+- `dependencies` : le modèle composé (`b_eff`, `t_ref`), le verrou d'apprentissage, la réaction à la
+  fenêtre, une entrée par voisin, et `second_source` pour la source principale d'une zone à deux
+  sources de chaleur ; un thermostat qui sert de source additionnelle n'affiche que son rôle
+  ([Dépendances entre zones, §9](zone_dependencies.md#9-diagnostics)) ;
+- `water` : le facteur d'eau, sa source et les maintiens, pour un type de chauffage à eau ;
+- `boiler` : si la chaudière est appelée, et le mode d'apprentissage qui en découle
+  ([Entrée eau, §8](water_input.md#8-diagnostics)).
+
+Avec des données d'eau, les valeurs `power` sont des puissances pour l'eau de référence, tandis que
+`current_cycle_percent` et `next_cycle_percent` sont la commande envoyée à l'émetteur.
 
 `feedforward.fftrim.command_ownership` expose le dernier état de rattachement,
 son motif de rejet, la séquence de requête, les puissances et durées
@@ -661,5 +781,3 @@ Cette gouvernance est centrale :
 1. **Astrom K.J. et Hagglund T.**, travaux sur la régulation PID et l'usage de modèles FOPDT.
 2. **Sundaresan K.R. et Krishnaswamy P.R.**, estimation des paramètres de délai et de constante de temps.
 3. Régression **OLS** avec test t de Student pour la validation de pente.
-
-Ce document sert de référence alignée sur l'implémentation SmartPI actuelle.

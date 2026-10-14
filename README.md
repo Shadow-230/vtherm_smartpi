@@ -1,6 +1,6 @@
 # Versatile Thermostat SmartPI
 
-[Lire la version française](README.fr.md)
+[Lire la version française](README.fr.md) · [Czytaj po polsku](README.pl.md)
 
 <p align="center">
   <img src="https://github.com/KipK/vtherm_smartpi/raw/master/assets/brand/logo.png" alt="SmartPI Logo" width="300" />
@@ -71,12 +71,15 @@ SmartPI publishes a structured diagnostics summary that the [Equinox Lovelace ca
 
 ## 📖 Documentation
 
-Comprehensive documentation is available in English:
+Comprehensive documentation is available in English, and in French and Polish
+([README.fr.md](README.fr.md), [README.pl.md](README.pl.md)):
 
 - 🇬🇧 [User Documentation (English)](documentation/en/vtherm_smartpi.md)
 - 🇬🇧 [Technical Documentation (English)](documentation/en/technical_doc.md)
 - 🇬🇧 [Zone Dependencies and a Second Heat Source (English)](documentation/en/zone_dependencies.md)
 - 🇬🇧 [Water Input (English)](documentation/en/water_input.md)
+- 🇬🇧 [Tests (English)](documentation/en/testing.md)
+- 🇬🇧 [Diagnostics (English)](documentation/en/diagnostics.md)
 
 ## 👥 Authors
 
