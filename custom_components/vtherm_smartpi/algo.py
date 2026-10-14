@@ -3458,7 +3458,6 @@ class SmartPI:
             a=self.est.a,
             b=self.control_b,
             deadtime_heat_s=self.dt_est.deadtime_heat_s,
-            deadtime_cool_s=self.dt_est.deadtime_cool_s,
         )
         self._u_ff3_pending = ff3_result.u_ff3_applied
         self._ff3_pending_active = abs(ff3_result.u_ff3_applied) > 1e-9
@@ -3567,6 +3566,7 @@ class SmartPI:
         if self._last_target_temp is not None:
             if abs(target_temp - self._last_target_temp) > 0.01:
                 setpoint_changed = True
+                self._setpoint_changed_in_cycle = True
                 _LOGGER.info(
                     "%s - Target change detected (%.2f -> %.2f), invalidating learning window",
                     self._name, self._last_target_temp, target_temp
