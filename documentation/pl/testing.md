@@ -221,7 +221,7 @@ Wyniki są w [Wejście wody, §4.4](water_input.md#44-wyniki-symulacja).
 | `test_smartpi_split.py` | reguły podziału i pętla przydziału |
 | `test_smartpi_source_link.py` | łącze między dwoma termostatami: wysterowania, cykle, główne źródło, które przestaje odpowiadać, limit mocy |
 | `test_smartpi_dependency_model_source.py` | bloki uczenia, zegar uczenia i jego limit czasu, hamowanie, szybszy powrót do nastawy po nocy, restart, chłodzenie |
-| `test_smartpi_dependencies_handler.py` | rodzaje ogrzewania odczytane z obu wpisów, reset zamówiony z formularza, zmieniony termostat nadrzędny |
+| `test_smartpi_dependencies_handler.py` | rodzaje ogrzewania odczytane z obu wpisów, reset zamówiony z formularza, zmieniony termostat nadrzędny (jego urządzenia porównane po unikalnym ID, także przy przeładowaniu wpisu, gdy termostat nie ma jeszcze ID encji) |
 | `test_config_flow_zone.py` | formularz strefy: termostat nadrzędny i jego sprawdzenia, zalecenie, przeniesienie głównego źródła, wpis drugiego termostatu, własne opóźnienie i bezwładność, usunięcie, krok resetu |
 
 ### 4.5 Woda
@@ -418,7 +418,7 @@ zastępnik jej interfejsu tylko do testów), i nic z tego nie jest zbudowane.
 | QE5s | Przez 45 minut strefa (albo niezależna para) reguluje, a w logu nie ma żadnego błędu; w strefie podłogówka podąża za grzejnikiem. Krótki wariant QE5. | 3 `zone`, 4 `zone-ref` | 45 min | nie | Z1 porównanie | tak | bez Smart Boilera |
 | QE6 | Gdy menedżer mocy VTherm odcina urządzenia strefy (zrzut mocy), główne źródło objęte zrzutem nadal wysyła swoje wysterowanie, a dodatkowe źródło objęte zrzutem zostaje wyłączone. | 5 `zone-valve` | 60 min | nie | zrzut mocy | nie | bez Smart Boilera |
 | QE7 | Przez 2 h zawór jako dodatkowe źródło podąża za wysterowaniem głównego źródła. | 5 `zone-valve` | 2 h | nie | zawór jako dodatkowe źródło | nie | bez Smart Boilera |
-| QZ1 | SmartPI nie zapisuje w logu żadnego błędu, a każde jego ostrzeżenie jest na liście; rejestrator nie odrzuca żadnego atrybutu diagnostyki; formularze czytane po polsku pokazują tekst, a nie klucze; po trzech przeładowaniach wpisu jego termostat nie liczy podwójnie. | wszystkie | 25 min | nie | — | tak | bez Smart Boilera |
+| QZ1 | SmartPI nie zapisuje w logu żadnego błędu, a każde jego ostrzeżenie jest na liście; rejestrator nie odrzuca żadnego atrybutu diagnostyki; formularze czytane po polsku pokazują tekst, a nie klucze; po trzech przeładowaniach wpisu jego termostat nie liczy podwójnie, a żaden termostat nadrzędny strefy nie jest zgłaszany jako zmieniony. | wszystkie | 25 min | nie | — | tak | bez Smart Boilera |
 | QW1 | Dane o wodzie dostępne przez 48 h: źródło live, a w zakresie 0.5–1.2 prawdziwej wartości i ponad 1.5 raza tyle, ile wartość nauczona bez danych (zaplanowany, nie zbudowany) | — | — | — | woda z danymi i bez nich | — | ze Smart Boilerem |
 | QW2 | Ciepła woda z priorytetem (dhw_active): φ = 0, wysterowanie i całka wstrzymane (zaplanowany, nie zbudowany) | — | — | — | ciepła woda | — | ze Smart Boilerem |
 | QW3 | Brak danych przez 2 h, potem na dobre: długa średnia zachowana, potem φ = 1 i raz zgłoszenie naprawy water_data_gone; jego naprawa resetuje model (zaplanowany, nie zbudowany) | — | — | — | przerwy w danych; test_config_flow_heating_type.py | — | ze Smart Boilerem |
@@ -434,8 +434,8 @@ QE5) działają w tle; razem zajmują około trzech dni.
 
 **W każdym przebiegu** QZ1 sprawdza, że: SmartPI nie zgłasza błędu, każde jego ostrzeżenie jest
 na liście, rejestrator nie odrzuca żadnego atrybutu diagnostyki, formularze po polsku pokazują
-tekst, a nie surowe klucze, i żaden termostat nie liczy podwójnie po kilku przeładowaniach swojego
-wpisu.
+tekst, a nie surowe klucze, żaden termostat nie liczy podwójnie po kilku przeładowaniach swojego
+wpisu i nie ma wtedy ostrzeżenia, że termostat nadrzędny strefy nie ma już swoich dwóch urządzeń.
 
 ### 6.6 Sprawdzane bez ławki
 
@@ -443,7 +443,7 @@ wpisu.
 |---|---|---|
 | `test_qas_room_sim.py` | fizykę symulatora w porównaniu z modelem pierwszego rzędu (prostym modelem z jedną bezwładnością) i z siecią pomieszczeń symulatora w procesie testów, jego drzwi, okna, kocioł, urządzenia i reset; jego encje i usługi w Home Assistant | CI |
 | `test_qas_pack.py` | pytest nie zbiera żadnego pliku pakietu; pliki ról są aktualne i poprawne; pakiet kompiluje się i importuje bez ławki; każdy scenariusz z planu jest zarejestrowany z oczekiwanym wynikiem w jednym zdaniu i jest w tym katalogu; stan bazowy programu uruchamiającego; `compare.py`; przygotowany nauczony stan daje się wczytać | CI |
-| `test_qas_setup_flows.py` | przygotowanie każdej roli przez prawdziwe formularze Versatile Thermostat 10.5.1 i SmartPI, bez błędu w logu, a powtórzone niczego nie zmienia; ścieżki formularzy z QD1, QE1, QE2 i QE4 | lokalnie, z `SMARTPI_QAS_LOCAL=1` |
+| `test_qas_setup_flows.py` | przygotowanie każdej roli przez prawdziwe formularze Versatile Thermostat 10.5.1 i SmartPI, bez błędu w logu, a powtórzone niczego nie zmienia; role strefy z przeładowaniem każdego wpisu SmartPI, bez ostrzeżenia, że termostat nadrzędny strefy się zmienił; ścieżki formularzy z QD1, QE1, QE2 i QE4 | lokalnie, z `SMARTPI_QAS_LOCAL=1` |
 
 ### 6.7 Znane kwestie
 

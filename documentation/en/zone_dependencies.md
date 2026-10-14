@@ -162,9 +162,10 @@ flowchart TD
   main source. So a changed heating type takes effect at once. A custom response set in the zone
   form is kept. A heating type changed this way does not count as a change of the zone: if the user
   then edits only the rule, the form does not offer a reset.
-- **A changed master.** At start, the main source checks that the master still has exactly these
-  two thermostats as its devices. If not, it logs a warning. The zone keeps running as configured
-  until the form is opened again.
+- **A changed master.** At start, and when its entry is reloaded, the main source checks that the
+  master still has exactly these two thermostats as its devices. It compares them by unique ID (the
+  ID that never changes; at a reload the thermostat does not have its entity ID yet). If they
+  differ, it logs a warning. The zone keeps running as configured until the form is opened again.
 - **Removing the zone** gives each thermostat its own regulation back. The former additional source
   regulates with the model it had before it took the role. An entry that the form created for it
   stays.

@@ -167,9 +167,11 @@ flowchart TD
   effet tout de suite. Une réponse personnalisée réglée dans le formulaire de zone est conservée. Un type
   de chauffage modifié de cette façon ne compte pas comme une modification de la zone : si l'utilisateur
   ne modifie ensuite que la règle, le formulaire ne propose pas de remise à zéro.
-- **Un maître modifié.** Au démarrage, la source principale vérifie que le maître a toujours exactement
-  ces deux thermostats comme appareils. Sinon, elle écrit un avertissement dans le journal. La zone
-  continue de fonctionner comme elle est configurée jusqu'à la prochaine ouverture du formulaire.
+- **Un maître modifié.** Au démarrage, et quand son entrée est rechargée, la source principale vérifie
+  que le maître a toujours exactement ces deux thermostats comme appareils. Elle les compare par
+  identifiant unique (l'identifiant qui ne change jamais ; au rechargement, le thermostat n'a pas
+  encore son identifiant d'entité). S'ils diffèrent, elle écrit un avertissement dans le journal. La
+  zone continue de fonctionner comme elle est configurée jusqu'à la prochaine ouverture du formulaire.
 - **Supprimer la zone** rend à chaque thermostat sa propre régulation. L'ancienne source additionnelle
   régule avec le modèle qu'elle avait avant de prendre ce rôle. Une entrée que le formulaire a créée pour
   elle reste en place.

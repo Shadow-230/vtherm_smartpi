@@ -299,6 +299,56 @@ async def test_a_master_without_these_two_thermostats_is_reported(hass, caplog) 
     assert "no longer has exactly this thermostat" in caplog.text
 
 
+def _zone_as_vtherm_builds_it(hass, devices: list[str]) -> SmartPIHandler:
+    """The zone's main source, built as VTherm builds it at a reload of its entry.
+
+    VTherm calls ``init_algorithm`` from the thermostat's constructor (``post_init``) when the
+    SmartPI factory is registered: Home Assistant has not given the entity its ``entity_id`` yet,
+    only the unique id is known. A full restart does not show it: SmartPI depends on VTherm, so
+    VTherm builds its thermostats before SmartPI registers the factory; VTherm then creates the
+    handler in ``async_startup``, after Home Assistant has started, when the entity has its id.
+    """
+    from pytest_homeassistant_custom_component.common import MockConfigEntry
+
+    registry = er.async_get(hass)
+    registry.async_get_or_create("climate", VT_DOMAIN, "fake-smartpi", suggested_object_id="fake_smartpi")
+    floor = registry.async_get_or_create("climate", VT_DOMAIN, "vt-floor", suggested_object_id="floor")
+    registry.async_get_or_create("climate", VT_DOMAIN, "vt-other", suggested_object_id="other")
+    vt_entry = MockConfigEntry(domain="test_vtherm", data={"underlying_entity_ids": devices})
+    vt_entry.add_to_hass(hass)
+    master = registry.async_get_or_create("climate", VT_DOMAIN, "vt-master", suggested_object_id="master", config_entry=vt_entry)
+
+    thermostat = FakeThermostatRuntime()
+    thermostat.hass = hass
+    thermostat.entity_id = None
+    thermostat.entry_infos = {CONF_SMART_PI_DEPENDENCIES: [{**_source_item(floor.id), "zone_master": master.id}]}
+    handler = SmartPIHandler(thermostat)
+    handler.init_algorithm()
+    thermostat.entity_id = "climate.fake_smartpi"
+    return handler
+
+
+async def test_a_master_with_exactly_these_two_thermostats_is_not_reported(hass, caplog) -> None:
+    """At a reload the thermostat has no entity id yet: its devices are compared by unique id."""
+    _zone_as_vtherm_builds_it(hass, ["climate.floor", "climate.fake_smartpi"])
+    assert "no longer has exactly this thermostat" not in caplog.text
+
+
+async def test_a_master_with_another_device_is_reported_at_a_reload(hass, caplog) -> None:
+    _zone_as_vtherm_builds_it(hass, ["climate.fake_smartpi", "climate.floor", "climate.other"])
+    assert "no longer has exactly this thermostat" in caplog.text
+
+
+async def test_a_master_without_the_source_is_reported_at_a_reload(hass, caplog) -> None:
+    _zone_as_vtherm_builds_it(hass, ["climate.fake_smartpi", "climate.other"])
+    assert "no longer has exactly this thermostat" in caplog.text
+
+
+async def test_a_master_device_missing_from_the_registry_is_reported(hass, caplog) -> None:
+    _zone_as_vtherm_builds_it(hass, ["climate.fake_smartpi", "climate.floor_removed"])
+    assert "no longer has exactly this thermostat" in caplog.text
+
+
 async def test_a_source_entry_change_reloads_its_zone_s_main_too(hass) -> None:
     from pytest_homeassistant_custom_component.common import MockConfigEntry
 

@@ -215,7 +215,7 @@ The results are in [Water input, §4.4](water_input.md#44-results-simulation).
 | `test_smartpi_split.py` | the split rules and the allocation loop |
 | `test_smartpi_source_link.py` | the link between the two thermostats: commands, cycles, a main source that stops responding, the power limit |
 | `test_smartpi_dependency_model_source.py` | learning blocks, the learning clock and its timeout, the brake, the faster recovery after a night, a restart, cooling |
-| `test_smartpi_dependencies_handler.py` | heating types read from both entries, the reset requested from a form, a changed master thermostat |
+| `test_smartpi_dependencies_handler.py` | heating types read from both entries, the reset requested from a form, a changed master thermostat (its devices compared by unique ID, also at a reload of the entry, when the thermostat has no entity ID yet) |
 | `test_config_flow_zone.py` | the zone form: the master thermostat and its checks, the recommendation, moving the main source, the other thermostat's entry, a custom delay and lag, removal, the reset step |
 
 ### 4.5 Water
@@ -403,7 +403,7 @@ to be decided, and none of it is built.
 | QE5s | For 45 minutes the zone (or the independent pair) regulates and nothing logs an error, the floor following the radiator in the zone. Short variant of QE5. | 3 `zone`, 4 `zone-ref` | 45 min | no | Z1 compared | yes | without Smart Boiler |
 | QE6 | When VTherm's power manager sheds the zone's devices, a shed main source still sends its command and a shed additional source stays off. | 5 `zone-valve` | 60 min | no | power shedding | no | without Smart Boiler |
 | QE7 | Over 2 h the valve, as the additional source, follows the main source's command. | 5 `zone-valve` | 2 h | no | valve as additional source | no | without Smart Boiler |
-| QZ1 | SmartPI logs no error and each of its warnings is listed, the recorder refuses none of the diagnostics' attributes, the forms read in Polish show text and not keys, and after three reloads of an entry its thermostat does not calculate twice. | all | 25 min | no | — | yes | without Smart Boiler |
+| QZ1 | SmartPI logs no error and each of its warnings is listed, the recorder refuses none of the diagnostics' attributes, the forms read in Polish show text and not keys, and after three reloads of an entry its thermostat does not calculate twice and no zone's master is reported as changed. | all | 25 min | no | — | yes | without Smart Boiler |
 | QW1 | Water data present for 48 h: source live, a within 0.5–1.2 of the truth and over 1.5 times the value learned without the data (planned, not built) | — | — | — | water with and without data | — | with Smart Boiler |
 | QW2 | Hot water with priority (dhw_active): φ = 0, command and integral held (planned, not built) | — | — | — | hot water | — | with Smart Boiler |
 | QW3 | Data missing for 2 h, then for good: the long average kept, then φ = 1 and the repair water_data_gone once; its fix resets the model (planned, not built) | — | — | — | gaps; test_config_flow_heating_type.py | — | with Smart Boiler |
@@ -418,8 +418,9 @@ The minimum set takes, per instance, from about 1 h (instances 4, 5 and 8) to ab
 run detached; together they take about three days.
 
 **In every run** QZ1 checks: no error from SmartPI, each of its warnings listed, no attribute of
-the diagnostics refused by the recorder, the forms in Polish showing text and not raw keys, and no
-thermostat calculating twice after several reloads of its entry.
+the diagnostics refused by the recorder, the forms in Polish showing text and not raw keys, no
+thermostat calculating twice after several reloads of its entry, and no warning then that a zone's
+master no longer has its two devices.
 
 ### 6.6 Checked without the bench
 
@@ -427,7 +428,7 @@ thermostat calculating twice after several reloads of its entry.
 |---|---|---|
 | `test_qas_room_sim.py` | the simulator's physics against the first-order model and the in-process network, its doors, windows, boiler, devices and reset; its entities and services in Home Assistant | CI |
 | `test_qas_pack.py` | no file of the pack collected by pytest; the role files up to date and valid; the pack compiles and imports without the bench; every scenario of the plan registered with a one-sentence expectation and in this catalogue; the runner's base; `compare.py`; the seeded state loads | CI |
-| `test_qas_setup_flows.py` | every role's setup through the real forms of Versatile Thermostat 10.5.1 and SmartPI, with no error logged, and again with no change; the form paths of QD1, QE1, QE2 and QE4 | locally, with `SMARTPI_QAS_LOCAL=1` |
+| `test_qas_setup_flows.py` | every role's setup through the real forms of Versatile Thermostat 10.5.1 and SmartPI, with no error logged, and again with no change; the zone roles with each SmartPI entry reloaded, with no warning that the zone's master changed; the form paths of QD1, QE1, QE2 and QE4 | locally, with `SMARTPI_QAS_LOCAL=1` |
 
 ### 6.7 Known points
 

@@ -225,7 +225,7 @@ Les résultats sont dans [Entrée eau, §4.4](water_input.md#44-résultats-simul
 | `test_smartpi_split.py` | les règles de répartition et la boucle d'allocation |
 | `test_smartpi_source_link.py` | le lien entre les deux thermostats : commandes, cycles, une source principale qui ne répond plus, le plafond de puissance |
 | `test_smartpi_dependency_model_source.py` | les blocs d'apprentissage, l'horloge d'apprentissage et son délai maximal, le freinage, le rattrapage plus rapide après une nuit, un redémarrage, le refroidissement |
-| `test_smartpi_dependencies_handler.py` | les types de chauffage lus dans les deux entrées, la remise à zéro demandée depuis un formulaire, un thermostat maître modifié |
+| `test_smartpi_dependencies_handler.py` | les types de chauffage lus dans les deux entrées, la remise à zéro demandée depuis un formulaire, un thermostat maître modifié (ses appareils comparés par identifiant unique, aussi au rechargement de l'entrée, quand le thermostat n'a pas encore d'identifiant d'entité) |
 | `test_config_flow_zone.py` | le formulaire de la zone : le thermostat maître et ses vérifications, la recommandation, le déplacement de la source principale, l'entrée de l'autre thermostat, un retard et une inertie personnalisés, la suppression, l'étape de remise à zéro |
 
 ### 4.5 Eau
@@ -425,7 +425,7 @@ interface réservé aux tests) reste à décider, et rien n'en est construit.
 | QE5s | Pendant 45 minutes, la zone (ou la paire indépendante) régule et rien n'enregistre d'erreur dans le journal, le plancher suivant le radiateur dans la zone. Variante courte de QE5. | 3 `zone`, 4 `zone-ref` | 45 min | non | Z1 comparé | oui | sans Smart Boiler |
 | QE6 | Quand le gestionnaire de puissance de VTherm déleste les appareils de la zone, une source principale délestée envoie quand même sa commande et une source additionnelle délestée reste éteinte. | 5 `zone-valve` | 60 min | non | délestage | non | sans Smart Boiler |
 | QE7 | Pendant 2 h, la vanne, comme source additionnelle, suit la commande de la source principale. | 5 `zone-valve` | 2 h | non | vanne comme source additionnelle | non | sans Smart Boiler |
-| QZ1 | SmartPI n'écrit aucune erreur dans le journal et chacun de ses avertissements est listé, le Recorder ne refuse aucun des attributs des diagnostics, les formulaires lus en polonais montrent du texte et pas des clés, et après trois rechargements d'une entrée, son thermostat ne calcule pas deux fois. | toutes | 25 min | non | — | oui | sans Smart Boiler |
+| QZ1 | SmartPI n'écrit aucune erreur dans le journal et chacun de ses avertissements est listé, le Recorder ne refuse aucun des attributs des diagnostics, les formulaires lus en polonais montrent du texte et pas des clés, et après trois rechargements d'une entrée, son thermostat ne calcule pas deux fois et aucun maître de zone n'est signalé comme modifié. | toutes | 25 min | non | — | oui | sans Smart Boiler |
 | QW1 | Données d'eau présentes pendant 48 h : source live, a dans 0.5–1.2 de la vraie valeur et plus de 1.5 fois la valeur apprise sans les données (prévu, non construit) | — | — | — | eau avec et sans données | — | avec Smart Boiler |
 | QW2 | Eau chaude sanitaire prioritaire (dhw_active) : φ = 0, commande et intégrale maintenues (prévu, non construit) | — | — | — | eau chaude sanitaire | — | avec Smart Boiler |
 | QW3 | Données absentes pendant 2 h, puis pour de bon : la moyenne longue gardée, puis φ = 1 et la réparation water_data_gone une seule fois ; sa résolution remet le modèle à zéro (prévu, non construit) | — | — | — | interruptions ; test_config_flow_heating_type.py | — | avec Smart Boiler |
@@ -441,8 +441,9 @@ QD6, QE5) tournent détachés ; ensemble, ils prennent environ trois jours.
 
 **À chaque lancement**, QZ1 vérifie : aucune erreur de SmartPI, chacun de ses avertissements listé,
 aucun attribut des diagnostics refusé par le Recorder, les formulaires en polonais qui montrent du
-texte et pas des clés brutes, et aucun thermostat qui calcule deux fois après plusieurs rechargements
-de son entrée.
+texte et pas des clés brutes, aucun thermostat qui calcule deux fois après plusieurs rechargements
+de son entrée, et alors aucun avertissement indiquant que le maître d'une zone n'a plus ses deux
+appareils.
 
 ### 6.6 Vérifié sans le banc
 
@@ -450,7 +451,7 @@ de son entrée.
 |---|---|---|
 | `test_qas_room_sim.py` | la physique du simulateur comparée au modèle du premier ordre et au réseau de pièces du simulateur dans le processus de test, ses portes, fenêtres, chaudière, appareils et sa réinitialisation ; ses entités et services dans Home Assistant | CI |
 | `test_qas_pack.py` | aucun fichier du paquet collecté par pytest ; les fichiers des rôles à jour et valides ; le paquet se compile et s'importe sans le banc ; chaque scénario du plan enregistré avec une attente d'une phrase, et présent dans ce catalogue ; la base du lanceur ; `compare.py` ; l'état de départ préparé se charge | CI |
-| `test_qas_setup_flows.py` | la mise en place de chaque rôle par les vrais formulaires de Versatile Thermostat 10.5.1 et de SmartPI, sans aucune erreur dans le journal, puis une deuxième fois sans aucun changement ; les chemins de formulaires de QD1, QE1, QE2 et QE4 | en local, avec `SMARTPI_QAS_LOCAL=1` |
+| `test_qas_setup_flows.py` | la mise en place de chaque rôle par les vrais formulaires de Versatile Thermostat 10.5.1 et de SmartPI, sans aucune erreur dans le journal, puis une deuxième fois sans aucun changement ; les rôles de zone avec chaque entrée SmartPI rechargée, sans avertissement indiquant que le maître de la zone a changé ; les chemins de formulaires de QD1, QE1, QE2 et QE4 | en local, avec `SMARTPI_QAS_LOCAL=1` |
 
 ### 6.7 Points connus
 

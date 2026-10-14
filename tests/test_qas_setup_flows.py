@@ -219,6 +219,29 @@ async def test_role_sets_up_through_the_forms(
     ], api.lines[before:]
 
 
+MASTER_WARNING = "no longer has exactly this thermostat"
+
+
+@pytest.mark.parametrize("expected_lingering_timers", [True])
+@pytest.mark.parametrize("name", ["zone", "zone-ref", "zone-valve"])
+async def test_a_zone_reloaded_gives_no_false_master_warning(
+    hass: HomeAssistant, caplog: pytest.LogCaptureFixture, name: str
+) -> None:
+    """The zone's forms and a reload of each SmartPI entry rebuild the thermostats as VTherm does
+    (the algorithm before the entity id): the zone's master, with exactly its two devices, is not
+    reported."""
+    caplog.set_level(logging.WARNING)
+    role = ROLES[name]
+    api = await _start(hass, role)
+    await run_stages(api, role, _stored(hass))
+    for title in role.smartpi_titles:
+        assert await hass.config_entries.async_reload(_entry_id(hass, SMARTPI, title))
+        await hass.async_block_till_done()
+
+    warnings = [r.getMessage() for r in caplog.records if MASTER_WARNING in r.getMessage()]
+    assert not warnings, warnings
+
+
 # --- the scenarios' own flows ------------------------------------------------------------------
 
 

@@ -167,9 +167,11 @@ flowchart TD
   odpowiedź ustawiona w formularzu strefy zostaje zachowana. Rodzaj ogrzewania zmieniony w ten
   sposób nie liczy się jako zmiana strefy: jeśli użytkownik potem zmieni tylko regułę, formularz
   nie zaproponuje resetu.
-- **Zmieniony termostat nadrzędny.** Przy starcie główne źródło sprawdza, czy termostat nadrzędny
-  nadal ma jako urządzenia dokładnie te dwa termostaty. Jeśli nie, zapisuje ostrzeżenie w logu.
-  Strefa działa dalej tak, jak ją skonfigurowano, aż do ponownego otwarcia formularza.
+- **Zmieniony termostat nadrzędny.** Przy starcie i przy przeładowaniu swojego wpisu główne źródło
+  sprawdza, czy termostat nadrzędny nadal ma jako urządzenia dokładnie te dwa termostaty. Porównuje
+  je po unikalnym ID (identyfikatorze, który się nie zmienia; przy przeładowaniu termostat nie ma
+  jeszcze ID encji). Jeśli się różnią, zapisuje ostrzeżenie w logu. Strefa działa dalej tak, jak ją
+  skonfigurowano, aż do ponownego otwarcia formularza.
 - **Usunięcie strefy** przywraca każdemu termostatowi jego własną regulację. Dawne dodatkowe
   źródło reguluje z modelem, który miało, zanim przejęło tę rolę. Wpis, który formularz dla
   niego utworzył, zostaje.

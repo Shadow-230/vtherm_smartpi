@@ -4,6 +4,13 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+- Fix a false warning about a zone's master. After a zone was saved, or any SmartPI entry
+  was reloaded, the log said that the zone's master "no longer has exactly this thermostat
+  and ... as its devices", although it had exactly these two. At a reload, Versatile
+  Thermostat builds SmartPI before Home Assistant gives the thermostat its entity ID, so
+  the check compared the master's devices with an empty ID. The devices are now compared
+  by unique ID. A full restart did not show it: there, SmartPI is set up after Versatile
+  Thermostat has built its thermostats, and starts later, once they have their IDs.
 - Add the QAS test pack (`tests/qas/`): tests on a real Home Assistant, run on the bench's eight
   test instances, for the set without Smart Boiler. It holds a room simulator as a Home
   Assistant integration (its physics is now the in-process simulator's file, which
