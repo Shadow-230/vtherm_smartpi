@@ -1437,7 +1437,7 @@ class SmartPIOptionsFlow(OptionsFlow):
         return self.async_create_entry(title="", data=data)
 
     async def async_step_source_role(self, user_input: dict[str, Any] | None = None):
-        """A thermostat working as a zone's additional source: its delays, cycle restart and heating type."""
+        """A thermostat working as a zone's additional source: its activation delays, heating type and valve curve."""
         defaults = self._current_options()
         is_valve_target = self._is_valve_target_entry()
         if user_input is not None:

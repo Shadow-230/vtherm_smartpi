@@ -13,8 +13,9 @@ The current codebase is built around three guiding ideas:
 This document describes the behavior that is actually implemented in the current SmartPI code.
 
 Zone dependencies (heat exchanged with neighbouring zones, a second heat source in the zone)
-extend the model with known inputs at a single substitution point; they are described in
-[Zone dependencies and a second heat source](zone_dependencies.md).
+extend the model with known inputs at a single substitution point; in a zone with two heat
+sources SmartPI also takes `a` and `b` from the zone's fit and the other thermostat follows its
+command. They are described in [Zone dependencies and a second heat source](zone_dependencies.md).
 
 With water heating, the temperature of the water reaching the emitter (from the Smart Boiler
 plugin) turns the command into power at a reference water; see [Water input](water_input.md).
@@ -65,6 +66,10 @@ The value effectively injected into the controller is `u_ff_eff + u_pi`, then it
 - rate limiting,
 - anti-windup,
 - cycle constraints and protections.
+
+With water heating, this value is power at a reference water: the emitter gets
+`power / max(φ, 0.05)` before the valve curve and the output is capped at
+`max_on_percent × max(φ, 0.05)`; see [Water input, §3.4](water_input.md#34-use-in-smartpi).
 
 ---
 
@@ -144,6 +149,13 @@ $$ a = \frac{dT/dt + b \cdot (T_{int} - T_{ext})}{u} $$
 Histories are filtered through median/MAD. The published magnitude of `a` is
 bounded while preserving the mode sign; `b` remains strictly positive.
 
+With zone dependencies, each window is corrected by the heat of the known inputs and
+some contexts (a neighbour's door moving, a neighbour's open window) pause learning; in
+a zone with two heat sources, SmartPI starts from the zone's fit and holds its `a`, `b`
+and the evidence the bootstrap counts. See
+[Zone dependencies, §2.3](zone_dependencies.md#23-where-the-model-is-used) and
+[§6.5](zone_dependencies.md#65-learning).
+
 ### 3.5 Dead-time estimation
 
 `DeadTimeEstimator` implements an independent FSM. Its channels describe the
@@ -206,6 +218,10 @@ This is combined with:
 - `u_ff2`: slow `FFTrim` correction,
 - `ABConfidence`: confidence policy for `a/b`,
 - fallback in `AB_BAD` mode to a zero feed-forward after `AB_BAD_PERSIST_CYCLES = 3`.
+
+With zone dependencies, the control law uses the composed loss coefficient `b_eff` and
+reference temperature `T_ref` in place of `b` and `T_ext`; see
+[Zone dependencies, §2.2](zone_dependencies.md#22-composition).
 
 ### 4.3 FF3
 
@@ -375,7 +391,8 @@ Additional protections currently present are:
 - tracking anti-windup,
 - signed integral guard during resumes, catch-up phases, and setpoint changes,
 - explicit `I:HOLD` during the post-resume `deadtime_heat` phase for `window_resume` and `power_shedding_resume` in heating mode,
-- deadband hold logic.
+- deadband hold logic,
+- with water heating, the `no_heat` hold: the command and the integral during domestic hot water, the integral only while the water brings next to no heat; see [Water input, §3.4](water_input.md#34-use-in-smartpi).
 
 ### 4.6 Auto-calibration
 
@@ -449,6 +466,10 @@ Supervisor decisions are published on the Home Assistant event bus. Every event 
 | `tint_filter.py`       | adaptive indoor-temperature filtering                       |
 | `timestamp_utils.py`   | monotonic / wall-clock conversion                           |
 
+The modules of zone dependencies, the zone with two heat sources and the water input are
+listed in [Zone dependencies, §3](zone_dependencies.md#3-components) and
+[Water input, §4](water_input.md#4-components).
+
 ### 5.3 Internal composition of `SmartPI`
 
 Components instantiated by `SmartPI.__init__()` notably include:
@@ -521,6 +542,10 @@ The current payload from `SmartPI.save_state()` notably contains:
 
 Loading can also read `ac_state`, but that block is not currently emitted again by `save_state()`.
 
+Only when used, the payload also carries `dependencies` and `dependency_reset_token`
+([Zone dependencies, §8](zone_dependencies.md#8-persistent-state)) and `water`
+([Water input, §7](water_input.md#7-persistent-state)).
+
 Only the learned trim remains persistent. Ownership windows, pending
 proposals, and integral transfers are transient; after restart the observer is
 rebuilt and the existing three-cycle trim freeze still applies.
@@ -553,8 +578,11 @@ internal and are used for model quality and warm-up decisions. When the thermal
 twin is usable, its public diagnostic fields are exposed under `analysis.twin`.
 
 With zone dependencies configured, `live` also carries a `dependencies` block
-(composed model, learning gate, one entry per neighbour); see
-[Zone dependencies, §9](zone_dependencies.md#9-diagnostics).
+(composed model, learning gate, one entry per neighbour, and `second_source` for the main
+source of a zone with two heat sources; a thermostat working as an additional source shows
+only its role); see [Zone dependencies, §9](zone_dependencies.md#9-diagnostics). For a water
+heating type, `live` also carries a `water` block; see
+[Water input, §8](water_input.md#8-diagnostics).
 
 `feedforward.fftrim.command_ownership` exposes the latest binding status,
 rejection reason, request sequence, requested/projected/realized powers and

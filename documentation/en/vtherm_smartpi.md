@@ -102,7 +102,7 @@ To add SmartPI to an additional thermostat, open the SmartPI integration configu
 
 The parameters available are the same as for global defaults. Any parameter set here overrides the corresponding global default for the selected thermostat only.
 
-The options of a per-thermostat entry open a menu: the regulator settings, the zone with two heat sources (a room heated by two SmartPI thermostats, for example a radiator and an underfloor loop, set up from the master thermostat whose devices they are), the zone dependencies (neighbouring zones that exchange heat with this one, through a door or permanently) and, for a linearized valve, the valve curve. How SmartPI learns and uses them is described in [Zone dependencies and a second heat source](zone_dependencies.md).
+The options of a per-thermostat entry open a menu: the regulator settings, the zone with two heat sources (a room heated by two SmartPI thermostats, for example a radiator and an underfloor loop, set up from the master thermostat whose devices they are), the zone dependencies (neighbouring zones that exchange heat with this one, through a door or permanently) and, for a linearized valve, the valve curve. A thermostat that works as a zone's additional source opens instead a form showing where its zone is set up and the settings that still apply to it (its activation delays, its heating type and the valve curve). How SmartPI learns and uses them is described in [Zone dependencies and a second heat source](zone_dependencies.md).
 
 The regulator settings include the **heating type** (water radiator by default, water underfloor heating, electric heating mat, fast electric heater). For a water type, SmartPI uses the supply water temperature that the Smart Boiler plugin publishes for the thermostat's circuit, when it is available; without it nothing changes. See [Water input](water_input.md).
 
@@ -240,6 +240,8 @@ What to expect during bootstrap:
 - `model.confidence` reports `ab_bootstrap` until the first thermal model is available,
 - speed depends on the quality of real observations, not only on elapsed time.
 
+With zone dependencies, a neighbour's moving door or open window pauses learning, and in a zone with two heat sources SmartPI starts from the zone's joint fit instead; see [Zone dependencies, §6.5](zone_dependencies.md#65-learning).
+
 ### Stable phase
 
 When the thermal model becomes reliable, SmartPI switches to its normal regulation mode.
@@ -303,6 +305,8 @@ Do not try to tune several parameters at once during the first learning period. 
 | **Valve opening at knee**      | Physical valve opening at the slope change.                                                       | `15%`         |
 | **Maximum valve opening**      | Maximum allowed opening when linearization is enabled.                                            | `100%`        |
 
+The **heating type** (default: water radiator) is described in [Water input, §2](water_input.md#2-settings).
+
 ### PWM cycle restart on band transitions
 
 When this option is disabled, a deadband or near-band transition updates the next SmartPI command but does not interrupt the PWM cycle already in progress. This is the recommended behavior for short cycles, because restarting cycles too often can create unnecessary switching.
@@ -344,7 +348,9 @@ Other useful blocks under `live`:
 - `feedforward`: feed-forward and FF3 status,
 - `setpoint`: filtered setpoint and landing information,
 - `autocalib`: automatic supervision state,
-- `calibration`: forced calibration state.
+- `calibration`: forced calibration state,
+- `dependencies`: zone dependencies and the zone with two heat sources, when configured ([Zone dependencies, §9](zone_dependencies.md#9-diagnostics)),
+- `water`: the water input, for a water heating type ([Water input, §8](water_input.md#8-diagnostics)).
 
 In normal mode, the `setpoint` block can show:
 
@@ -394,6 +400,8 @@ The current setting is available as `specific_states.smartpi_learning_enabled` o
 Use this when the thermal behavior of the room has significantly changed, for example after insulation work or after changing emitters.
 
 This service clears SmartPI learning and forces a return to bootstrap mode.
+
+It also clears what zone dependencies have learned (the exchanges with neighbours, the fit of a zone with two heat sources) and keeps the averages of the water input. The reset offered by the zone form and by the water input's repair is this same reset; see [Zone dependencies, §7](zone_dependencies.md#7-resetting-the-learned-model).
 
 ### `force_smartpi_calibration`
 

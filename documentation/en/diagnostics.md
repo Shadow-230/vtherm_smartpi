@@ -92,18 +92,24 @@ timing.
 
 ## Zone dependencies
 
-When a thermostat entry has zone dependencies (neighbouring zones), `live` gains a
-`dependencies` block: the composed model (`b_eff`, `t_ref`), the learning gate, the
-window reaction applied, and one entry per neighbour with its learned exchange. The
-block is absent without dependencies. Its fields are listed in
+When a thermostat has zone dependencies (neighbouring zones, or a zone with two heat
+sources), `live` gains a `dependencies` block: the composed model (`b_eff`, `t_ref`),
+the learning gate, the window reaction applied, one entry per neighbour with its learned
+exchange and, for the main source of a zone with two heat sources, a `second_source`
+block (the additional source's command and heat, its power cap, the recovery boost, the
+zone's fit). A thermostat working as another's additional source publishes only its
+role, the main source and the command it applies. The block is absent without
+dependencies. Its fields are listed in
 [Zone dependencies, §9](zone_dependencies.md#9-diagnostics).
 
 ## Water input
 
 For a thermostat whose heating type uses water, `live` gains a `water` block: the factor
-applied, its source, the averaged supply water, the last reasons from Smart Boiler, the
-no-heat hold and the "water too cold" flag. Its fields are listed in
-[Water input, §8](water_input.md#8-diagnostics).
+applied, its source, the heating type, the averaged supply water, the last reasons from
+Smart Boiler, the hot-water hold (`no_heat`), the low-heat integral hold (`low_heat`) and
+the "water too cold" flag. With water data the `power` values are power at the reference
+water, while `current_cycle_percent` and `next_cycle_percent` are the command sent to the
+emitter. Its fields are listed in [Water input, §8](water_input.md#8-diagnostics).
 
 ## Consumer paths
 
