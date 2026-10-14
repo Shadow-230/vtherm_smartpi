@@ -1,4 +1,4 @@
-# QAS role 'neighbours', instance 2: SmartPI QAS neighbours.
+# QAS role 'neighbours': SmartPI QAS neighbours.
 # Written by tests/qas/config/build.py from tests/qas/roles.py; do not edit by hand.
 homeassistant:
   name: SmartPI QAS neighbours

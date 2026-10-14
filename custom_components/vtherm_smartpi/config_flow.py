@@ -34,11 +34,37 @@ from .const import (
     CONF_SMART_PI_USE_FF3,
     CONF_SMART_PI_USE_SETPOINT_FILTER,
     CONF_TARGET_VTHERM,
+    BOILER_SIGNAL_KEYS,
+    CONF_SMART_PI_BOILER_CALL_SOURCE,
+    CONF_SMART_PI_BOILER_CALLED_ENTITY,
+    CONF_SMART_PI_BOILER_REASON_ENTITY,
+    CONF_SMART_PI_BOILER_SIGNALS,
+    CONF_SMART_PI_DHW_ENTITY,
+    CONF_SMART_PI_FAULT_ENTITY,
+    CONF_SMART_PI_HEAT_AVAILABLE_ENTITY,
+    CONF_SMART_PI_MODEL_KEPT_FOR_WATER,
+    CONF_SMART_PI_SUPPLY_ENTITY,
+    CONF_SMART_PI_WATER_SOURCE,
     DEFAULT_OPTIONS,
     DOMAIN,
     PROP_FUNCTION_SMART_PI,
 )
-from .smartpi.const import HEATING_TYPES
+from .heating_inputs import (
+    SIGNALS_DEFAULTS,
+    SIGNALS_OWN,
+    SOURCE_ENTITIES,
+    SOURCE_NONE,
+    chosen_call_source,
+    chosen_water_source,
+    config_from_options,
+    provider_name,
+    provider_names,
+    provider_source,
+    resolve_entity,
+    stored_entity,
+)
+from .smartpi.boiler_call import SOURCE_VTHERM
+from .smartpi.const import HEATING_TYPES, WATER_EMITTERS
 from .smartpi.dependencies import (
     KEY_LEAD_BAND,
     KEY_LEAD_EMITTER,
@@ -96,6 +122,19 @@ FIELD_MASTER = "master"
 FIELD_MAIN_SOURCE = "main_source"
 FIELD_CUSTOM_RESPONSE = "custom_response"
 FIELD_RESET_MODEL = "reset_model"
+# Versatile Thermostat's key: the thermostat counts for VT's central boiler.
+VT_USED_BY_CENTRAL_BOILER = "used_by_controls_central_boiler"
+# The signals of the boiler, by the inputs that use them.
+_WATER_SIGNAL_KEYS = (CONF_SMART_PI_HEAT_AVAILABLE_ENTITY, CONF_SMART_PI_DHW_ENTITY, CONF_SMART_PI_FAULT_ENTITY)
+_CALL_SIGNAL_KEYS = (CONF_SMART_PI_BOILER_CALLED_ENTITY, CONF_SMART_PI_BOILER_REASON_ENTITY, CONF_SMART_PI_FAULT_ENTITY)
+# The entity domain of each signal.
+_SIGNAL_DOMAINS = {
+    CONF_SMART_PI_HEAT_AVAILABLE_ENTITY: "binary_sensor",
+    CONF_SMART_PI_DHW_ENTITY: "binary_sensor",
+    CONF_SMART_PI_FAULT_ENTITY: "binary_sensor",
+    CONF_SMART_PI_BOILER_CALLED_ENTITY: "binary_sensor",
+    CONF_SMART_PI_BOILER_REASON_ENTITY: "sensor",
+}
 # The rule's parameter, in percent, by rule: key, default, minimum, maximum.
 _RULE_PARAMETER = {
     RULE_TOGETHER: (KEY_SPLIT_RATIO, 100.0, 10.0, 1000.0),
@@ -523,6 +562,9 @@ class SmartPIConfigFlow(ConfigFlow, domain=DOMAIN):
             data.update(global_entry.data)
             data.update(global_entry.options)
         data.pop(CONF_SMART_PI_DEPENDENCIES, None)
+        # The boiler's signals stay in the defaults: the new entry takes them from there.
+        for key in (*BOILER_SIGNAL_KEYS, CONF_SMART_PI_BOILER_SIGNALS):
+            data.pop(key, None)
         data[CONF_TARGET_VTHERM] = target_unique_id
         registry = er.async_get(self.hass)
         entity_id = registry.async_get_entity_id(CLIMATE_DOMAIN, VT_DOMAIN, target_unique_id)
@@ -568,6 +610,9 @@ class SmartPIOptionsFlow(OptionsFlow):
         self._zone_snapshot: tuple = ()
         self._pending_items: list[DependencyItem] = []
         self._pending_base: str = ""
+        # The water and boiler sources being chosen, and whether the call is part of the form.
+        self._heating_pending: dict[str, Any] = {}
+        self._heating_call_shown: bool = True
 
     def _is_valve_target_entry(self) -> bool:
         """Return whether the edited entry targets a valve thermostat."""
@@ -599,16 +644,26 @@ class SmartPIOptionsFlow(OptionsFlow):
         the zone is configured and only the settings it still uses.
         """
         if self._config_entry.data.get(CONF_TARGET_VTHERM) is None:
-            return await self._async_settings_form("init", user_input)
+            del user_input
+            return self.async_show_menu(step_id="init", menu_options=["settings", "boiler_signals"])
         own = self._target_registry_entry()
         if self._main_naming(own.id if own is not None else None) is not None:
+            if self._uses_water():
+                return await self.async_step_source_menu()
             return await self.async_step_source_role()
         return await self.async_step_thermostat_menu()
+
+    async def async_step_source_menu(self, user_input: dict[str, Any] | None = None):
+        """The additional source of a zone heated by water: its settings, or its water data."""
+        del user_input
+        return self.async_show_menu(step_id="source_menu", menu_options=["source_role", "heating_inputs"])
 
     async def async_step_thermostat_menu(self, user_input: dict[str, Any] | None = None):
         """Offer the option groups of a thermostat entry."""
         del user_input
         menu_options = ["settings", "zone", "dependencies"]
+        if self._uses_water():
+            menu_options.append("heating_inputs")
         if self._is_valve_target_entry() and self._current_options().get(
             CONF_SMART_PI_ENABLE_VALVE_LINEARIZATION
         ):
@@ -616,7 +671,7 @@ class SmartPIOptionsFlow(OptionsFlow):
         return self.async_show_menu(step_id="thermostat_menu", menu_options=menu_options)
 
     async def async_step_settings(self, user_input: dict[str, Any] | None = None):
-        """Edit the regulator settings of a thermostat entry."""
+        """Edit the regulator settings of a thermostat entry or of the defaults."""
         return await self._async_settings_form("settings", user_input)
 
     async def _async_settings_form(self, step_id: str, user_input: dict[str, Any] | None):
@@ -1442,6 +1497,207 @@ class SmartPIOptionsFlow(OptionsFlow):
         if reset:
             data[CONF_SMART_PI_RESET_TOKEN] = uuid.uuid4().hex
         return self.async_create_entry(title="", data=data)
+
+    # --- water and boiler (heating_inputs.py) -----------------------------
+
+    def _uses_water(self) -> bool:
+        """The thermostat's heating type uses the water (radiator, water floor)."""
+        return self._current_options().get(CONF_SMART_PI_HEATING_TYPE) in WATER_EMITTERS
+
+    def _is_additional_source(self) -> bool:
+        own = self._target_registry_entry()
+        return self._main_naming(own.id if own is not None else None) is not None
+
+    def _defaults_options(self) -> dict[str, Any]:
+        """The options of the "SmartPI defaults" entry."""
+        entry = next((e for e in self.hass.config_entries.async_entries(DOMAIN) if e.unique_id == DOMAIN), None)
+        return {**entry.data, **entry.options} if entry is not None else {}
+
+    def _used_by_central_boiler(self) -> bool:
+        return self._vt_config(self._target_registry_entry()).get(VT_USED_BY_CENTRAL_BOILER) is True
+
+    def _chosen_sources(self, options: dict[str, Any]) -> tuple[str, str]:
+        """The water source and the call source in the options (the defaults without a choice)."""
+        return chosen_water_source(options), chosen_call_source(options, self._used_by_central_boiler())
+
+    def _source_options(self, fixed: list[str], current: str) -> list[selector.SelectOptionDict]:
+        """The sources to choose from: the fixed ones and the registered providers. A chosen
+        provider that is no longer registered stays, marked as not available."""
+        options = [selector.SelectOptionDict(value=value, label=value) for value in fixed]
+        names = provider_names(self.hass)
+        options += [selector.SelectOptionDict(value=provider_source(name), label=name) for name in names]
+        missing = provider_name(current)
+        if missing is not None and missing not in names:
+            options.append(selector.SelectOptionDict(value=current, label=f"{missing} (not available)"))
+        return options
+
+    def _source_selector(self, fixed: list[str], current: str, translation_key: str) -> selector.SelectSelector:
+        return selector.SelectSelector(
+            selector.SelectSelectorConfig(
+                options=self._source_options(fixed, current),
+                mode=selector.SelectSelectorMode.DROPDOWN,
+                translation_key=translation_key,
+            )
+        )
+
+    async def async_step_heating_inputs(self, user_input: dict[str, Any] | None = None):
+        """Choose where the water data and the boiler's call come from.
+
+        The additional source of a zone chooses its water data only: its learning
+        is paused while it follows the main source.
+        """
+        current = self._current_options()
+        self._heating_call_shown = not self._is_additional_source()
+        water, call = self._chosen_sources(current)
+        if user_input is not None:
+            pending = dict(current)
+            pending[CONF_SMART_PI_WATER_SOURCE] = user_input[CONF_SMART_PI_WATER_SOURCE]
+            if self._heating_call_shown:
+                pending[CONF_SMART_PI_BOILER_CALL_SOURCE] = user_input[CONF_SMART_PI_BOILER_CALL_SOURCE]
+            self._heating_pending = pending
+            if self._heating_signal_keys() or pending[CONF_SMART_PI_WATER_SOURCE] == SOURCE_ENTITIES:
+                return await self.async_step_heating_entities()
+            return self._heating_finish()
+        schema: dict[Any, Any] = {
+            vol.Required(CONF_SMART_PI_WATER_SOURCE, default=water): self._source_selector(
+                [SOURCE_NONE, SOURCE_ENTITIES], water, "water_source"
+            )
+        }
+        if self._heating_call_shown:
+            fixed = [SOURCE_NONE]
+            if self._used_by_central_boiler() or call == SOURCE_VTHERM:
+                fixed.append(SOURCE_VTHERM)
+            fixed.append(SOURCE_ENTITIES)
+            schema[vol.Required(CONF_SMART_PI_BOILER_CALL_SOURCE, default=call)] = self._source_selector(
+                fixed, call, "boiler_call_source"
+            )
+        return self.async_show_form(step_id="heating_inputs", data_schema=vol.Schema(schema))
+
+    def _heating_signal_keys(self) -> list[str]:
+        """The boiler's signals the chosen sources read from entities, in the form's order."""
+        pending = self._heating_pending
+        keys: list[str] = []
+        if pending.get(CONF_SMART_PI_WATER_SOURCE) == SOURCE_ENTITIES:
+            keys += _WATER_SIGNAL_KEYS
+        if self._heating_call_shown and pending.get(CONF_SMART_PI_BOILER_CALL_SOURCE) == SOURCE_ENTITIES:
+            keys += [key for key in _CALL_SIGNAL_KEYS if key not in keys]
+        return [key for key in BOILER_SIGNAL_KEYS if key in keys]
+
+    def _signals_text(self, options: dict[str, Any], keys: list[str]) -> str:
+        """The boiler's signals of an entry, as text for a form's description."""
+        lines = []
+        for key in keys:
+            entity_id = resolve_entity(self.hass, options.get(key))
+            lines.append(f"- {key.removeprefix('smart_pi_').removesuffix('_entity')}: {entity_id or '-'}")
+        return "\n".join(lines)
+
+    async def async_step_heating_entities(self, user_input: dict[str, Any] | None = None):
+        """The supply water sensor, and whether the boiler's signals are the defaults' or the thermostat's own."""
+        pending = self._heating_pending
+        water_entities = pending.get(CONF_SMART_PI_WATER_SOURCE) == SOURCE_ENTITIES
+        keys = self._heating_signal_keys()
+        if user_input is not None:
+            if water_entities:
+                pending[CONF_SMART_PI_SUPPLY_ENTITY] = stored_entity(self.hass, user_input[CONF_SMART_PI_SUPPLY_ENTITY])
+            choice = user_input.get(CONF_SMART_PI_BOILER_SIGNALS, SIGNALS_DEFAULTS)
+            pending[CONF_SMART_PI_BOILER_SIGNALS] = choice
+            if choice == SIGNALS_OWN:
+                return await self.async_step_heating_signals()
+            for key in BOILER_SIGNAL_KEYS:
+                pending.pop(key, None)
+            return self._heating_finish()
+        schema: dict[Any, Any] = {}
+        if water_entities:
+            supply = resolve_entity(self.hass, pending.get(CONF_SMART_PI_SUPPLY_ENTITY))
+            key = vol.Required(CONF_SMART_PI_SUPPLY_ENTITY, default=supply) if supply else vol.Required(CONF_SMART_PI_SUPPLY_ENTITY)
+            schema[key] = selector.EntitySelector(
+                selector.EntitySelectorConfig(domain="sensor", device_class="temperature")
+            )
+        choice = pending.get(CONF_SMART_PI_BOILER_SIGNALS)
+        schema[vol.Required(CONF_SMART_PI_BOILER_SIGNALS, default=choice if choice == SIGNALS_OWN else SIGNALS_DEFAULTS)] = (
+            selector.SelectSelector(
+                selector.SelectSelectorConfig(options=[SIGNALS_DEFAULTS, SIGNALS_OWN], translation_key="boiler_signals")
+            )
+        )
+        return self.async_show_form(
+            step_id="heating_entities",
+            data_schema=vol.Schema(schema),
+            description_placeholders={"defaults": self._signals_text(self._defaults_options(), keys)},
+        )
+
+    async def async_step_heating_signals(self, user_input: dict[str, Any] | None = None):
+        """The thermostat's own boiler signals (prefilled from the defaults)."""
+        pending = self._heating_pending
+        keys = self._heating_signal_keys()
+        if user_input is not None:
+            for key in keys:
+                value = stored_entity(self.hass, user_input.get(key))
+                if value:
+                    pending[key] = value
+                else:
+                    pending.pop(key, None)
+            return self._heating_finish()
+        # A thermostat that already has its own signals keeps them, an empty one too; one
+        # that took the defaults' starts from them.
+        had_own = self._current_options().get(CONF_SMART_PI_BOILER_SIGNALS) == SIGNALS_OWN
+        defaults = {} if had_own else self._defaults_options()
+        schema = {}
+        for key in keys:
+            value = resolve_entity(self.hass, pending.get(key) or defaults.get(key))
+            schema[vol.Optional(key, description={"suggested_value": value} if value else None)] = selector.EntitySelector(
+                selector.EntitySelectorConfig(domain=_SIGNAL_DOMAINS[key])
+            )
+        return self.async_show_form(step_id="heating_signals", data_schema=vol.Schema(schema))
+
+    def _heating_finish(self):
+        """Save the sources; a change of the water source or of its supply sensor first asks
+        about the learned model (the learned power changes units)."""
+        pending = self._heating_pending
+        if pending.get(CONF_SMART_PI_WATER_SOURCE) != SOURCE_ENTITIES:
+            pending.pop(CONF_SMART_PI_SUPPLY_ENTITY, None)
+        before = config_from_options(self._current_options(), None, False).water_inputs
+        after = config_from_options(pending, None, False).water_inputs
+        if before != after:
+            return self.async_show_form(
+                step_id="heating_reset",
+                data_schema=vol.Schema({vol.Required(FIELD_RESET_MODEL, default=True): bool}),
+            )
+        return self.async_create_entry(title="", data=pending)
+
+    async def async_step_heating_reset(self, user_input: dict[str, Any] | None = None):
+        """Reset the learned model with the change of the water data, as recommended.
+
+        Kept, the data appearing from these inputs are not asked about again.
+        """
+        if user_input is None:
+            return self._heating_finish()
+        pending = self._heating_pending
+        if user_input.get(FIELD_RESET_MODEL):
+            pending[CONF_SMART_PI_RESET_TOKEN] = uuid.uuid4().hex
+            pending.pop(CONF_SMART_PI_MODEL_KEPT_FOR_WATER, None)
+        else:
+            pending[CONF_SMART_PI_MODEL_KEPT_FOR_WATER] = config_from_options(pending, None, False).water_inputs
+        return self.async_create_entry(title="", data=pending)
+
+    async def async_step_boiler_signals(self, user_input: dict[str, Any] | None = None):
+        """The boiler's signals, shared by the thermostats that read entities (defaults entry)."""
+        current = self._current_options()
+        if user_input is not None:
+            data = dict(current)
+            for key in BOILER_SIGNAL_KEYS:
+                value = stored_entity(self.hass, user_input.get(key))
+                if value:
+                    data[key] = value
+                else:
+                    data.pop(key, None)
+            return self.async_create_entry(title="", data=data)
+        schema = {}
+        for key in BOILER_SIGNAL_KEYS:
+            value = resolve_entity(self.hass, current.get(key))
+            schema[vol.Optional(key, description={"suggested_value": value} if value else None)] = selector.EntitySelector(
+                selector.EntitySelectorConfig(domain=_SIGNAL_DOMAINS[key])
+            )
+        return self.async_show_form(step_id="boiler_signals", data_schema=vol.Schema(schema))
 
     async def async_step_source_role(self, user_input: dict[str, Any] | None = None):
         """A thermostat working as a zone's additional source: its activation delays, heating type and valve curve."""

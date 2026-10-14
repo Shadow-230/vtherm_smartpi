@@ -31,6 +31,16 @@ def _entries_are_not_set_up():
         yield
 
 
+async def _open_source_role(hass, entry):
+    """The options of a zone's additional source: heated by water, a menu with its water data."""
+    result = await hass.config_entries.options.async_init(entry.entry_id)
+    if result["type"] == FlowResultType.MENU:
+        assert result["step_id"] == "source_menu"
+        assert result["menu_options"] == ["source_role", "heating_inputs"]
+        result = await hass.config_entries.options.async_configure(result["flow_id"], {"next_step_id": "source_role"})
+    return result
+
+
 def _vtherm(hass, unique_id: str, object_id: str, **config):
     """A Versatile Thermostat climate entity with its configuration.
 
@@ -159,7 +169,7 @@ async def test_the_other_source_gets_its_entry_and_shows_its_role(hass) -> None:
 
     floor_entry = next(e for e in hass.config_entries.async_entries(DOMAIN) if e.data.get(CONF_TARGET_VTHERM) == "vt-floor")
     assert CONF_SMART_PI_RESET_TOKEN not in entry.options
-    result = await hass.config_entries.options.async_init(floor_entry.entry_id)
+    result = await _open_source_role(hass, floor_entry)
     assert result["step_id"] == "source_role"
     assert result["description_placeholders"]["main"] == "Radiator SmartPI"
     assert _fields(result) == {
@@ -202,7 +212,7 @@ async def test_choosing_the_other_thermostat_as_main_moves_the_zone_with_its_nei
     assert (source["lead_emitter"], source["source_emitter"]) == ("floor_water", "radiator")
     assert floor_entry.options[CONF_SMART_PI_RESET_TOKEN]
     # The radiator now works as the floor's additional source.
-    result = await hass.config_entries.options.async_init(entry.entry_id)
+    result = await _open_source_role(hass, entry)
     assert result["step_id"] == "source_role"
 
 
@@ -556,7 +566,7 @@ async def test_a_valve_source_keeps_its_valve_curve(hass) -> None:
                        "split_ratio": 100, "lead_emitter": "radiator", "source_emitter": "floor_water"}],
     )
     floor_entry = _smartpi_entry(hass, "vt-floor", "floor_water")
-    result = await hass.config_entries.options.async_init(floor_entry.entry_id)
+    result = await _open_source_role(hass, floor_entry)
     assert result["step_id"] == "source_role"
     assert "smart_pi_enable_valve_linearization" in _fields(result)
     result = await _configure(

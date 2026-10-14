@@ -47,3 +47,25 @@ recorded_events:
       required: false
       selector:
         boolean:
+set_provider:
+  name: Set the simulated heating provider
+  description: Register or unregister the heating provider fed by the simulator, force a reason for its supply water, or say the boiler is not called for a reason (an empty text clears it; test only).
+  fields:
+    registered:
+      name: Registered
+      required: false
+      selector:
+        boolean:
+    supply_reason:
+      name: Supply reason
+      required: false
+      selector:
+        text:
+    call_reason:
+      name: Call reason
+      required: false
+      selector:
+        text:
+provider_status:
+  name: Heating provider status
+  description: Whether the simulated heating provider is registered, and how often SmartPI asked it by thermostat, as the response (test only).

@@ -3,7 +3,7 @@
 Long simulations, run locally (``SMARTPI_SIM_LOCAL=1``): twelve rooms (six
 pairs of losses and radiator power, mild and cold weather), two neighbouring
 zones with a door, a floor driven through a valve, a slab warming through its
-depth, and water heating on a heating curve with Smart Boiler's data. Each case
+depth, and water heating on a heating curve with water data from entities. Each case
 runs the zone with its two sources and, as the baseline, today's setup of two
 SmartPI regulating the zone independently.
 
@@ -185,7 +185,7 @@ async def test_installations(monkeypatch, case) -> None:
                 zone = {
                     "boiler": SimBoiler(curve_slope=1.2),
                     "emitter": "radiator",
-                    "smart_boiler": True,
+                    "water_data": "entities",
                     "options": {CONF_SMART_PI_HEATING_TYPE: "radiator"},
                 }
                 source["boiler"] = SimBoiler(curve_slope=0.6, max_water_c=45.0)

@@ -1,0 +1,77 @@
+# QAS role 'water': SmartPI QAS water.
+# Written by tests/qas/config/build.py from tests/qas/roles.py; do not edit by hand.
+homeassistant:
+  name: SmartPI QAS water
+frontend:
+config:
+api:
+history:
+logbook:
+system_log:
+  max_entries: 500
+recorder:
+  purge_keep_days: 7
+logger:
+  default: info
+  logs:
+    custom_components.vtherm_smartpi: info
+    custom_components.versatile_thermostat: info
+    custom_components.smartpi_room_sim: info
+    custom_components.smartpi_qas_helpers: info
+smartpi_qas_helpers:
+  provider:
+    name: qas
+    circuits:
+      climate.studio: studio_radiator
+      climate.nursery: nursery_floor
+      climate.lounge_radiator: lounge_radiator
+      climate.lounge_floor: lounge_floor
+smartpi_room_sim:
+  rooms:
+    studio:
+      temperature: 19.5
+      b: 0.001
+    nursery:
+      temperature: 19.5
+      b: 0.001
+    lounge:
+      temperature: 19.0
+      b: 0.001
+  heaters:
+    studio_radiator:
+      room: studio
+      a: 0.08
+      delay_min: 3.0
+      lag_min: 4.0
+      emitter: radiator
+      power_w: 2000.0
+    nursery_floor:
+      room: nursery
+      kind: valve
+      a: 0.04
+      delay_min: 20.0
+      lag_min: 60.0
+      emitter: floor_water
+      power_w: 1500.0
+    lounge_radiator:
+      room: lounge
+      a: 0.06
+      delay_min: 10.0
+      emitter: radiator
+      power_w: 1500.0
+    lounge_floor:
+      room: lounge
+      a: 0.03
+      delay_min: 30.0
+      lag_min: 180.0
+      emitter: floor_water
+      power_w: 1500.0
+  boiler:
+    fire_c: 40.0
+    idle_c: 12.0
+    tau_up_min: 4.0
+    tau_down_min: 20.0
+    on_at_start: true
+  outdoor:
+    mean: 3.0
+    swing: 3.0

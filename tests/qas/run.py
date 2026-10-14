@@ -2,15 +2,17 @@
 
 From the bench's directory (its docs/workflow.md), after ``setup/setup_role.py``:
 
-    HA_INSTANCE=N python <stage>/tests/qas/run.py [--role ROLE] ID [ID ...]
-    HA_INSTANCE=N python <stage>/tests/qas/run.py M        # the minimum set of the instance's role
-    python <stage>/tests/qas/run.py --list [--role ROLE]   # the catalogue; no instance needed
+    HA_INSTANCE=N python <stage>/tests/qas/run.py --role ROLE ID [ID ...]
+    HA_INSTANCE=N python <stage>/tests/qas/run.py --role ROLE M   # the minimum set of the role
+    python <stage>/tests/qas/run.py --list [--role ROLE]          # the catalogue; no instance needed
 
-- ``--role``: by default the role the catalogue gives instance N (``roles.INSTANCE_ROLES``).
+- ``--role``: the role instance N was set up as (required to run): the testing session chooses
+  which instance runs which role.
 - Each scenario runs from the role's base: the SmartPI entries the role has, by title, with their
   options (the heating type; the neighbours and the zone compared by entity, mode, doors, window
-  action, master and rule — not by the random ids the forms give). A scenario on an instance in
-  another state is NOT RUN (the bench's harness).
+  action, master and rule — not by the random ids the forms give; the water and boiler sources and
+  the entities they read). A scenario on an instance in another state is NOT RUN (the bench's
+  harness).
 - Between scenarios the simulator's inputs and the thermostats go back to the base
   (``scenarios.common.reset``).
 """
@@ -27,11 +29,11 @@ from typing import Any
 HERE = pathlib.Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 
-from bench import bench_lib, instance  # noqa: E402
-from roles import INSTANCE_ROLES, ROLES, SMARTPI_DEFAULTS_TITLE, Role  # noqa: E402
+from bench import bench_lib  # noqa: E402
+from roles import ROLES, SMARTPI_DEFAULTS_TITLE, Role, supply_sensor  # noqa: E402
 from scenarios import PLANNED, SCENARIOS  # noqa: E402
 from scenarios.common import CONTEXT, reset  # noqa: E402
-from stages import SMARTPI  # noqa: E402
+from stages import BOILER_SIGNALS, CALL_SOURCE, SMARTPI, SUPPLY_ENTITY, WATER_SOURCE  # noqa: E402
 
 
 class Dependencies:
@@ -69,6 +71,26 @@ class Dependencies:
         return repr(self.expected)
 
 
+class Entity:
+    """An entity an entry should store, compared by its entity id: a form stores a registered
+    entity by its registry id."""
+
+    def __init__(self, entity_id: str, names: Mapping[str, str]) -> None:
+        self.entity_id = entity_id
+        self.names = names
+
+    def __eq__(self, other: object) -> bool:
+        return isinstance(other, str) and self.names.get(other, other) == self.entity_id
+
+    def __ne__(self, other: object) -> bool:
+        return not self.__eq__(other)
+
+    __hash__ = None  # type: ignore[assignment]
+
+    def __repr__(self) -> str:
+        return repr(self.entity_id)
+
+
 def expected_dependencies(role: Role, title: str) -> list[tuple]:
     items: list[tuple] = [
         ("neighbour", n.entity, n.mode, tuple(sorted(n.door_sensors)), n.window_action)
@@ -88,6 +110,8 @@ async def build_base(role: Role) -> dict[str, dict[str, Any]]:
         registry = await ha.ws_cmd({"type": "config/entity_registry/list"})
     names = {e["id"]: e["entity_id"] for e in registry if e.get("id")}
     base: dict[str, dict[str, Any]] = {SMARTPI_DEFAULTS_TITLE: {}}
+    if role.boiler_signals:
+        base[SMARTPI_DEFAULTS_TITLE] = {key: Entity(entity_id, names) for key, entity_id in BOILER_SIGNALS.items()}
     for thermostat in role.thermostats:
         if not thermostat.smartpi:
             continue
@@ -97,6 +121,13 @@ async def build_base(role: Role) -> dict[str, dict[str, Any]]:
         expected = expected_dependencies(role, thermostat.name)
         if expected or role.plugin == "qas":
             options["smart_pi_dependencies"] = Dependencies(expected, names)
+        if thermostat.water_source is not None:
+            options[WATER_SOURCE] = thermostat.water_source
+        if thermostat.water == "entities":
+            options[SUPPLY_ENTITY] = Entity(supply_sensor(thermostat.heater), names)
+        additional = role.zone is not None and role.zone.additional == thermostat.climate
+        if thermostat.call_source is not None and not additional:
+            options[CALL_SOURCE] = thermostat.call_source
         base[thermostat.name] = options
     return base
 
@@ -131,10 +162,9 @@ def _duration(minutes: int) -> str:
 
 def catalogue() -> str:
     """The catalogue's rows (documentation/en/testing.md, the QAS section), from the registry."""
-    instances = {role.name: role.instance for role in ROLES.values()}
     rows = []
     for s in SCENARIOS.values():
-        where = ", ".join(f"{instances[name]} `{name}`" for name in s.roles)
+        where = ", ".join(f"`{name}`" for name in s.roles)
         if len(s.roles) == len(ROLES):
             where = "all"
         short = f" Short variant of {', '.join(s.short_of)}." if s.short_of else ""
@@ -148,7 +178,7 @@ def catalogue() -> str:
 
 
 def main(argv: list[str]) -> int:
-    parser = argparse.ArgumentParser(description="QAS scenarios on one test instance")
+    parser = argparse.ArgumentParser(description="QAS scenarios on one test instance, as its role")
     parser.add_argument("ids", nargs="*")
     parser.add_argument("--role", choices=sorted(ROLES))
     parser.add_argument("--list", action="store_true")
@@ -157,7 +187,9 @@ def main(argv: list[str]) -> int:
     if args.list:
         print(catalogue() if args.markdown else listing(ROLES[args.role] if args.role else None))
         return 0
-    role = ROLES[args.role or INSTANCE_ROLES[instance()]]
+    if args.role is None:
+        raise SystemExit("name the role this instance was set up as: --role ROLE")
+    role = ROLES[args.role]
     ids = expand(args.ids, role)
     if not ids:
         raise SystemExit("name the scenarios to run (or M for the minimum set)")

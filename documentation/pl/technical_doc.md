@@ -14,10 +14,13 @@ Ten dokument opisuje działanie, które jest naprawdę zaimplementowane w obecny
 
 Ten fork dodaje rozszerzenia: znane wejścia (ciepło wymieniane ze strefami sąsiednimi i ciepło
 z drugiego źródła ciepła w strefie), temperaturę wody docierającej do emiterów (grzejników, pętli
-podłogówki) oraz wezwanie kotła (czy kocioł dostaje polecenie grzania). Tam, gdzie rozszerzenie
-zmienia model, łańcuch obliczania wysterowania albo uczenie, sekcje poniżej to uwzględniają. Same
-rozszerzenia są opisane w dokumentach [Zależności stref i drugie źródło ciepła](zone_dependencies.md)
-oraz [Wejście wody](water_input.md), a ich testy w dokumencie [Testy](testing.md).
+podłogówki) oraz wezwanie kotła (czy kocioł dostaje polecenie grzania). Dane o wodzie i wezwanie kotła
+pochodzą ze źródła, które użytkownik wybiera w opcjach termostatu: z encji Home Assistant albo od
+dostawcy (integracji, która implementuje kontrakt SmartPI), a wezwanie kotła także z kotła
+centralnego Versatile Thermostat. Tam, gdzie rozszerzenie zmienia model, łańcuch obliczania
+wysterowania albo uczenie, sekcje poniżej to uwzględniają. Same rozszerzenia są opisane
+w dokumentach [Zależności stref i drugie źródło ciepła](zone_dependencies.md)
+oraz [Wejścia wody i kotła](water_input.md), a ich testy w dokumencie [Testy](testing.md).
 
 ---
 
@@ -88,7 +91,7 @@ Do regulatora trafia faktycznie wartość `u_ff_eff + u_pi`. Potem przechodzi pr
 
 Przy ogrzewaniu wodnym regulator liczy moc przy temperaturze wody odniesienia. Wysterowanie wysyłane
 do emitera, zanim przejdzie przez krzywą zaworu, to `power / max(φ, 0.05)`, najwyżej 1. Uczenie widzi
-wysterowanie pomnożone przez `φ` ([Wejście wody, §3.4](water_input.md#34-użycie-w-smartpi)).
+wysterowanie pomnożone przez `φ` ([Wejścia wody i kotła, §3.4](water_input.md#34-użycie-w-smartpi)).
 
 ---
 
@@ -150,7 +153,7 @@ Kod nie używa już stałej `WINDOW_MIN_MINUTES`. Uczenie opiera się teraz na `
 - odejmuje od zmierzonej zmiany temperatury część, którą powodują znane wejścia: ich tempo
   `known_rate = Σ g_i·(T_i − T) + Σ q_j`, scałkowane (zsumowane) w oknie,
 - liczy moc jako 0, gdy strefa woła o ciepło, a kocioł nie jest wezwany do grzania
-  ([Wejście wody, §4](water_input.md#4-kocioł-który-nie-jest-wezwany-do-grzania)).
+  ([Wejścia wody i kotła, §4](water_input.md#4-kocioł-który-nie-jest-wezwany-do-grzania)).
 
 W praktyce to, czy okno zostanie przekazane do uczenia, czy wydłużone, zależy od pewności nachylenia, a nie od stałego minimalnego czasu.
 
@@ -431,7 +434,7 @@ Obecne dodatkowe zabezpieczenia to:
 - blokada całki ze znakiem przy wznowieniach, w fazach doganiania i przy zmianach nastawy,
 - jawne `I:HOLD` w fazie `deadtime_heat` po wznowieniu, dla `window_resume` i `power_shedding_resume` w trybie grzania,
 - logika wstrzymania w strefie nieczułości,
-- przy ogrzewaniu wodnym wstrzymanie `no_heat`: wysterowanie i całka są wstrzymane w czasie grzania ciepłej wody użytkowej, a sama całka jest wstrzymana, gdy woda daje prawie zero ciepła ([Wejście wody, §3.4](water_input.md#34-użycie-w-smartpi)),
+- przy ogrzewaniu wodnym wstrzymanie `no_heat`: wysterowanie i całka są wstrzymane w czasie grzania ciepłej wody użytkowej, a sama całka jest wstrzymana, gdy woda daje prawie zero ciepła ([Wejścia wody i kotła, §3.4](water_input.md#34-użycie-w-smartpi)),
 - otwarte okno u sąsiada, gdy połączenie z tym sąsiadem jest aktywne: reakcja wybrana dla tego sąsiada. To albo wyłączenie (tą samą drogą co przy otwartym oknie, z chronionym wznowieniem), albo preset strefy „ochrona przed mrozem” lub „eco”. Ta reakcja nigdy nie żąda więcej grzania ani chłodzenia niż nastawa ([Zależności stref, §4.5](zone_dependencies.md#45-okno-u-połączonego-sąsiada)).
 
 Obliczenie rozróżnia też dwie strefy wokół nastawy:
@@ -492,6 +495,10 @@ w `name`.
 | `prop_algo_smartpi.py`    | `SmartPI`        | fasada algorytmu (jeden punkt wejścia), koordynacja całości                           |
 | `prop_handler_smartpi.py` | `SmartPIHandler` | most do Home Assistant: trwały zapis stanu, okresowy timer, usługi, atrybuty          |
 
+Moduł obsługi odczytuje wejścia z instalacji grzewczej przez plik wtyczki `heating_inputs.py`:
+dane o wodzie i wezwanie kotła ze źródła wybranego w opcjach termostatu (encje, dostawca albo
+kocioł centralny Versatile Thermostat).
+
 ### 5.2 Moduły `smartpi/` faktycznie używane
 
 | Moduł                  | Główna rola                                                 |
@@ -527,12 +534,12 @@ w `name`.
 | `coupling_estimator.py` | uczenie współczynników wymiany `k`                         |
 | `zone_fit.py`, `source_model.py`, `source_candidates.py` | wspólne dopasowanie strefy, ciepło i skale czasu drugiego źródła |
 | `split.py`, `source_settings.py`, `source_link.py` | reguły podziału i pętla przydziału, ustawienia źródeł, łącze między źródłami |
-| `water_input.py`       | współczynnik wody `φ` z danych Smart Boiler                 |
+| `water_input.py`       | współczynnik wody `φ` z danych o wodzie                     |
 | `boiler_call.py`       | czy kocioł grzeje dla strefy, która woła o ciepło           |
 
 Moduły rozszerzeń są opisane w
 [Zależności stref, §6](zone_dependencies.md#6-komponenty-i-interfejsy) i
-[Wejście wody, §5](water_input.md#5-komponenty-i-interfejsy).
+[Wejścia wody i kotła, §5](water_input.md#5-komponenty-i-interfejsy).
 
 ### 5.3 Wewnętrzna budowa `SmartPI`
 
@@ -619,7 +626,7 @@ Obecne dane zapisywane przez `SmartPI.save_state()` zawierają między innymi:
 ```
 
 Klucze opcjonalne są opisane w [Zależności stref, §8](zone_dependencies.md#8-zapisywany-stan)
-i [Wejście wody, §7](water_input.md#7-zapisywany-stan). Dane bez tych kluczy wczytują się tak jak wcześniej.
+i [Wejścia wody i kotła, §7](water_input.md#7-zapisywany-stan). Dane bez tych kluczy wczytują się tak jak wcześniej.
 
 Trwale zapisywana jest tylko nauczona korekta FF. Okna przypisania, oczekujące
 propozycje i przeniesienia całki są przejściowe; po restarcie obserwator jest
@@ -660,9 +667,12 @@ widoczne w `analysis.twin`.
   po jednym wpisie na sąsiada oraz `second_source` dla głównego źródła w strefie z dwoma źródłami
   ciepła; termostat, który działa jako dodatkowe źródło, pokazuje tylko swoją rolę
   ([Zależności stref, §9](zone_dependencies.md#9-diagnostyka));
-- `water`: współczynnik wody, jego źródło i wstrzymania, przy wodnym rodzaju ogrzewania;
-- `boiler`: czy kocioł jest wezwany do grzania i jaki tryb uczenia z tego wynika
-  ([Wejście wody, §8](water_input.md#8-diagnostyka)).
+- `water`: współczynnik wody, to, skąd pochodzi, wstrzymania i źródło każdego sygnału wody
+  (`inputs`), przy wodnym rodzaju ogrzewania;
+- `boiler`: czy kocioł jest wezwany do grzania, wybrane źródło (`entities`, `provider:<name>`,
+  `vtherm_central_boiler`) i jego sygnały (`inputs`), powód i zapotrzebowanie oraz tryb uczenia,
+  który z tego wynika; widoczny, gdy wybrano źródło wezwania
+  ([Wejścia wody i kotła, §8](water_input.md#8-diagnostyka)).
 
 Gdy są dane o wodzie, wartości `power` to moc przy wodzie odniesienia, a
 `current_cycle_percent` i `next_cycle_percent` to wysterowanie wysyłane do emitera.

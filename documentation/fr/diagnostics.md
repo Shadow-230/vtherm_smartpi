@@ -57,8 +57,8 @@ Le bloc `live` est organisé par responsabilité :
 | `calibration` | État, nombre d'essais et date de la dernière calibration |
 | `analysis` | Champs avancés utilisés par les cartes de diagnostic fournies |
 | `dependencies` | Seulement avec des dépendances entre zones : le modèle composé, le verrou d'apprentissage, la réaction à la fenêtre, les voisins et la zone à deux sources de chaleur |
-| `water` | Seulement pour un type de chauffage à eau : le facteur d'eau, sa source et les maintiens |
-| `boiler` | Seulement quand SmartPI sait si la chaudière est appelée : l'appel et le mode d'apprentissage qui en découle |
+| `water` | Seulement pour un type de chauffage à eau : le facteur d'eau, d'où il vient, les maintiens, et la source de chaque signal de l'eau |
+| `boiler` | Seulement pour un type de chauffage à eau avec une source de l'appel de la chaudière choisie : la source, l'appel et le mode d'apprentissage qui en découle |
 
 `analysis` regroupe les valeurs live avancées dans `control`, `learning`,
 `trajectory`, `landing`, `deadtime`, `governance`, `feedforward` et, lorsqu'il
@@ -97,22 +97,24 @@ la commande qu'il applique. Sans dépendances, le bloc est absent. Ses champs so
 ### `water`
 
 Pour un thermostat avec un type de chauffage à eau, `live` reçoit un bloc `water`. Il contient le
-facteur d'eau appliqué, sa source, le type de chauffage, la température de départ de l'eau moyennée,
-les dernières raisons données par Smart Boiler, le maintien pendant l'eau chaude sanitaire
-(`no_heat`), le maintien de l'intégrale quand l'eau chauffe peu (`low_heat`) et l'indicateur « eau
-trop froide ». Avec des données d'eau, les valeurs `power` sont des puissances pour l'eau de
-référence, tandis que `current_cycle_percent` et `next_cycle_percent` sont la commande envoyée à
-l'émetteur. Ses champs sont listés dans
-[Entrée eau, §8](water_input.md#8-diagnostics).
+facteur d'eau appliqué, d'où il vient, le type de chauffage, la température de départ de l'eau
+moyennée, les dernières raisons données par la source des données d'eau, le maintien pendant l'eau
+chaude sanitaire (`no_heat`), le maintien de l'intégrale quand l'eau chauffe peu (`low_heat`),
+l'indicateur « eau trop froide », et `inputs` : pour chaque signal de l'eau, sa source (une entité,
+un fournisseur, ou aucune) et s'il donne des données en ce moment. Avec des données d'eau, les
+valeurs `power` sont des puissances pour l'eau de référence, tandis que `current_cycle_percent` et
+`next_cycle_percent` sont la commande envoyée à l'émetteur. Ses champs sont listés dans
+[Entrées eau et chaudière, §8](water_input.md#8-diagnostics).
 
 ### `boiler`
 
-Pour un type de chauffage à eau, quand SmartPI sait si la chaudière est appelée (par Smart Boiler,
-ou par la chaudière centrale de Versatile Thermostat), `live` reçoit un bloc `boiler`. Il contient
-la source, si la chaudière est appelée et, sinon, pourquoi, la façon dont l'apprentissage traite
-cette situation (`emitter_cooling`, `held`, `emitter_warming`) et, venant de Smart Boiler, la
-demande comparée à ses seuils de démarrage. Ses champs sont listés dans
-[Entrée eau, §8](water_input.md#8-diagnostics) et expliqués dans
+Pour un type de chauffage à eau avec une source de l'appel de la chaudière choisie dans ses options
+(la chaudière centrale de Versatile Thermostat, des entités ou un fournisseur), `live` reçoit un
+bloc `boiler`, même quand la source ne donne pas de données. Il contient la source, si la chaudière
+est appelée et, sinon, pourquoi, la façon dont l'apprentissage traite cette situation
+(`emitter_cooling`, `held`, `emitter_warming`), la demande comparée aux seuils de démarrage de la
+chaudière là où la source la donne, et `inputs` : d'où vient chaque signal. Ses champs sont listés
+dans [Entrées eau et chaudière, §8](water_input.md#8-diagnostics) et expliqués dans
 [§4](water_input.md#4-une-chaudière-qui-nest-pas-appelée).
 
 ## Fréquence de publication

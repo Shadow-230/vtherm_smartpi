@@ -6,7 +6,7 @@
 - every scenario of the plan is registered, with its catalogue entry and a one-sentence
   expectation, and the catalogue in documentation/en/testing.md lists them all;
 - the runner's base compares the stored neighbours and zone by what they mean;
-- compare.py judges QB1 and QE5 as the plan says;
+- compare.py judges QB1 and QE5 as the plan says, from the two results files it is given;
 - the seeded state is one SmartPI loads.
 """
 
@@ -29,7 +29,7 @@ for path in (QAS, QAS / "setup"):
 import compare  # noqa: E402
 import run  # noqa: E402
 from config.build import configuration, render  # noqa: E402
-from roles import INSTANCE_ROLES, ROLES  # noqa: E402
+from roles import ROLES  # noqa: E402
 from scenarios import PLANNED, SCENARIOS  # noqa: E402
 
 from custom_components.smartpi_room_sim import CONFIG_SCHEMA  # noqa: E402
@@ -37,10 +37,15 @@ from custom_components.smartpi_room_sim.engine import spec_from_config  # noqa: 
 
 PLAN_IDS = (
     "QA1 QA2 QA3 QA4 QA5 QA6 QB1 QB2 QB3 QC1 QC2 QC3 QC4 "
-    "QD1 QD2 QD3 QD4 QD5 QD6 QE1 QE2 QE3 QE4 QE5 QE6 QE7"
+    "QD1 QD2 QD3 QD4 QD5 QD6 QE1 QE2 QE3 QE4 QE5 QE6 QE7 "
+    "QW1 QW2 QW3 QW4 QW5 QW6 QW7 QW8 QW9 QW10"
 ).split()
-# The plan's minimum set (§5, "M"); QC2's minimum is its short variant QC2s, QB2's needs QB2a.
-PLAN_MINIMUM = "QA1 QA2 QA4 QA5 QA6 QB2a QB2 QC1 QC2s QC3 QD1 QD2 QD3 QD4 QE1 QE2 QE3 QE4".split()
+# The plan's minimum set (§5, "M"); QC2's minimum is its short variant QC2s, QB2's needs QB2a,
+# QW1's is QW1s.
+PLAN_MINIMUM = (
+    "QA1 QA2 QA4 QA5 QA6 QB2a QB2 QC1 QC2s QC3 QD1 QD2 QD3 QD4 QE1 QE2 QE3 QE4 "
+    "QW1s QW2 QW3 QW4 QW5 QW6 QW7 QW8 QW9 QW10"
+).split()
 TESTING_DOC = ROOT / "documentation" / "en" / "testing.md"
 
 
@@ -56,7 +61,9 @@ def test_the_role_files_are_up_to_date_and_valid() -> None:
         config = CONFIG_SCHEMA({"smartpi_room_sim": configuration(role)["smartpi_room_sim"]})
         spec_from_config(config["smartpi_room_sim"])
         assert "initial" not in json.dumps(configuration(role).get("input_number", {}))
-    assert sorted(INSTANCE_ROLES) == list(range(1, 9))
+    # A role names no instance: the testing session chooses where it runs.
+    assert not any(hasattr(role, "instance") for role in ROLES.values())
+    assert {"water", "electric"} <= set(ROLES)
 
 
 def test_the_pack_compiles() -> None:
@@ -107,6 +114,16 @@ def test_the_base_compares_the_neighbours_by_what_they_mean() -> None:
     stored[1]["neighbour_window_action"] = "eco"
     assert stored != expected
     assert run.Dependencies([], names) == []
+
+
+def test_compare_reads_the_two_results_files_it_is_given(tmp_path, capsys) -> None:
+    new, ref = {"mean_error_second_half": 0.03}, {"mean_error_second_half": 0.04}
+    (tmp_path / "qb1s-instance3.json").write_text(json.dumps(new))
+    (tmp_path / "other.json").write_text(json.dumps(ref))
+    assert compare.main(["qb1s", "3", str(tmp_path / "other.json"), str(tmp_path)]) == 0
+    assert compare.main(["qb1s", "3", "9", str(tmp_path)]) == 2
+    assert "qb1s-instance9.json" in capsys.readouterr().out
+    assert compare.main(["qb1"]) == 2
 
 
 def test_compare_judges_the_pairs() -> None:
@@ -160,7 +177,7 @@ class HA:
 
 
 def test_the_runner_hands_the_harness_its_scenarios_and_base(tmp_path, monkeypatch) -> None:
-    """With a stand-in for the bench's lib/, run.main builds the role's base and gives the
+    """With a stand-in for the bench's lib/, run.main builds the named role's base and gives the
     harness the role's minimum set; nothing connects anywhere."""
     lib = tmp_path / "lib"
     lib.mkdir()
@@ -170,7 +187,9 @@ def test_the_runner_hands_the_harness_its_scenarios_and_base(tmp_path, monkeypat
     monkeypatch.setenv("HA_INSTANCE", "2")
     for name in ("harness", "ha_client"):
         monkeypatch.delitem(sys.modules, name, raising=False)
-    assert run.main(["M"]) == 0
+    with pytest.raises(SystemExit):
+        run.main(["M"])  # the role is named, never taken from the instance
+    assert run.main(["--role", "neighbours", "M"]) == 0
     import harness  # noqa: PLC0415 — the stand-in
 
     pack, scenarios, ids, reset, role = harness.CALLS[-1]
@@ -183,3 +202,41 @@ def test_the_runner_hands_the_harness_its_scenarios_and_base(tmp_path, monkeypat
     for name in ("harness", "ha_client"):
         sys.modules.pop(name, None)
     sys.path.remove(str(lib))
+
+
+def test_the_water_role_s_base_holds_its_sources() -> None:
+    """The role water's base: the boiler's signals in the defaults, each thermostat's sources and
+    the studio's supply sensor, compared by entity id (a form stores a registry id)."""
+    import asyncio  # noqa: PLC0415
+
+    names = {"r-supply": "sensor.smartpi_room_sim_studio_radiator_supply", "r-heat": "binary_sensor.smartpi_room_sim_boiler_heat_available"}
+
+    class _HA:
+        def __init__(self, _domain):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *exc):
+            return None
+
+        async def ws_cmd(self, _payload):
+            return [{"id": key, "entity_id": value} for key, value in names.items()]
+
+    module = type(sys)("ha_client")
+    module.HA = _HA
+    sys.modules["ha_client"] = module
+    try:
+        base = asyncio.run(run.build_base(ROLES["water"]))
+    finally:
+        sys.modules.pop("ha_client", None)
+    assert base["SmartPI defaults"]["smart_pi_heat_available_entity"] == "r-heat"
+    studio = base["Studio"]
+    assert studio["smart_pi_water_source"] == "entities"
+    assert studio["smart_pi_supply_entity"] == "r-supply"
+    assert not studio["smart_pi_supply_entity"] != "sensor.smartpi_room_sim_studio_radiator_supply"
+    assert studio["smart_pi_boiler_call_source"] == "provider:qas"
+    assert base["Nursery"]["smart_pi_water_source"] == "provider:qas"
+    # The zone's additional source chooses its water only.
+    assert "smart_pi_boiler_call_source" not in base["Lounge floor"]

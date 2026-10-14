@@ -1,4 +1,4 @@
-# QAS role 'ref-0.4.0', instance 7: SmartPI QAS 0.4.0 reference.
+# QAS role 'ref-0.4.0': SmartPI QAS 0.4.0 reference.
 # Written by tests/qas/config/build.py from tests/qas/roles.py; do not edit by hand.
 homeassistant:
   name: SmartPI QAS 0.4.0 reference

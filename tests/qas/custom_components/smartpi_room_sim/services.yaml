@@ -114,9 +114,33 @@ set_device:
             - ok
             - ignore
             - unavailable
+set_boiler_state:
+  name: Set the boiler's state
+  description: normal, or off / fault - the simulated boiler then does not fire, whatever its switch (test only).
+  fields:
+    state:
+      name: State
+      required: true
+      selector:
+        select:
+          options:
+            - normal
+            - "off"
+            - fault
+start_hot_water:
+  name: Start domestic hot water
+  description: Domestic hot water has priority for this many minutes - the simulated circuits get no heat (test only).
+  fields:
+    minutes:
+      name: Minutes
+      required: true
+      selector:
+        number:
+          min: 0
+          max: 600
 reset:
   name: Reset the simulation
-  description: Put every opening, device, the boiler, the outdoors and (unless rooms is false) the rooms back to the configured state (test only).
+  description: Put every opening, device, the boiler (its state and hot water), the outdoors and (unless rooms is false) the rooms back to the configured state (test only).
   fields:
     rooms:
       name: Rooms too

@@ -30,6 +30,28 @@ CONF_SMART_PI_DEPENDENCIES = "smart_pi_dependencies"
 # change of the zone; the handler applies each new value once.
 CONF_SMART_PI_RESET_TOKEN = "smart_pi_reset_token"
 CONF_SMART_PI_HEATING_TYPE = "smart_pi_heating_type"
+# Inputs from the heating system (heating_inputs.py): the source of each input, chosen
+# in the thermostat's options, and the entities they are read from.
+CONF_SMART_PI_WATER_SOURCE = "smart_pi_water_source"
+CONF_SMART_PI_BOILER_CALL_SOURCE = "smart_pi_boiler_call_source"
+CONF_SMART_PI_SUPPLY_ENTITY = "smart_pi_supply_entity"
+# Whether a thermostat takes the boiler's signals from the defaults entry or sets its own.
+CONF_SMART_PI_BOILER_SIGNALS = "smart_pi_boiler_signals"
+CONF_SMART_PI_HEAT_AVAILABLE_ENTITY = "smart_pi_heat_available_entity"
+CONF_SMART_PI_DHW_ENTITY = "smart_pi_dhw_entity"
+CONF_SMART_PI_FAULT_ENTITY = "smart_pi_fault_entity"
+CONF_SMART_PI_BOILER_CALLED_ENTITY = "smart_pi_boiler_called_entity"
+CONF_SMART_PI_BOILER_REASON_ENTITY = "smart_pi_boiler_reason_entity"
+BOILER_SIGNAL_KEYS = (
+    CONF_SMART_PI_HEAT_AVAILABLE_ENTITY,
+    CONF_SMART_PI_DHW_ENTITY,
+    CONF_SMART_PI_FAULT_ENTITY,
+    CONF_SMART_PI_BOILER_CALLED_ENTITY,
+    CONF_SMART_PI_BOILER_REASON_ENTITY,
+)
+# The water inputs (source and supply sensor) for which the user kept the learned model
+# when the options asked: their data appearing is then no change to ask about again.
+CONF_SMART_PI_MODEL_KEPT_FOR_WATER = "smart_pi_model_kept_for_water"
 
 DEFAULT_MINIMAL_ACTIVATION_DELAY = 0
 DEFAULT_MINIMAL_DEACTIVATION_DELAY = 0

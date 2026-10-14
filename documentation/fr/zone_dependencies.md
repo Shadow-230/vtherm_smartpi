@@ -364,7 +364,7 @@ stateDiagram-v2
   puis `source_heat`, puis `door_settling`. Le verrou `source_heat` appartient à la deuxième source
   (section 5.5). En dessous de tous, `boiler_settling` met l'apprentissage en pause pendant que l'émetteur
   refroidit parce que la chaudière n'est pas appelée, et pendant qu'il se réchauffe de nouveau une
-  fois que la chaudière démarre ([Entrée eau, §4](water_input.md#4-une-chaudière-qui-nest-pas-appelée)).
+  fois que la chaudière démarre ([Entrées eau et chaudière, §4](water_input.md#4-une-chaudière-qui-nest-pas-appelée)).
 - Un voisin toujours connecté ne met pas l'apprentissage en pause. Le `b` de SmartPI contient son
   échange, et l'ajustement commun (section 4.4) l'en sépare. Le premier plan avait un verrou sur l'écart
   de température avec le voisin (`coupling_gradient`). Il a été abandonné : avec un voisin plus froid en
@@ -585,8 +585,8 @@ commandes continuent d'arriver pendant `L_f`, et on suppose que la dernière res
 - **Cycles.** La source signale chaque cycle qu'elle démarre. Un actionneur tout-ou-rien
   chauffe d'abord, à son **niveau**, pendant son temps de marche. Une vanne garde sa puissance
   pendant tout le cycle. Le niveau vaut 1 sans données d'eau. Avec des données d'eau, c'est le
-  facteur d'eau de la source (sa puissance comparée à sa puissance avec l'eau de référence, voir
-  [Entrée eau](water_input.md)). En effet, un plancher dont l'eau est à 30 degC donne, pendant
+  facteur d'eau de la source (sa puissance comparée à sa puissance avec l'eau de référence, voir les
+  [entrées eau et chaudière](water_input.md)). En effet, un plancher dont l'eau est à 30 degC donne, pendant
   qu'il est en marche, environ 37 % de la puissance qu'il donne avec une eau à 45 degC (pièce à
   20 degC). Les propres cycles de la source principale sont enregistrés de la même façon.
 - **Le type de chaque appareil est le type de chauffage de sa propre entrée SmartPI.** Le
@@ -678,8 +678,8 @@ flowchart TD
   commandes de la source principale ; tant que la zone est éteinte ; sans température de la zone
   ou sans température extérieure ; et après un écart entre deux calculs plus long que
   `ZONE_FIT_MAX_GAP_S`. Ainsi, aucune fenêtre ne couvre une pause. Les fenêtres ne s'arrêtent pas
-  pour la pause d'apprentissage de SmartPI lui-même (`set_smartpi_learning`, que Smart Boiler
-  utilise aussi pour sa pause), ni pour le délestage ou la coupure de garde. La puissance réalisée
+  pour la pause d'apprentissage de SmartPI lui-même (`set_smartpi_learning`, que d'autres
+  intégrations peuvent aussi utiliser), ni pour le délestage ou la coupure de garde. La puissance réalisée
   des cycles décrit toujours ce que la zone a reçu. SmartPI continue de maintenir le `a` et le `b`
   de l'ajustement (section 5.5) pendant que son apprentissage est en pause, car cela applique un
   modèle et n'apprend rien.
@@ -1056,7 +1056,7 @@ variation quotidienne de ±3 degC. Le jour 1 commence 1 degC sous la consigne. L
 |---|---|---|---|
 | plancher derrière une vanne | 0.020 degC | 0.050 degC | 1.03/1.02/1.03 |
 | dalle qui chauffe dans son épaisseur (deux inerties en série) | 0.035 degC | 0.056 degC | `a` 0.95, `b` 1.06, `a_f` 1.18 |
-| eau sur courbes de chauffe, données de Smart Boiler (rattrapage 6.7 h contre 5.9 h) | 0.053 degC | 0.094 degC | 0.99/0.97/0.94 |
+| eau sur courbes de chauffe, données d'eau venant d'entités (rattrapage 6.7 h contre 5.9 h) | 0.053 degC | 0.094 degC | 0.99/0.97/0.94 |
 | deux zones, porte ouverte 6–23 h | 0.034 / 0.029 degC | 0.072 / 0.055 degC | `k` 0.89 / 0.94 |
 | deux zones, porte toujours ouverte | 0.021 / 0.018 degC | 0.055 / 0.042 degC | `k` 1.04 / 0.96 |
 
@@ -1154,7 +1154,7 @@ Tous les modules ci-dessous sont du Python simple et peuvent être testés sans 
 | `smartpi/split.py` | Deuxième source : règles de répartition, boucle d'allocation, recommandation selon le type d'émetteur |
 | `smartpi/source_settings.py` | Deuxième source : sa règle et ses émetteurs, lus dans l'élément configuré |
 | `smartpi/source_link.py` | Deuxième source : le lien entre la source principale et la source additionnelle dans un même Home Assistant (les commandes dans un sens, les cycles et le plafond de puissance dans l'autre) |
-| `smartpi/water_input.py`, `repairs.py` | Le facteur d'eau de chaque source et la remise à zéro proposée quand des données d'eau apparaissent ou disparaissent ; voir [Entrée eau](water_input.md) |
+| `smartpi/water_input.py`, `repairs.py` | Le facteur d'eau de chaque source et la remise à zéro proposée quand des données d'eau apparaissent ou disparaissent ; voir [Entrées eau et chaudière](water_input.md) |
 
 Dans les fichiers existants :
 
@@ -1360,4 +1360,4 @@ critères. Les résultats des sections 4.6 et 5.8 viennent de ces tests.
 | `SPLIT_PREDICTED_SHARE` | 1 | part de l'erreur prévue que la source peut corriger |
 | `SOURCE_BRAKE_STEPS` | 8 | divisions par deux qui trouvent le plafond du freinage |
 | `SOURCE_BOOST_ERROR_C` | 0.2 degC | une zone plus froide que cela fait son rattrapage avec la source principale qui travaille comme si elle était seule |
-| `WATER_NO_HEAT` | 0.05 | plus petit plafond de puissance d'une source sur eau ([Entrée eau, §10](water_input.md#10-constantes-limites-et-points-ouverts)) |
+| `WATER_NO_HEAT` | 0.05 | plus petit plafond de puissance d'une source sur eau ([Entrées eau et chaudière, §10](water_input.md#10-constantes-limites-et-points-ouverts)) |

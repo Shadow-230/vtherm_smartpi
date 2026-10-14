@@ -19,7 +19,7 @@ import yaml
 HERE = pathlib.Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent))
 
-from roles import MAX_POWER_INPUT, ROLES, SIM, Role  # noqa: E402
+from roles import MAX_POWER_INPUT, PROVIDER, ROLES, SIM, Role  # noqa: E402
 
 
 def configuration(role: Role) -> dict[str, Any]:
@@ -41,7 +41,9 @@ def configuration(role: Role) -> dict[str, Any]:
                 "custom_components.smartpi_qas_helpers": "info",
             },
         },
-        "smartpi_qas_helpers": None,
+        "smartpi_qas_helpers": (
+            {"provider": {"name": PROVIDER, "circuits": role.provider_circuits}} if role.provider else None
+        ),
         SIM: role.sim,
     }
     if role.power_manager:
@@ -60,7 +62,7 @@ def configuration(role: Role) -> dict[str, Any]:
 
 def render(role: Role) -> str:
     header = (
-        f"# QAS role {role.name!r}, instance {role.instance}: {role.title}.\n"
+        f"# QAS role {role.name!r}: {role.title}.\n"
         "# Written by tests/qas/config/build.py from tests/qas/roles.py; do not edit by hand.\n"
     )
     body = yaml.safe_dump(configuration(role), sort_keys=False, default_flow_style=False)

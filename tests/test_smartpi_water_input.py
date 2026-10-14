@@ -244,6 +244,38 @@ def test_state_round_trip_keeps_the_long_term_average_and_the_availability():
     assert not fresh.update(live(40.0), 20.0, 0.0).changed_for_good
 
 
+def test_the_state_names_the_inputs_it_belongs_to():
+    water = WaterInput(HEATING_RADIATOR)
+    water.inputs = "entities|sensor.supply"
+    water.update(live(40.0), 20.0, 0.0)
+    saved = water.save_state()
+    assert saved["inputs"] == "entities|sensor.supply"
+    restored = WaterInput(HEATING_RADIATOR)
+    restored.load_state(saved)
+    assert restored.inputs == "entities|sensor.supply"
+    # A state saved before the field: the inputs are not known.
+    old = {key: value for key, value in saved.items() if key != "inputs"}
+    legacy = WaterInput(HEATING_RADIATOR)
+    legacy.load_state(old)
+    assert legacy.inputs is None and legacy.availability == "used"
+    for bad in ("", 3):
+        broken = WaterInput(HEATING_RADIATOR)
+        broken.load_state({**old, "inputs": bad})
+        assert broken.inputs is None
+
+
+def test_forgetting_the_data_gives_one_at_once_without_a_change_for_good():
+    water = WaterInput(HEATING_RADIATOR)
+    for k in range(10):
+        water.update(live(40.0), 20.0, k * 60.0)
+    water.forget_data()
+    assert water.availability == "none" and water.save_state()["long_average"] is None
+    state = water.update(WaterReading(supply_reason="provider_missing"), 20.0, 600.0)
+    assert (state.source, state.factor, state.changed_for_good) == ("none", 1.0, False)
+    # The next data are a first appearance (a change for good the handler may settle).
+    assert water.update(live(40.0), 20.0, 660.0).changed_for_good
+
+
 def test_state_of_another_heating_type_is_ignored():
     water = WaterInput(HEATING_RADIATOR)
     water.update(live(40.0), 20.0, 0.0)

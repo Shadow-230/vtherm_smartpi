@@ -1,4 +1,4 @@
-# QAS role 'central-boiler', instance 6: SmartPI QAS central boiler.
+# QAS role 'central-boiler': SmartPI QAS central boiler.
 # Written by tests/qas/config/build.py from tests/qas/roles.py; do not edit by hand.
 homeassistant:
   name: SmartPI QAS central boiler

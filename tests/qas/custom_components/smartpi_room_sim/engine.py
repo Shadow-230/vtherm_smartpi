@@ -8,7 +8,10 @@ the in-process simulator) and advances it in real time, one tick at a time:
 - heaters (switches) and valves (0..1) with a gain ``a`` (degC/min at full power), a transport
   delay and an emitter lag (one stage, or two for a slab);
 - water emitters heat only with the boiler's water: it warms towards ``fire_c`` while the boiler
-  switch is on and cools towards ``idle_c`` (below the rooms) while it is off;
+  switch is on and cools towards ``idle_c`` (below the rooms) while it is off. A scenario can
+  switch the boiler off or into a fault (it then does not fire), or give domestic hot water
+  priority for a time (the circuits get no heat, the boiler's flow shows ``dhw_flow_c``); each
+  water emitter's supply is the boiler's flow, as a sensor on its pipe shows it;
 - an outdoor temperature with a daily swing and a small wiggle, so a sensor of it never holds
   one value for hours;
 - doors and windows open by a daily schedule, or as a scenario sets them;
@@ -37,6 +40,7 @@ from .physics import (
 DEFAULT_STEP_S = 7.0
 WIGGLE_PERIOD_S = 2838.0
 DEVICE_MODES = ("ok", "ignore", "unavailable")
+BOILER_STATES = ("normal", "off", "fault")
 ELECTRIC = "electric"
 
 
@@ -85,6 +89,10 @@ class BoilerSpec:
     idle_c: float = 12.0
     tau_up_min: float = 4.0
     tau_down_min: float = 20.0
+    # The boiler switch on from the start (no central boiler drives it).
+    on_at_start: bool = False
+    # The boiler's flow while it heats the domestic hot water.
+    dhw_flow_c: float = 65.0
 
 
 @dataclass(frozen=True)
@@ -219,6 +227,8 @@ class Simulation:
     heat: dict[str, float] = field(init=False)
     boiler_on: bool = False
     water_c: float | None = None
+    boiler_state: str = "normal"
+    dhw_until_s: float | None = None
     _histories: dict[str, PowerHistory] = field(init=False)
     _overrides: dict[str, bool] = field(init=False)
     _ramps: dict[str, _Ramp] = field(init=False)
@@ -246,6 +256,8 @@ class Simulation:
             self._outdoor = _OutdoorState(self.spec.outdoor.mean, self.spec.outdoor.swing)
             for heater in self.modes:
                 self.set_mode(heater, "ok")
+            self.set_boiler_state("normal")
+            self.dhw_until_s = None
             return
         spec = self.spec
         net = ThermalNetwork()
@@ -283,7 +295,9 @@ class Simulation:
         self._schedules: dict[str, tuple[tuple[float, float], ...]] = {}
         self._ramps = {}
         self._outdoor = _OutdoorState(spec.outdoor.mean, spec.outdoor.swing)
-        self.boiler_on = False
+        self.boiler_on = spec.boiler.on_at_start if spec.boiler is not None else False
+        self.boiler_state = "normal"
+        self.dhw_until_s = None
         self.water_c = spec.boiler.idle_c if spec.boiler is not None else None
         self._water_t_s = self.t_s
 
@@ -311,6 +325,17 @@ class Simulation:
     def set_boiler(self, on: bool) -> None:
         self._advance_water(self.t_s)
         self.boiler_on = bool(on)
+
+    def set_boiler_state(self, state: str) -> None:
+        """``normal``, or ``off`` / ``fault``: the boiler does not fire, whatever its switch."""
+        if state not in BOILER_STATES:
+            raise ValueError(f"boiler state {state}")
+        self._advance_water(self.t_s)
+        self.boiler_state = state
+
+    def start_hot_water(self, minutes: float) -> None:
+        """Domestic hot water has priority for ``minutes``: the circuits get no heat."""
+        self.dhw_until_s = self.t_s + max(float(minutes), 0.0) * 60.0
 
     def set_opening(
         self,
@@ -383,12 +408,35 @@ class Simulation:
             heaters[name].power_w * value for name, value in self.applied.items()
         )
 
+    @property
+    def firing(self) -> bool:
+        return self.boiler_on and self.boiler_state == "normal"
+
+    def dhw_active(self, t_s: float | None = None) -> bool:
+        t_s = self.t_s if t_s is None else t_s
+        return self.dhw_until_s is not None and t_s < self.dhw_until_s
+
+    def heat_available(self) -> bool:
+        """The boiler can heat the circuits now: no fault, not off, no hot water."""
+        return self.spec.boiler is not None and self.boiler_state == "normal" and not self.dhw_active()
+
+    def supply_c(self) -> float | None:
+        """The boiler's flow as a sensor on a circuit's pipe shows it."""
+        boiler = self.spec.boiler
+        if boiler is None:
+            return None
+        return boiler.dhw_flow_c if self.dhw_active() else self.water_at(self.t_s)
+
+    def circuit_water_at(self, t_s: float) -> float | None:
+        """The water that reaches the emitters (None while hot water has priority: no flow)."""
+        return None if self.dhw_active(t_s) else self.water_at(t_s)
+
     def water_at(self, t_s: float) -> float | None:
         boiler = self.spec.boiler
         if boiler is None or self.water_c is None:
             return None
-        target = boiler.fire_c if self.boiler_on else boiler.idle_c
-        tau = boiler.tau_up_min if self.boiler_on else boiler.tau_down_min
+        target = boiler.fire_c if self.firing else boiler.idle_c
+        tau = boiler.tau_up_min if self.firing else boiler.tau_down_min
         elapsed_min = max(t_s - self._water_t_s, 0.0) / 60.0
         return target + (self.water_c - target) * math.exp(-elapsed_min / tau)
 
@@ -399,7 +447,7 @@ class Simulation:
 
     def _factor(self, emitter: str) -> Callable[[float, float, float], float]:
         def factor(t_s: float, _outdoor_c: float, temp_c: float) -> float:
-            return water_factor(emitter, self.water_at(t_s), temp_c)
+            return water_factor(emitter, self.circuit_water_at(t_s), temp_c)
 
         return factor
 
@@ -427,7 +475,7 @@ class Simulation:
         for heater in self.spec.heaters:
             power = self._histories[heater.name].value_at(start_s - heater.delay_min * 60.0)
             if heater.emitter != ELECTRIC:
-                power *= water_factor(heater.emitter, self.water_at(mid_s), self.temperature(heater.room))
+                power *= water_factor(heater.emitter, self.circuit_water_at(mid_s), self.temperature(heater.room))
             self.heat[heater.name] += heater.a * power * minutes
 
     def truth(self) -> dict[str, Any]:

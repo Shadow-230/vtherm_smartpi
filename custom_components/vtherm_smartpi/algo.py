@@ -375,6 +375,8 @@ class SmartPI:
         self._water_integral_hold: bool = False
         # The demand exceeded what the water can give at full command.
         self._water_too_cold: bool = False
+        # Where each water signal comes from (heating_inputs.py), for the diagnostics.
+        self._water_inputs: dict | None = None
         self._last_u_applied: float = 0.0   # candidate output after timing constraints
         self._last_aw_du: float = 0.0       # tracking delta for diagnostics
         self._last_ff_trim_delta: float = 0.0
@@ -743,7 +745,7 @@ class SmartPI:
 
         self._learning_enabled = enabled
         self._reset_learning_window()
-        # Under a boiler that is not called the estimator is fed 0 (water_input.md, section 11).
+        # Under a boiler that is not called the estimator is fed 0 (water_input.md, section 4).
         self.dt_est.reset_observation(
             0.0 if self._boiler_mode in (MODE_COOLING, MODE_HELD) else self._committed_on_percent
         )
@@ -2171,31 +2173,51 @@ class SmartPI:
     # --- water input --------------------------------------------------------
 
     def configure_heating_type(self, heating_type: str | None) -> None:
-        """Set the thermostat's heating type (a water type uses Smart Boiler's water data)."""
+        """Set the thermostat's heating type (a water type uses the water data and the boiler's call)."""
         self.water.configure(heating_type)
         self.boiler.configure(heating_type)
         if not self.water.uses_water:
             self._apply_water_state(WaterState())
 
-    def update_boiler(self, reading: BoilerReading | None) -> None:
-        """The boiler's call read for this calculation (None: not known)."""
-        self.boiler.set_reading(reading)
+    def update_boiler(
+        self,
+        reading: BoilerReading | None,
+        source: str | None = None,
+        inputs: dict | None = None,
+    ) -> None:
+        """The boiler's call read for this calculation (None: not known).
+
+        ``source``: the source chosen in the options; ``inputs``: where each of its
+        signals comes from (both for the diagnostics).
+        """
+        self.boiler.set_reading(reading, source, inputs)
 
     @property
     def boiler_mode(self) -> str | None:
         """How learning treats the boiler's call: ``emitter_cooling``, ``held``,
-        ``emitter_warming`` or None (documentation/en/water_input.md, section 11)."""
+        ``emitter_warming`` or None (documentation/en/water_input.md, section 4)."""
         return self._boiler_mode
 
     def boiler_diagnostics(self) -> dict | None:
         """The boiler block of the diagnostics (None without any reading of its call)."""
         return self.boiler.diagnostics()
 
-    def update_water(self, reading: WaterReading | None, room_c: float | None) -> WaterState:
-        """Apply the water data read for this calculation (None: no data now)."""
+    def update_water(
+        self, reading: WaterReading | None, room_c: float | None, inputs: dict | None = None
+    ) -> WaterState:
+        """Apply the water data read for this calculation (None: no data now).
+
+        ``inputs``: where each water signal comes from, for the diagnostics.
+        """
+        self._water_inputs = inputs
         state = self.water.update(reading, room_c, time.monotonic())
         self._apply_water_state(state)
         return state
+
+    def forget_water_data(self) -> None:
+        """Other water inputs chosen in the options: what was learned of the old ones goes."""
+        self.water.forget_data()
+        self._apply_water_state(self.water.state)
 
     def _apply_water_state(self, state: WaterState) -> None:
         factor = state.factor if state.uses_water else 1.0
@@ -2271,6 +2293,7 @@ class SmartPI:
             "no_heat": state.no_heat,
             "low_heat": state.low_heat,
             "water_too_cold": self._water_too_cold,
+            **({"inputs": self._water_inputs} if self._water_inputs else {}),
         }
 
     def configure_valve_linearization(
@@ -3020,9 +3043,13 @@ class SmartPI:
             state["dependencies"] = self.dependency_state.save_state()
         if self.applied_reset_token is not None:
             state["dependency_reset_token"] = self.applied_reset_token
-        # Likewise the water input, once it has seen water data.
+        # Likewise the water input, once it has seen water data or a water source is chosen.
         water = self.water.save_state()
-        if water["availability"] != "none" or water["long_average"] is not None:
+        if (
+            water["availability"] != "none"
+            or water["long_average"] is not None
+            or water["inputs"] not in (None, "none")
+        ):
             state["water"] = water
         return state
 

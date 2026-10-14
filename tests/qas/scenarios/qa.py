@@ -1,5 +1,5 @@
 """QA: the plugin on a clean instance — entries, options menu, services, AutoCalib events,
-restarts and heating types (instances 1 and 8)."""
+restarts and heating types (roles ``base`` and ``electric``)."""
 
 from __future__ import annotations
 
@@ -8,7 +8,8 @@ import time
 from typing import Any
 
 from flows import Form, Menu
-from stages import SMARTPI, VT
+from roles import PROVIDER
+from stages import CALL_SOURCE, SMARTPI, VT, WATER_SOURCE
 
 from .common import (
     MARGIN_S,
@@ -39,7 +40,7 @@ def _smartpi_climates() -> list[str]:
 
 @scenario("QA1", ("base", "electric"), 15, "test_factory.py", minimum=True)
 async def QA1(r: Any) -> None:
-    """After the setup's restart every SmartPI and VTherm entry is loaded, neither logs a warning or an error, each SmartPI thermostat has its diagnostics, and nothing of Smart Boiler is there."""
+    """After the setup's restart every SmartPI and VTherm entry is loaded, neither logs a warning or an error, each SmartPI thermostat has its diagnostics, no heating provider is registered but the helpers' where the role has it, and no entry chooses a water or a boiler's call source."""
     entries = await api(r).entries()
     for domain in (SMARTPI, VT):
         for e in (e for e in entries if e["domain"] == domain):
@@ -55,13 +56,14 @@ async def QA1(r: Any) -> None:
     r.check(not lines, f"warnings and errors of SmartPI and VTherm since the restart: {len(lines)}")
     for line in lines[:12]:
         r.note(line)
-    _status, config = await r.ha.rest("GET", "/api/config")
-    components = set((config or {}).get("components") or [])
-    r.check(
-        not any(c.startswith("vtherm_smart_boiler") for c in components)
-        and not any(e["domain"] == "vtherm_smart_boiler" for e in entries),
-        "no Smart Boiler integration and no entry of it",
-    )
+    status = await api(r).respond("smartpi_qas_helpers", "provider_status", {})
+    providers = (status or {}).get("providers")
+    expected = [PROVIDER] if role().provider else []
+    r.check(providers == expected, f"heating providers registered: {providers} (expected {expected})")
+    for title in role().smartpi_titles:
+        stored = await stored_options(title)
+        chosen = {key: stored.get(key) for key in (WATER_SOURCE, CALL_SOURCE) if stored.get(key) not in (None, "none")}
+        r.check(not chosen, f"{title}: no water or boiler's call source chosen: {chosen}")
 
 
 @scenario("QA2", ("base",), 15, "test_config_flow_dependencies.py", minimum=True)
@@ -201,7 +203,7 @@ def _close(a: Any, b: Any, rel: float = 1e-6) -> bool:
 
 @scenario("QA6", ("base", "electric"), 20, "test_smartpi_water_handler.py, test_smartpi_boiler_handler.py", minimum=True)
 async def QA6(r: Any) -> None:
-    """A water heating type shows the water block with source none and factor 1 and no boiler block without VTherm's central boiler, an electric type shows neither, and nothing is logged at each control call."""
+    """A water heating type without a water data source shows the water block with source none, factor 1 and its inputs from no source, and no boiler block without a call source, an electric type shows neither, and nothing is logged at each control call."""
     since = time.time()
     for thermostat in (t for t in role().thermostats if t.smartpi):
         took, data = await wait_live(r, thermostat.climate, lambda d: bool(path(d, "control.phase")), MARGIN_S, 10.0)
@@ -211,6 +213,10 @@ async def QA6(r: Any) -> None:
             r.check(
                 water.get("source") == "none" and water.get("factor") == 1,
                 f"{thermostat.name} ({kind}): water {water.get('source')!r}, factor {water.get('factor')}",
+            )
+            r.check(
+                path(water, "inputs.supply.source") == "none",
+                f"{thermostat.name} ({kind}): the supply from no source: {path(water, 'inputs.supply')}",
             )
         else:
             r.check(path(data, "water") is None, f"{thermostat.name} ({kind}): no water block")

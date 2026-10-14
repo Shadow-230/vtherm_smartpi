@@ -1,11 +1,12 @@
-"""Whether the boiler heats a zone that calls for heat (documentation/en/water_input.md, section 11).
+"""Whether the boiler heats a zone that calls for heat (documentation/en/water_input.md, section 4).
 
 A boiler fired only above a start threshold (zones calling, their total power,
 the widest valve opening) or after an activation delay leaves a zone under it
 calling for heat that does not come. Taking its command for heat, SmartPI would
-learn a weaker emitter and a wrong dead time. The boiler's call comes from Smart
-Boiler, which decides it when it controls the boiler, or else from Versatile
-Thermostat's own central boiler.
+learn a weaker emitter and a wrong dead time. The boiler's call comes from the
+source chosen in the thermostat's options (heating_inputs.py): Home Assistant
+entities, a provider (an integration that implements SmartPI's contract), or
+Versatile Thermostat's own central boiler.
 
 A boiler started within BOILER_CALL_GRACE_S of the zone's call answers it, as
 an on-demand boiler does (VT's activation delay is at most 10 min): nothing
@@ -32,10 +33,9 @@ from typing import Any
 from .const import BOILER_CALL_GRACE_S
 from .source_model import EMITTER_RADIATOR, EMITTER_RESPONSE_MIN
 
-SOURCE_SMART_BOILER = "smart_boiler"
 SOURCE_VTHERM = "vtherm_central_boiler"
 
-# The reason given for VT's central boiler switched off.
+# The reason given for a boiler that is not called when its source does not say why.
 REASON_NOT_CALLED = "not_called"
 
 MODE_COOLING = "emitter_cooling"  # the boiler stopped under the calling zone: learning waits
@@ -58,8 +58,9 @@ def settle_s(heating_type: str | None) -> float:
 class BoilerReading:
     """The boiler's call as read for one calculation (``called`` None: not known).
 
-    ``demand``: the demand against the boiler's start criteria, for the diagnostics
-    only (Smart Boiler's ``demand_*`` and threshold fields that were given).
+    ``source``: the source chosen in the options (``entities``, ``provider:<name>``,
+    ``vtherm_central_boiler``). ``demand``: the demand against the boiler's start
+    criteria, for the diagnostics only (the ``demand_*`` and threshold fields given).
     """
 
     called: bool | None
@@ -74,6 +75,10 @@ class BoilerCall:
     def __init__(self) -> None:
         self.settle_s = settle_s(None)
         self.reading: BoilerReading | None = None
+        # The source chosen in the options and where each of its signals comes from,
+        # for the diagnostics (also while it gives no reading).
+        self.source: str | None = None
+        self.inputs: Mapping[str, Any] | None = None
         self.mode: str | None = None
         self._calling_since_s: float | None = None
         self._warming_until_s: float | None = None
@@ -81,8 +86,15 @@ class BoilerCall:
     def configure(self, heating_type: str | None) -> None:
         self.settle_s = settle_s(heating_type)
 
-    def set_reading(self, reading: BoilerReading | None) -> None:
+    def set_reading(
+        self,
+        reading: BoilerReading | None,
+        source: str | None = None,
+        inputs: Mapping[str, Any] | None = None,
+    ) -> None:
         self.reading = reading
+        self.source = reading.source if reading is not None and reading.source else source
+        self.inputs = inputs
 
     def update(
         self, calling: bool, heating: bool, now_s: float, grace_s: float = BOILER_CALL_GRACE_S
@@ -125,16 +137,18 @@ class BoilerCall:
         return self.mode
 
     def diagnostics(self) -> dict | None:
-        """The ``boiler`` block of the diagnostics (None without a reading and a mode)."""
+        """The ``boiler`` block of the diagnostics (None without a source, a reading and a mode)."""
         reading = self.reading
-        if reading is None and self.mode is None:
+        if reading is None and self.mode is None and self.source is None:
             return None
         block = {
-            "source": reading.source if reading is not None else None,
+            "source": self.source,
             "called": reading.called if reading is not None else None,
             "reason": reading.reason if reading is not None else None,
             "learning": self.mode,
         }
         if reading is not None and reading.demand:
             block["demand"] = dict(reading.demand)
+        if self.inputs:
+            block["inputs"] = {name: dict(signal) for name, signal in self.inputs.items()}
         return block

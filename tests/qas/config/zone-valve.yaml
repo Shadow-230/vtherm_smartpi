@@ -1,4 +1,4 @@
-# QAS role 'zone-valve', instance 5: SmartPI QAS zone with a valve.
+# QAS role 'zone-valve': SmartPI QAS zone with a valve.
 # Written by tests/qas/config/build.py from tests/qas/roles.py; do not edit by hand.
 homeassistant:
   name: SmartPI QAS zone with a valve

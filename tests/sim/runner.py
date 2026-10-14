@@ -32,8 +32,10 @@ from custom_components.vtherm_smartpi import handler as handler_module
 from custom_components.vtherm_smartpi.const import (
     CONF_MINIMAL_ACTIVATION_DELAY,
     CONF_MINIMAL_DEACTIVATION_DELAY,
+    CONF_SMART_PI_WATER_SOURCE,
 )
 from custom_components.vtherm_smartpi.handler import SmartPIHandler
+from custom_components.vtherm_smartpi.heating_inputs import PROVIDERS_KEY, SOURCE_ENTITIES, provider_source
 from custom_components.vtherm_smartpi.smartpi.dependencies import (
     KIND_NEIGHBOUR,
     KIND_SOURCE,
@@ -55,7 +57,7 @@ from custom_components.vtherm_smartpi.hvac_mode import (
 
 from fakes.fake_thermostat_runtime import FakeHass, FakeThermostatRuntime
 
-from .boiler import SimBoiler, SimSmartBoiler
+from .boiler import PROVIDER_NAME, SimBoiler, SimHeatingProvider, SimStates, water_entities
 from .clock import EventQueue, VirtualClock
 from .plant import DelayedPower, Schedule, ThermalNetwork
 from .scheduler import SimActuator, SimCycleScheduler
@@ -213,7 +215,7 @@ class SourceSpec:
     split: dict | None = None
     # 2: the emitter warms through two lags of tau_min / 2 in series.
     stages: int = 1
-    # Water heating of this emitter, as ZoneSpec's (Smart Boiler's data follow ZoneSpec.smart_boiler).
+    # Water heating of this emitter, as ZoneSpec's (its water data follow ZoneSpec.water_data).
     boiler: SimBoiler | None = None
     emitter: str = "floor_water"
 
@@ -244,10 +246,11 @@ class ZoneSpec:
     options: dict = field(default_factory=dict)
     source: SourceSpec | None = None
     # Water heating: the boiler feeding the zone's emitter (None: power independent of water),
-    # the emitter's type for the plant, and whether Smart Boiler publishes the water to SmartPI.
+    # the emitter's type for the plant, and the source of SmartPI's water data: None (no
+    # water data), "provider" (SimHeatingProvider) or "entities" (a supply sensor per circuit).
     boiler: SimBoiler | None = None
     emitter: str = "radiator"
-    smart_boiler: bool = False
+    water_data: str | None = None
 
 
 @dataclass
@@ -434,16 +437,25 @@ class Simulation:
         if world is not None:
             self.thermostat.hass = world.hass
         _boiler_on_demand(self.zone.boiler, self.actuator)
-        self.smart_boiler: SimSmartBoiler | None = None
-        if self.zone.smart_boiler and (
+        # Zones of one world share Home Assistant: its states and the registered provider.
+        hass = self.thermostat.hass
+        if not isinstance(getattr(hass, "states", None), SimStates):
+            hass.states = SimStates()
+        self.states: SimStates = hass.states
+        self.provider: SimHeatingProvider | None = None
+        self.forced_reasons: list[tuple[float, float, str]] = []
+        if self.zone.water_data == "provider" and (
             self.zone.boiler is not None or (self.zone.source is not None and self.zone.source.boiler is not None)
         ):
-            # Zones of one world share Home Assistant, and so Smart Boiler.
-            existing = self.thermostat.hass.data.get("vtherm_smart_boiler_api")
-            self.smart_boiler = existing if isinstance(existing, SimSmartBoiler) else SimSmartBoiler(self.clock, self.weather)
-            if self.zone.boiler is not None:
-                self.smart_boiler.zones[self.thermostat.entity_id] = self.zone.boiler
-            self.thermostat.hass.data["vtherm_smart_boiler_api"] = self.smart_boiler
+            providers = hass.data.setdefault(PROVIDERS_KEY, {})
+            existing = providers.get(PROVIDER_NAME)
+            if isinstance(existing, SimHeatingProvider):
+                self.provider = existing
+                self.forced_reasons = existing.forced_reasons
+            else:
+                self.provider = SimHeatingProvider(self.clock, self.weather, forced_reasons=self.forced_reasons)
+            providers[PROVIDER_NAME] = self.provider
+        self._choose_water(self.thermostat, self.zone.boiler)
         self.scheduler, self.handler = self._attach_handler(self.thermostat, self.actuator, self.zone)
         if known_inputs is not None:
             self.algo.set_known_inputs_provider(lambda: known_inputs(self))
@@ -466,6 +478,24 @@ class Simulation:
         self.trace: list[TracePoint] = []
         self._next_trace_s = 0.0
         self._started = False
+
+    def _choose_water(self, thermostat: SimThermostat, boiler: SimBoiler | None) -> None:
+        """The water data source in the thermostat's options, as the user would choose it."""
+        if boiler is None or self.zone.water_data is None:
+            return
+        if self.zone.water_data == "provider":
+            self.provider.zones[thermostat.entity_id] = boiler
+            thermostat.entry_infos[CONF_SMART_PI_WATER_SOURCE] = provider_source(PROVIDER_NAME)
+            return
+        object_id = thermostat.entity_id.split(".", 1)[1]
+        thermostat.entry_infos.update(
+            water_entities(self.states, self.clock, self.weather, boiler, object_id, lambda: self.forced_reasons)
+        )
+        thermostat.entry_infos[CONF_SMART_PI_WATER_SOURCE] = SOURCE_ENTITIES
+
+    def force_water_reasons(self, reasons: list[tuple[float, float, str]]) -> None:
+        """Reasons of a gap for time windows: the provider gives them, an entity is unavailable."""
+        self.forced_reasons[:] = reasons
 
     def _attach_handler(
         self, thermostat: SimThermostat, actuator: SimActuator, spec: ZoneSpec
@@ -525,8 +555,7 @@ class Simulation:
         )
         # Both thermostats live in the same Home Assistant.
         self.source_thermostat.hass = self.thermostat.hass
-        if self.smart_boiler is not None and source.boiler is not None:
-            self.smart_boiler.zones[self.source_thermostat.entity_id] = source.boiler
+        self._choose_water(self.source_thermostat, source.boiler)
         self.source_scheduler, self.source_handler = self._attach_handler(
             self.source_thermostat, self.source_actuator, spec
         )

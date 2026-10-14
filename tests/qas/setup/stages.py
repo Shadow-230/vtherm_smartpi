@@ -11,7 +11,9 @@ again after a failure:
    suggestions of the neighbour form read them);
 3. ``inputs``  — VTherm's central boiler thresholds and the power manager's maximum power;
 4. ``smartpi`` — one SmartPI entry per SmartPI thermostat, with its heating type;
-5. ``options`` — each thermostat entry's options saved once, then the role's neighbours and zone.
+5. ``options`` — each thermostat entry's options saved once, then the role's neighbours and zone,
+   the boiler's signals in the defaults entry and each thermostat's "Water and boiler" (the water
+   data and the boiler's call sources).
 
 ``Api`` is where it runs: the bench's client (``setup/setup_role.py``) or Home Assistant in a test.
 """
@@ -23,6 +25,9 @@ from typing import Any, Protocol
 
 from flows import Form, Menu, Transport, run_flow
 from roles import (
+    BOILER_DHW,
+    BOILER_FAULT,
+    BOILER_HEAT_AVAILABLE,
     BOILER_SWITCH,
     HOUSE_POWER_SENSOR,
     MAX_POWER_INPUT,
@@ -34,6 +39,7 @@ from roles import (
     Role,
     Thermostat,
     Zone,
+    supply_sensor,
     temperature_sensor,
 )
 
@@ -42,6 +48,15 @@ SMARTPI = "vtherm_smartpi"
 VT_CENTRAL_TITLE = "Central configuration"
 THRESHOLD_COUNT_UID = "boiler_activation_threshold"
 THRESHOLD_POWER_UID = "boiler_power_activation_threshold"
+# SmartPI's option keys of the inputs from the heating system (its const.py).
+WATER_SOURCE = "smart_pi_water_source"
+CALL_SOURCE = "smart_pi_boiler_call_source"
+SUPPLY_ENTITY = "smart_pi_supply_entity"
+BOILER_SIGNALS = {
+    "smart_pi_heat_available_entity": BOILER_HEAT_AVAILABLE,
+    "smart_pi_dhw_entity": BOILER_DHW,
+    "smart_pi_fault_entity": BOILER_FAULT,
+}
 
 
 class Api(Protocol):
@@ -303,6 +318,31 @@ def zone_steps(zone: Zone) -> list[Form | Menu]:
     ]
 
 
+def boiler_signals_steps() -> list[Form | Menu]:
+    """The defaults entry's "Boiler signals": the simulator's boiler."""
+    return [Menu("boiler_signals"), Form("boiler_signals", dict(BOILER_SIGNALS))]
+
+
+def heating_inputs_steps(role: Role, thermostat: Thermostat, reset: bool = False) -> list[Form | Menu]:
+    """A thermostat's "Water and boiler", as its role says. A zone's additional source chooses
+    its water only. The model is kept (``reset``): nothing was learned yet."""
+    additional = role.zone is not None and role.zone.additional == thermostat.climate
+    sources: dict[str, Any] = {}
+    if thermostat.water_source is not None:
+        sources[WATER_SOURCE] = thermostat.water_source
+    if thermostat.call_source is not None and not additional:
+        sources[CALL_SOURCE] = thermostat.call_source
+    entities: dict[str, Any] = {"smart_pi_boiler_signals": "defaults"}
+    if thermostat.water == "entities":
+        entities[SUPPLY_ENTITY] = supply_sensor(thermostat.heater)
+    return [
+        Menu("heating_inputs"),
+        Form("heating_inputs", sources),
+        Form("heating_entities", entities, if_shown=True),
+        Form("heating_reset", {"reset_model": reset}, if_shown=True),
+    ]
+
+
 async def _options(api: Api, role: Role, title: str, steps: list[Form | Menu]) -> None:
     entry = next(
         (e for e in await api.entries() if e["domain"] == SMARTPI and e["title"] == title), None
@@ -339,6 +379,20 @@ async def stage_options(
         if not any(item.get("kind") == "source" for item in items):
             await _options(api, role, role.zone_entry, zone_steps(role.zone))
             api.log(f"options of {role.zone_entry}: zone with {role.zone.additional}")
+    if role.boiler_signals:
+        defaults = await stored(SMARTPI_DEFAULTS_TITLE)
+        if not all(defaults.get(key) for key in BOILER_SIGNALS):
+            await _options(api, role, SMARTPI_DEFAULTS_TITLE, boiler_signals_steps())
+            api.log(f"options of {SMARTPI_DEFAULTS_TITLE}: boiler signals")
+    for thermostat in role.heating_inputs:
+        options = await stored(thermostat.name)
+        additional = role.zone is not None and role.zone.additional == thermostat.climate
+        if options.get(WATER_SOURCE) == thermostat.water_source and (
+            additional or thermostat.call_source is None or options.get(CALL_SOURCE) == thermostat.call_source
+        ):
+            continue
+        await _options(api, role, thermostat.name, heating_inputs_steps(role, thermostat))
+        api.log(f"options of {thermostat.name}: water {thermostat.water_source}, call {thermostat.call_source}")
 
 
 STAGES = ("vtherm", "areas", "inputs", "smartpi", "options")

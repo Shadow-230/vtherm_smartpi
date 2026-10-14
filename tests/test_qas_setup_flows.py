@@ -146,7 +146,7 @@ async def _start(hass: HomeAssistant, role: Role) -> _Api:
         assert await async_setup_component(hass, "input_number", {"input_number": config["input_number"]})
     assert await async_setup_component(hass, VT, {})
     assert await async_setup_component(hass, SMARTPI, {})
-    assert await async_setup_component(hass, "smartpi_qas_helpers", {"smartpi_qas_helpers": None})
+    assert await async_setup_component(hass, "smartpi_qas_helpers", {"smartpi_qas_helpers": config["smartpi_qas_helpers"]})
     await hass.async_block_till_done()
     return _Api(hass)
 
@@ -192,6 +192,16 @@ async def test_role_sets_up_through_the_forms(
         assert [i for i in items if i.get("kind") == "source"]
     if role.max_power_w is not None:
         assert float(hass.states.get(MAX_POWER_INPUT).state) == role.max_power_w
+    for thermostat in role.heating_inputs:
+        stored = await _stored(hass)(thermostat.name)
+        assert stored.get("smart_pi_water_source") == thermostat.water_source, thermostat.name
+        if thermostat.call_source is not None and (role.zone is None or role.zone.additional != thermostat.climate):
+            assert stored.get("smart_pi_boiler_call_source") == thermostat.call_source, thermostat.name
+        # The setup kept the model: these inputs' data starting ask nothing again.
+        assert stored.get("smart_pi_model_kept_for_water"), thermostat.name
+    if role.boiler_signals:
+        defaults = await _stored(hass)(role.smartpi_titles[0])
+        assert defaults.get("smart_pi_dhw_entity") == er.async_get(hass).async_get("binary_sensor.smartpi_room_sim_boiler_dhw").id
 
     errors = [
         f"{r.name}: {r.getMessage()[:200]}"
@@ -427,9 +437,42 @@ async def test_the_zone_scenarios_flows(hass: HomeAssistant) -> None:
     await run_flow(api.transport, "options", main, zone_steps(zone))
 
     other = _entry_id(hass, SMARTPI, other_title)
-    await run_flow(api.transport, "options", other, [Form("source_role", {"smart_pi_heating_type": "floor_electric"})])
-    await run_flow(api.transport, "options", other, [Form("source_role", {"smart_pi_heating_type": "floor_water"})])
+    await run_flow(api.transport, "options", other, [Menu("source_role", if_shown=True), Form("source_role", {"smart_pi_heating_type": "floor_electric"})])
+    await run_flow(api.transport, "options", other, [Menu("source_role", if_shown=True), Form("source_role", {"smart_pi_heating_type": "floor_water"})])
 
     master_entry = _entry_id(hass, VT, "Lounge")
     for devices in ([zone.main, "climate.lounge_dummy"], [zone.main, zone.additional]):
         await run_flow(api.transport, "options", master_entry, [Menu("type"), Form("type", {"underlying_entity_ids": devices}), Menu("finalize")])
+
+
+@pytest.mark.parametrize("expected_lingering_timers", [True])
+async def test_the_water_scenarios_flows(hass: HomeAssistant, caplog: pytest.LogCaptureFixture) -> None:
+    """QW9's form path: the studio's water source to none and back to entities, the model kept
+    each time, on the real forms; the reset step is asked on each change and no error is logged."""
+    from flows import run_flow, walk  # noqa: PLC0415
+    from scenarios import qw  # noqa: PLC0415
+
+    caplog.set_level(logging.ERROR)
+    role = ROLES["water"]
+    api = await _start(hass, role)
+    await run_stages(api, role, _stored(hass))
+    studio = _entry_id(hass, SMARTPI, "Studio")
+    stored = _stored(hass)
+
+    result = await walk(api.transport, "options", studio, qw._studio_water("none", keep=True)[:-1])  # noqa: SLF001
+    assert result.get("step_id") == "heating_reset", result
+    await api.transport.abort("options", result["flow_id"])
+    await run_flow(api.transport, "options", studio, qw._studio_water("none", keep=True))  # noqa: SLF001
+    options = await stored("Studio")
+    assert options["smart_pi_water_source"] == "none"
+    assert "smart_pi_supply_entity" not in options
+    assert options["smart_pi_model_kept_for_water"] == "none"
+    await run_flow(api.transport, "options", studio, qw._studio_water("entities", keep=True))  # noqa: SLF001
+    options = await stored("Studio")
+    supply = er.async_get(hass).async_get("sensor.smartpi_room_sim_studio_radiator_supply")
+    assert options["smart_pi_water_source"] == "entities"
+    assert options["smart_pi_supply_entity"] == supply.id
+    assert options["smart_pi_model_kept_for_water"] == f"entities|{supply.id}"
+    assert "smart_pi_reset_token" not in options
+    errors = [f"{r.name}: {r.getMessage()[:200]}" for r in caplog.records if r.levelno >= logging.ERROR]
+    assert not errors, errors

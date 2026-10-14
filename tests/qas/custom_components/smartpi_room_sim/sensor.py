@@ -1,5 +1,5 @@
 """Sensors: room and outdoor temperatures (rounded, written only on change), the house's power,
-the boiler's water and the heat each heater has sent."""
+the boiler's water, the supply water of each water emitter and the heat each heater has sent."""
 
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.typing import ConfigType, DiscoveryInfoType
 
 from . import SimHub, hub_of
-from .engine import quantize
+from .engine import ELECTRIC, quantize
 from .entity import SimEntity
 
 
@@ -27,6 +27,7 @@ async def async_setup_platform(
     entities.append(HousePower(hub))
     if spec.boiler is not None:
         entities.append(BoilerWater(hub))
+        entities += [SupplyWater(hub, heater.name) for heater in spec.heaters if heater.emitter != ELECTRIC]
     entities += [HeaterHeat(hub, heater.name) for heater in spec.heaters]
     add(entities)
 
@@ -105,6 +106,21 @@ class BoilerWater(_Value):
     def read(self) -> float:
         sim = self.hub.sim
         return quantize(sim.water_at(sim.t_s), 0.5)
+
+
+class SupplyWater(_Value):
+    """The water on a water emitter's supply pipe, as a 0.1 degC sensor shows it."""
+
+    _attr_device_class = SensorDeviceClass.TEMPERATURE
+    _attr_native_unit_of_measurement = UnitOfTemperature.CELSIUS
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_suggested_display_precision = 1
+
+    def __init__(self, hub: SimHub, heater: str) -> None:
+        super().__init__(hub, f"{heater}_supply", f"Sim {heater} supply")
+
+    def read(self) -> float:
+        return quantize(self.hub.sim.supply_c(), 0.1)
 
 
 class HeaterHeat(_Value):

@@ -1,4 +1,4 @@
-# QAS role 'zone-ref', instance 4: SmartPI QAS zone reference.
+# QAS role 'zone-ref': SmartPI QAS zone reference.
 # Written by tests/qas/config/build.py from tests/qas/roles.py; do not edit by hand.
 homeassistant:
   name: SmartPI QAS zone reference

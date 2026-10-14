@@ -1,4 +1,4 @@
-# QAS role 'base', instance 1: SmartPI QAS base.
+# QAS role 'base': SmartPI QAS base.
 # Written by tests/qas/config/build.py from tests/qas/roles.py; do not edit by hand.
 homeassistant:
   name: SmartPI QAS base

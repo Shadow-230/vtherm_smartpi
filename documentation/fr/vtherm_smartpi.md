@@ -102,9 +102,9 @@ Pour ajouter SmartPI à un thermostat supplémentaire, ouvrez la configuration d
 
 Les paramètres disponibles sont identiques à ceux des valeurs par défaut globales. Tout paramètre défini ici remplace la valeur globale correspondante pour ce thermostat uniquement.
 
-Les options d'une entrée par thermostat ouvrent un menu (ses libellés sont affichés en anglais) avec : les réglages du régulateur (Regulator settings) ; la zone à deux sources de chaleur (Zone with two heat sources) ; les dépendances entre zones (Zone dependencies) ; et, pour une vanne linéarisée, la courbe de vanne (Valve curve). Une zone à deux sources de chaleur est une pièce chauffée par deux thermostats SmartPI, par exemple un radiateur et une boucle de plancher chauffant. Elle se configure depuis le thermostat maître : le Versatile Thermostat dont les appareils sont ces deux thermostats. Les dépendances entre zones sont les zones voisines qui échangent de la chaleur avec celle-ci, par une porte ou en permanence. Un thermostat qui sert de source additionnelle à une zone ouvre un autre formulaire à la place. Ce formulaire montre où sa zone est configurée, et les réglages qui s'appliquent encore à lui : ses délais d'activation, son type de chauffage et la courbe de vanne. La façon dont SmartPI apprend et utilise tout cela est décrite dans [Dépendances entre zones et deuxième source de chaleur](zone_dependencies.md).
+Les options de l'entrée « SmartPI defaults » (l'entrée des valeurs par défaut) ouvrent un menu (ses libellés sont affichés en anglais) avec : les réglages du régulateur (Regulator settings) ; et les signaux de la chaudière (Boiler signals : des entités qui disent à SmartPI ce que fait la chaudière, partagées par chaque thermostat qui lit des entités). Les options d'une entrée par thermostat ouvrent un menu, lui aussi en anglais, avec : les réglages du régulateur (Regulator settings) ; la zone à deux sources de chaleur (Zone with two heat sources) ; les dépendances entre zones (Zone dependencies) ; pour un type de chauffage à eau, **Water and boiler** (eau et chaudière : d'où viennent les données d'eau et l'appel de la chaudière) ; et, pour une vanne linéarisée, la courbe de vanne (Valve curve). Une zone à deux sources de chaleur est une pièce chauffée par deux thermostats SmartPI, par exemple un radiateur et une boucle de plancher chauffant. Elle se configure depuis le thermostat maître : le Versatile Thermostat dont les appareils sont ces deux thermostats. Les dépendances entre zones sont les zones voisines qui échangent de la chaleur avec celle-ci, par une porte ou en permanence. Un thermostat qui sert de source additionnelle à une zone ouvre un autre formulaire à la place (pour un type de chauffage à eau, un menu avec ce formulaire et ses données d'eau). Ce formulaire montre où sa zone est configurée, et les réglages qui s'appliquent encore à lui : ses délais d'activation, son type de chauffage et la courbe de vanne. La façon dont SmartPI apprend et utilise tout cela est décrite dans [Dépendances entre zones et deuxième source de chaleur](zone_dependencies.md).
 
-Les réglages du régulateur comprennent le **type de chauffage** : radiateur à eau (par défaut), plancher chauffant à eau, tapis chauffant électrique ou radiateur électrique rapide. Pour un type à eau, SmartPI utilise la température de départ de l'eau (la température de l'eau envoyée dans le circuit) que l'extension Smart Boiler publie pour le circuit du thermostat, quand elle est disponible. Sans elle, la commande est la même qu'avant. Un type à eau tient aussi compte, sans aucun réglage, du fait que la chaudière est appelée ou non, c'est-à-dire si elle reçoit l'ordre de chauffer (selon Smart Boiler, ou selon la chaudière centrale de Versatile Thermostat). Tant qu'une zone demande une chaleur qui ne vient pas, SmartPI ne compte pas sa commande comme de la chaleur dans son apprentissage. Choisissez un type électrique pour un émetteur électrique. Voir [Entrée eau](water_input.md) et sa [section 4](water_input.md#4-une-chaudière-qui-nest-pas-appelée).
+Les réglages du régulateur comprennent le **type de chauffage** : radiateur à eau (par défaut), plancher chauffant à eau, tapis chauffant électrique ou radiateur électrique rapide. Un type à eau utilise les données d'eau et l'appel de la chaudière venant des sources choisies dans **Water and boiler**. Les données d'eau sont la température de départ de l'eau (la température de l'eau envoyée dans le circuit du thermostat) et les signaux de la chaudière ; elles viennent d'entités Home Assistant (de n'importe quelle intégration, ou d'un capteur sur le tuyau de départ) ou d'un fournisseur (une intégration qui implémente le contrat de SmartPI). L'appel de la chaudière dit si la chaudière reçoit l'ordre de chauffer ; il vient de la chaudière centrale de Versatile Thermostat (par défaut là où elle sert le thermostat), d'entités ou d'un fournisseur. Sans données d'eau, la commande est la même qu'avant. Tant qu'une zone demande une chaleur qui ne vient pas, SmartPI ne compte pas sa commande comme de la chaleur dans son apprentissage. Choisissez un type électrique pour un émetteur électrique : il ne lit ni l'un ni l'autre. Voir [Entrées eau et chaudière](water_input.md) et sa [section 4](water_input.md#4-une-chaudière-qui-nest-pas-appelée).
 
 Il vaut mieux configurer une zone voisine dans les entrées des deux zones, pour que chacune voie l'autre. Quand la fenêtre d'un voisin est ouverte, SmartPI applique la réaction choisie dans sa propre régulation. Le Versatile Thermostat de la zone continue d'afficher son propre état de fenêtre, son mode et son preset, et les diagnostics montrent la réaction en vigueur.
 
@@ -306,7 +306,23 @@ Pour démarrer simplement :
 | **Demande au coude**                 | Demande SmartPI correspondant au changement de pente de la vanne.                                      | `80%`             |
 | **Ouverture de vanne au coude**      | Ouverture physique de la vanne au changement de pente.                                                 | `15%`             |
 | **Ouverture maximale de vanne**      | Ouverture maximale autorisée lorsque la linéarisation est activée.                                     | `100%`            |
-| **Heating type** (type de chauffage, libellé affiché en anglais) | Radiateur à eau, plancher chauffant à eau, tapis chauffant électrique ou radiateur électrique rapide ; un type à eau utilise les données d'eau de Smart Boiler et le fait que la chaudière soit appelée ou non ([Entrée eau, §2](water_input.md#2-configuration)). | radiateur à eau |
+| **Heating type** (type de chauffage, libellé affiché en anglais) | Radiateur à eau, plancher chauffant à eau, tapis chauffant électrique ou radiateur électrique rapide ; un type à eau utilise les données d'eau et l'appel de la chaudière venant des sources choisies dans Water and boiler ([Entrées eau et chaudière, §2](water_input.md#2-configuration)). | radiateur à eau |
+
+L'élément **Water and boiler** des options d'un thermostat, et l'élément **Boiler signals** de l'entrée « SmartPI defaults » ([Entrées eau et chaudière, §2](water_input.md#2-configuration)) ; leurs libellés sont affichés en anglais :
+
+| Champ | Rôle | Valeur par défaut |
+| ----- | ---- | ----------------- |
+| **Water data** (données d'eau) | D'où viennent les données d'eau : aucune source, des entités Home Assistant, ou un fournisseur listé par son nom. | aucune |
+| **Boiler's call** (appel de la chaudière) | D'où vient l'appel de la chaudière : aucune source, la chaudière centrale de Versatile Thermostat (proposée quand elle sert le thermostat), des entités Home Assistant, ou un fournisseur. | la chaudière centrale de Versatile Thermostat là où elle sert le thermostat, sinon aucune |
+| **Supply water temperature** (température de départ de l'eau) | Le capteur de température de l'eau qui arrive au circuit de ce thermostat (données d'eau venant d'entités). | — |
+| **Boiler signals** (signaux de la chaudière) | Comme dans SmartPI defaults (As in SmartPI defaults), ou ceux de ce thermostat (This thermostat's own). | comme dans SmartPI defaults |
+| **Boiler can heat** (la chaudière peut chauffer) | On tant que la chaudière peut chauffer les circuits en ce moment. | — |
+| **Hot water has priority** (l'eau chaude est prioritaire) | On tant que la chaudière chauffe l'eau chaude sanitaire au lieu des circuits. | — |
+| **Boiler fault** (défaut de la chaudière) | On tant que la chaudière signale un défaut. | — |
+| **Boiler is called for heat** (la chaudière est appelée pour chauffer) | On tant que la chaudière reçoit l'ordre de chauffer. | — |
+| **Why the boiler is not called** (pourquoi la chaudière n'est pas appelée) | Un capteur texte : `below_threshold`, `no_demand`, `activation_delay` ou `boiler_fault`. | — |
+
+Un changement des données d'eau ou du capteur de départ demande s'il faut remettre à zéro le modèle appris (recommandé), parce que la puissance apprise a alors d'autres unités.
 
 ### Redémarrage PWM aux transitions de bande
 
@@ -352,8 +368,8 @@ Autres blocs utiles sous `live` :
 - `autocalib` : état de la supervision automatique,
 - `calibration` : état d'une calibration forcée,
 - `dependencies` : dépendances entre zones et zone à deux sources de chaleur, quand elles sont configurées ([Dépendances entre zones, §9](zone_dependencies.md#9-diagnostics)),
-- `water` : l'entrée eau, pour un type de chauffage à eau ([Entrée eau, §8](water_input.md#8-diagnostics)),
-- `boiler` : si la chaudière est appelée, et comment l'apprentissage traite une zone qui demande de la chaleur et n'en reçoit pas ([Entrée eau, §4](water_input.md#4-une-chaudière-qui-nest-pas-appelée)).
+- `water` : les données d'eau, pour un type de chauffage à eau, et d'où vient chacun de leurs signaux ([Entrées eau et chaudière, §8](water_input.md#8-diagnostics)),
+- `boiler` : si la chaudière est appelée, par quelle source, et comment l'apprentissage traite une zone qui demande de la chaleur et n'en reçoit pas ([Entrées eau et chaudière, §4](water_input.md#4-une-chaudière-qui-nest-pas-appelée)).
 
 En mode normal, le bloc `setpoint` peut contenir :
 
@@ -377,7 +393,7 @@ https://github.com/KipK/vtherm_smartpi/tree/master/cards
 
 ## Panel de régulation avec Equinox
 
-SmartPI publie aussi le résumé `specific_states.smart_pi` et la référence d'entité `specific_states.regulation_diagnostics` sur l'entité thermostat. Tant que SmartPI utilise les données d'eau de Smart Boiler, il écrit aussi `specific_states.water_factor` : le facteur d'eau qu'il applique (la chaleur que donne l'émetteur avec l'eau actuelle, comparée à celle donnée avec une eau de référence). Smart Boiler lit cette valeur ([Entrée eau, §3.4](water_input.md#34-utilisation-dans-smartpi)). La [carte Lovelace Equinox](https://github.com/KipK/equinox) utilise ces attributs pour afficher un panel **Régulation** dédié depuis le menu de la carte climate.
+SmartPI publie aussi le résumé `specific_states.smart_pi` et la référence d'entité `specific_states.regulation_diagnostics` sur l'entité thermostat. Tant que SmartPI utilise des données d'eau, il écrit aussi `specific_states.water_factor` : le facteur d'eau qu'il applique (la chaleur que donne l'émetteur avec l'eau actuelle, comparée à celle donnée avec une eau de référence). C'est la sortie de SmartPI pour toute intégration qui la lit ([Entrées eau et chaudière, §3.4](water_input.md#34-utilisation-dans-smartpi)). La [carte Lovelace Equinox](https://github.com/KipK/equinox) utilise ces attributs pour afficher un panel **Régulation** dédié depuis le menu de la carte climate.
 
 Avec Equinox, vous pouvez suivre la progression d'apprentissage SmartPI, la confiance du modèle, le détail de puissance, l'atterrissage de consigne, les graphes d'historique et les actions de maintenance disponibles sans copier la carte Markdown de diagnostics.
 
@@ -405,7 +421,7 @@ Le réglage courant est disponible dans `specific_states.smartpi_learning_enable
 
 Ce service efface l'apprentissage SmartPI et force un retour en mode bootstrap.
 
-Il efface aussi ce que les dépendances entre zones ont appris (les échanges de chaleur avec les voisins, l'ajustement d'une zone à deux sources de chaleur). Il garde les moyennes de l'entrée eau. La remise à zéro proposée par le formulaire de zone, et par l'avis de réparation de l'entrée eau dans Home Assistant, est cette même remise à zéro ; voir [Dépendances entre zones, §2.2](zone_dependencies.md#22-remise-à-zéro-du-modèle-appris).
+Il efface aussi ce que les dépendances entre zones ont appris (les échanges de chaleur avec les voisins, l'ajustement d'une zone à deux sources de chaleur). Il garde les moyennes de l'entrée eau. La remise à zéro proposée par le formulaire de zone, par le formulaire Water and boiler, et par l'avis de réparation de l'entrée eau dans Home Assistant, est cette même remise à zéro ; voir [Dépendances entre zones, §2.2](zone_dependencies.md#22-remise-à-zéro-du-modèle-appris).
 
 ### `force_smartpi_calibration`
 

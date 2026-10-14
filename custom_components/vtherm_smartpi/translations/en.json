@@ -79,6 +79,11 @@
           "smart_pi_debug": "Record full diagnostics (debug)",
           "smart_pi_enable_valve_linearization": "Enable valve curve linearization",
           "smart_pi_heating_type": "Heating type"
+        },
+        "description": "Settings for the thermostats without their own SmartPI entry, and the boiler's signals shared by all thermostats.",
+        "menu_options": {
+          "settings": "Regulator settings",
+          "boiler_signals": "Boiler signals"
         }
       },
       "thermostat_menu": {
@@ -87,7 +92,8 @@
           "settings": "Regulator settings",
           "zone": "Zone with two heat sources",
           "dependencies": "Zone dependencies",
-          "valve_curve": "Valve curve"
+          "valve_curve": "Valve curve",
+          "heating_inputs": "Water and boiler"
         }
       },
       "settings": {
@@ -219,6 +225,80 @@
           "smart_pi_enable_valve_linearization": "Enable valve curve linearization"
         }
       },
+      "source_menu": {
+        "title": "Additional source of a zone",
+        "menu_options": {
+          "source_role": "Settings that still apply",
+          "heating_inputs": "Water and boiler"
+        }
+      },
+      "boiler_signals": {
+        "title": "Boiler signals",
+        "description": "Entities that tell SmartPI what the boiler does. Every thermostat that reads its water data or the boiler's call from entities uses them, unless it sets its own. All are optional: leave a field empty if you have no such entity.",
+        "data": {
+          "smart_pi_heat_available_entity": "Boiler can heat",
+          "smart_pi_dhw_entity": "Hot water has priority",
+          "smart_pi_fault_entity": "Boiler fault",
+          "smart_pi_boiler_called_entity": "Boiler is called for heat",
+          "smart_pi_boiler_reason_entity": "Why the boiler is not called"
+        },
+        "data_description": {
+          "smart_pi_heat_available_entity": "On while the boiler can heat the circuits now.",
+          "smart_pi_dhw_entity": "On while the boiler heats the domestic hot water instead of the circuits.",
+          "smart_pi_fault_entity": "On while the boiler reports a fault.",
+          "smart_pi_boiler_called_entity": "On while the boiler is told to heat.",
+          "smart_pi_boiler_reason_entity": "A text sensor with one of: below_threshold, no_demand, activation_delay, boiler_fault."
+        }
+      },
+      "heating_inputs": {
+        "title": "Water and boiler",
+        "description": "Where SmartPI reads the water that reaches this thermostat's emitters, and whether the boiler is called for heat. Use entities of any integration (for example a temperature sensor on the supply pipe), or an integration that implements SmartPI's contract (a provider): it is listed here once installed. See SmartPI's documentation, \"Water and boiler inputs\" (documentation/en/water_input.md).",
+        "data": {
+          "smart_pi_water_source": "Water data",
+          "smart_pi_boiler_call_source": "Boiler's call"
+        },
+        "data_description": {
+          "smart_pi_water_source": "With the supply water temperature SmartPI knows how much heat a command brings. None: SmartPI works without it.",
+          "smart_pi_boiler_call_source": "Whether the boiler heats while this zone calls for heat: SmartPI does not learn from heat that does not come. None: SmartPI takes every command for heat."
+        }
+      },
+      "heating_entities": {
+        "title": "Water and boiler entities",
+        "description": "Boiler signals in SmartPI defaults:\n{defaults}",
+        "data": {
+          "smart_pi_supply_entity": "Supply water temperature",
+          "smart_pi_boiler_signals": "Boiler signals"
+        },
+        "data_description": {
+          "smart_pi_supply_entity": "The temperature of the water that reaches this thermostat's circuit (after its mixing valve, if it has one).",
+          "smart_pi_boiler_signals": "Take the boiler's signals from SmartPI defaults, or set this thermostat's own."
+        }
+      },
+      "heating_signals": {
+        "title": "This thermostat's boiler signals",
+        "description": "All are optional: leave a field empty if you have no such entity.",
+        "data": {
+          "smart_pi_heat_available_entity": "Boiler can heat",
+          "smart_pi_dhw_entity": "Hot water has priority",
+          "smart_pi_fault_entity": "Boiler fault",
+          "smart_pi_boiler_called_entity": "Boiler is called for heat",
+          "smart_pi_boiler_reason_entity": "Why the boiler is not called"
+        },
+        "data_description": {
+          "smart_pi_heat_available_entity": "On while the boiler can heat the circuits now.",
+          "smart_pi_dhw_entity": "On while the boiler heats the domestic hot water instead of the circuits.",
+          "smart_pi_fault_entity": "On while the boiler reports a fault.",
+          "smart_pi_boiler_called_entity": "On while the boiler is told to heat.",
+          "smart_pi_boiler_reason_entity": "A text sensor with one of: below_threshold, no_demand, activation_delay, boiler_fault."
+        }
+      },
+      "heating_reset": {
+        "title": "Reset the learned model",
+        "description": "The water data source or the supply sensor changed. SmartPI's learned heating power then has other units: with water data it is measured at a reference water temperature. Resetting clears SmartPI's whole learned model of this thermostat so that it learns again from the start; it is recommended. If you keep the model, SmartPI does not ask again when these water data start.",
+        "data": {
+          "reset_model": "Reset the learned model"
+        }
+      },
       "model_reset": {
         "title": "Reset the zone's learned model",
         "description": "This change affects what the zone has learned: a neighbour added or removed, or its connection changed. Resetting clears SmartPI's whole learned model of this thermostat so that it learns again from the start; it is recommended.",
@@ -298,6 +378,25 @@
         "source_first": "Additional source first",
         "lead_band": "Main source in a band"
       }
+    },
+    "water_source": {
+      "options": {
+        "none": "None",
+        "entities": "Home Assistant entities"
+      }
+    },
+    "boiler_call_source": {
+      "options": {
+        "none": "None",
+        "vtherm_central_boiler": "Versatile Thermostat's central boiler",
+        "entities": "Home Assistant entities"
+      }
+    },
+    "boiler_signals": {
+      "options": {
+        "defaults": "As in SmartPI defaults",
+        "own": "This thermostat's own"
+      }
     }
   },
   "issues": {
@@ -307,7 +406,7 @@
         "step": {
           "confirm": {
             "title": "Reset the learned model of {name}?",
-            "description": "SmartPI now receives the supply water temperature for this thermostat from Smart Boiler, so its heating power is measured at a reference water temperature. The power learned before does not match these units. Resetting lets SmartPI learn the room again (recommended).",
+            "description": "SmartPI now receives the supply water temperature of this thermostat from the water data source, so its heating power is measured at a reference water temperature. The power learned before does not match these units. Resetting lets SmartPI learn the room again (recommended).",
             "data": {
               "reset_model": "Reset the learned model"
             }
@@ -321,7 +420,7 @@
         "step": {
           "confirm": {
             "title": "Reset the learned model of {name}?",
-            "description": "Smart Boiler reports that the supply water temperature of this thermostat's circuit is no longer measured, so SmartPI works without it. The power learned at a reference water temperature does not match these units. Resetting lets SmartPI learn the room again (recommended).",
+            "description": "The supply water temperature of this thermostat's circuit no longer comes from the water data source, so SmartPI works without it. The power learned at a reference water temperature does not match these units. Resetting lets SmartPI learn the room again (recommended).",
             "data": {
               "reset_model": "Reset the learned model"
             }

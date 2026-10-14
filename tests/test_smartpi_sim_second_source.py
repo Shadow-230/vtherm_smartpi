@@ -212,7 +212,7 @@ async def test_an_executive_source_applies_the_lead_s_power_with_its_own_water(m
         emitter="floor_water",
         options={CONF_SMART_PI_HEATING_TYPE: "floor_water"},
     )
-    sim = Simulation(monkeypatch, ZoneSpec(source=source, smart_boiler=True, initial_c=20.0), OUTDOOR)
+    sim = Simulation(monkeypatch, ZoneSpec(source=source, water_data="provider", initial_c=20.0), OUTDOOR)
     await sim.run_for(3.0)
     algo = sim.source_algo
     factor = algo.water_factor
