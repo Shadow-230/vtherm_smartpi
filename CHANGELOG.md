@@ -4,6 +4,17 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+- Rework the documentation. Where the fork changes SmartPI's existing behaviour, the
+  technical, diagnostics and user documents now describe it in place. `zone_dependencies.md`
+  and `water_input.md` share one layout and give the reasons behind the design, the data
+  read from Versatile Thermostat and Smart Boiler, and the formulas. All tests, the
+  simulator and the scenarios with their criteria are in `testing.md`. The documentation is
+  written in plain language and is also in French and Polish, translated from the English.
+  The French user, technical and diagnostics documents and README now say everything the
+  English ones say (some of the author's French text was behind: the license, the logo,
+  several wordings). The technical documentation lists the positive-integral guard, its
+  saved keys and the core deadband again, and the user guide names the settings as the
+  interface shows them.
 - Learn nothing wrong from a boiler that is not called. A zone calling for heat while
   its boiler is held off (a start threshold of devices, power or valve opening, an
   activation delay) took its command for heat and lost its learned emitter power. SmartPI

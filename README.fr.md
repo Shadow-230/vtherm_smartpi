@@ -1,13 +1,13 @@
 # Versatile Thermostat SmartPI
 
-[Lire la version anglaise](README.md)
+[Lire la version anglaise](README.md) · [Czytaj po polsku](README.pl.md)
 
 <p align="center">
-  <img src="assets/brand/logo.png" alt="SmartPI Logo" width="300" />
+  <img src="https://github.com/KipK/vtherm_smartpi/raw/master/assets/brand/logo.png" alt="SmartPI Logo" width="300" />
 </p>
 
 <p align="center">
-  <strong>Régulation PI auto-adaptative pour Home Assistant</strong>
+  <strong>Régulation PI auto-adaptative des thermostats pour Home Assistant</strong>
 </p>
 
 <p align="center">
@@ -26,9 +26,9 @@ SmartPI est un algorithme de contrôle thermique avancé basé sur un modèle de
 - **Feed-forward basé sur le modèle** : Estime la puissance de maintien nécessaire au point de consigne, complétée par un biais lent et une correction prédictive FF3 activée par défaut en cas de perturbation
 - **Trajectoire analytique de consigne** : Façonne la référence proportionnelle et applique un cap d'atterrissage basé sur le modèle en chauffage pour atteindre la cible rapidement tout en limitant le dépassement
 - **Gouvernance Safety-First** : Une matrice par régime gèle ou déverrouille l'apprentissage et l'adaptation des gains selon le contexte opérationnel
-- **Auto-calibration** : Surveille la qualité du modèle et déclenche une séquence de recalibration lorsque l'apprentissage stagne
+- **Auto-calibration** : Surveille la qualité du modèle au fil du temps et déclenche une séquence de recalibration lorsque l'apprentissage stagne
 - **Linéarisation de courbe de vanne** : Traduit la demande SmartPI en position de vanne adaptée au comportement non linéaire des vannes thermostatiques (TRV)
-- **Diagnostics détaillés** : Publie l'état de l'apprentissage, l'état du modèle et les données de régulation — consultable via une carte Markdown Home Assistant dédiée ou le panel de régulation [Equinox](https://github.com/KipK/equinox)
+- **Diagnostics détaillés** : Publie en détail l'état de l'apprentissage, l'état du modèle et les données de régulation — consultable via une carte Markdown Home Assistant dédiée ou le panel de régulation [Equinox](https://github.com/KipK/equinox)
 
 ## 🔗 Intégration avec Versatile Thermostat
 
@@ -41,7 +41,7 @@ Cette intégration étend l'intégration populaire [Versatile Thermostat](https:
 
 ## 📊 Suivi de régulation avec Equinox
 
-SmartPI publie un résumé structuré de diagnostics que la [carte Lovelace Equinox](https://github.com/KipK/equinox) détecte automatiquement. Une fois Equinox installé et configuré pour votre entité Versatile Thermostat, son panel **Régulation** donne accès au suivi d'apprentissage SmartPI, à la fiabilité du modèle, au détail des commandes, aux graphes d'historique et aux actions de maintenance.
+SmartPI publie un résumé structuré de diagnostics que la [carte Lovelace Equinox](https://github.com/KipK/equinox) détecte automatiquement. Une fois Equinox installé et configuré pour votre entité Versatile Thermostat, son panel **Régulation** donne un accès direct au suivi d'apprentissage SmartPI, à la fiabilité du modèle, au détail des commandes, aux graphes d'historique et aux actions de maintenance.
 
 ![Vue d'ensemble du panel de régulation SmartPI dans Equinox](https://github.com/KipK/equinox/raw/master/assets/screens/regul-overview.png)
 
@@ -58,7 +58,7 @@ SmartPI publie un résumé structuré de diagnostics que la [carte Lovelace Equi
 3. Recherchez "Versatile Thermostat SmartPI" dans HACS
 4. Installez l'intégration
 5. Redémarrez Home Assistant
-6. Ajouter l'intégration `Vtherm_smartpi` depuis Paramètres / Appareils et Services / Integration
+6. Ajouter l'intégration `Vtherm_smartpi` depuis Paramètres / Appareils et services / Intégrations
 7. Configurez l'algorithme SmartPI dans vos appareils Versatile Thermostat
 
 ### Installation manuelle
@@ -71,10 +71,15 @@ SmartPI publie un résumé structuré de diagnostics que la [carte Lovelace Equi
 
 ## 📖 Documentation
 
-La documentation complète est disponible en français :
+La documentation complète est disponible en anglais, en français et en polonais
+([README.md](README.md), [README.pl.md](README.pl.md)) :
 
 - 🇫🇷 [Documentation utilisateur (Français)](documentation/fr/vtherm_smartpi.md)
 - 🇫🇷 [Documentation technique (Français)](documentation/fr/technical_doc.md)
+- 🇫🇷 [Dépendances entre zones et deuxième source de chaleur (Français)](documentation/fr/zone_dependencies.md)
+- 🇫🇷 [Entrée eau (Français)](documentation/fr/water_input.md)
+- 🇫🇷 [Tests (Français)](documentation/fr/testing.md)
+- 🇫🇷 [Diagnostics (Français)](documentation/fr/diagnostics.md)
 
 ## 👥 Auteurs
 
@@ -88,7 +93,7 @@ Les contributions sont bienvenues ! Consultez la documentation pour les lignes d
 ## 🙏 Remerciements
 
 - [@gael1980](https://github.com/gael1980) pour les fondations scientifiques et la théorie derrière SmartPI
-- [@caiusseverus](https://github.com/caiusseverus) pour son [simulateur de chauffage](https://github.com/caiusseverus/heating-simulator) et son aide pour les tests de SmartPI et son expertise
+- [@caiusseverus](https://github.com/caiusseverus) pour son [simulateur de chauffage](https://github.com/caiusseverus/heating-simulator) bien utile, son aide pour tester SmartPI et le partage de ses connaissances
 - [@jmcollin](https://github.com/jmcollin78) pour le développement de [Versatile Thermostat](https://github.com/jmcollin78/versatile_thermostat)
 - [@bontiv](https://github.com/bontiv) pour le site [Versatile Thermostat](https://www.versatile-thermostat.org/)
 - Tous les testeurs qui ont aidé lors du développement de SmartPI
@@ -105,4 +110,4 @@ Si SmartPI vous est utile, vous pouvez soutenir son développement ici :
 
 ## 📄 Licence
 
-Ce projet est distribué selon les conditions de licence Smart-PI. Voir [LICENSE.md](LICENSE.md) pour plus de détails.
+Ce projet est distribué selon les conditions de la licence Apache 2. Voir [LICENSE](LICENSE) pour plus de détails.
