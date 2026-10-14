@@ -12,13 +12,12 @@ The current codebase is built around three guiding ideas:
 
 This document describes the behavior that is actually implemented in the current SmartPI code.
 
-Zone dependencies (heat exchanged with neighbouring zones, a second heat source in the zone)
-extend the model with known inputs at a single substitution point; in a zone with two heat
-sources SmartPI also takes `a` and `b` from the zone's fit and the other thermostat follows its
-command. They are described in [Zone dependencies and a second heat source](zone_dependencies.md).
-
-With water heating, the temperature of the water reaching the emitter (from the Smart Boiler
-plugin) turns the command into power at a reference water; see [Water input](water_input.md).
+This fork adds extensions: known inputs (heat exchanged with neighbouring zones, and heat from a
+second heat source in the zone), the temperature of the water reaching the emitters, and the
+boiler's call (whether the boiler is told to heat). Where an extension changes the model, the
+command chain or the learning, the sections below include it. The extensions themselves are
+described in [Zone dependencies and a second heat source](zone_dependencies.md) and
+[Water input](water_input.md), and their tests in [Tests](testing.md).
 
 ---
 
@@ -48,6 +47,24 @@ $$ \tau = \frac{1}{b} $$
 
 The model is intentionally simple. Dead time is learned separately and injected into tuning heuristics and protections.
 
+**Known inputs.** The model is extended with the heat exchanged with neighbouring zones and the
+heat added by a second source:
+
+$$ \frac{dT_{int}}{dt} = a \cdot u - b \cdot (T_{int} - T_{ext}) + \sum_i g_i (T_i - T_{int}) + \sum_j q_j $$
+
+Here `g_i` (1/min) links the zone to a temperature `T_i`, such as a neighbouring zone's, and `q_j`
+(°C/min) is heat added directly, such as the second source's heat.
+
+The control law takes these inputs in through two values it already uses. Both are computed in a
+single place:
+
+$$ b_{eff} = loss + \sum_i g_i, \quad T_{ref} = \frac{loss \cdot T_{ext} + \sum_i g_i T_i + \sum_j q_j}{b_{eff}} $$
+
+Here `loss` is the learned `b`, or the loss fitted without the always-connected neighbours. The
+shift of `T_ref` caused by the heat term is limited to `KNOWN_HEAT_MAX_SHIFT_C`. Without known
+inputs, `b_eff = b` and `T_ref = T_ext`. Learning keeps using the raw `b` and `T_ext`
+([Zone dependencies, §3](zone_dependencies.md#3-the-model-with-known-inputs)).
+
 ### 2.2 Command chain
 
 The current command follows this structure:
@@ -65,11 +82,13 @@ The value effectively injected into the controller is `u_ff_eff + u_pi`, then it
 
 - rate limiting,
 - anti-windup,
-- cycle constraints and protections.
+- cycle constraints and protections; with water heating the output is limited to
+  `max_on_percent × max(φ, 0.05)`. This is what a full command gives at the water's factor `φ`
+  (the heat the emitter gives with the current water, compared with the reference water).
 
-With water heating, this value is power at a reference water: the emitter gets
-`power / max(φ, 0.05)` before the valve curve and the output is capped at
-`max_on_percent × max(φ, 0.05)`; see [Water input, §3.4](water_input.md#34-use-in-smartpi).
+With water heating, the controller works in power at a reference water temperature. The command
+sent to the emitter is `power / max(φ, 0.05)`, at most 1, before the valve curve. Learning sees the
+command times `φ` ([Water input, §3.4](water_input.md#34-use-in-smartpi)).
 
 ---
 
@@ -96,6 +115,12 @@ SmartPI leaves `HYSTERESIS` once `b` has 8 measurements and `a` has
 6 measurements. Both buffers continue filling up to `AB_HISTORY_SIZE = 31`
 during normal SmartPI regulation.
 
+In a zone with two heat sources, the zone has a joint fit: one model fitted for both sources
+together. Once this fit is published, SmartPI's `a`, `b` and these histories are set from it, and
+SmartPI then leaves `HYSTERESIS`. Outside `HYSTERESIS`, the fit's `a` and `b`, with the counts that
+its reliability checks use, are kept at every calculation
+([Zone dependencies, §5.5](zone_dependencies.md#55-learning)).
+
 The `b` convergence used for drift-aware `a` learning relies on `b_converged_for_a()`:
 
 1. `learn_ok_count_b >= 11`,
@@ -114,7 +139,15 @@ The code no longer uses a `WINDOW_MIN_MINUTES` constant. Learning now relies on 
 - anchors the window start after the dead-time end when needed,
 - monitors power stability through the coefficient of variation (`U_CV_MAX`),
 - extends the window while the slope is not yet considered robust,
-- gives up after `DT_MAX_MIN = 240` minutes if no robust signal emerges.
+- gives up after `DT_MAX_MIN = 240` minutes if no robust signal emerges,
+- pauses while a learning gate is set (a neighbour's door open or settling, a neighbour's open
+  window, the second source's heat not yet known, the emitter cooling down because the boiler is
+  not called or warming up again once it starts), and discards the learning window in progress
+  each time a gate starts or ends,
+- subtracts from the measured temperature change the part that the known inputs cause: their rate
+  `known_rate = Σ g_i·(T_i − T) + Σ q_j`, integrated over the window,
+- counts the power as 0 while the zone calls for heat and the boiler is not called
+  ([Water input, §4](water_input.md#4-a-boiler-that-is-not-called)).
 
 In practice, the decision to submit or extend the window depends on slope robustness, not on a fixed minimum duration.
 
@@ -149,14 +182,7 @@ $$ a = \frac{dT/dt + b \cdot (T_{int} - T_{ext})}{u} $$
 Histories are filtered through median/MAD. The published magnitude of `a` is
 bounded while preserving the mode sign; `b` remains strictly positive.
 
-With zone dependencies, each window is corrected by the heat of the known inputs and
-some contexts (a neighbour's door moving, a neighbour's open window) pause learning; in
-a zone with two heat sources, SmartPI starts from the zone's fit and holds its `a`, `b`
-and the evidence the bootstrap counts. See
-[Zone dependencies, §2.3](zone_dependencies.md#23-where-the-model-is-used) and
-[§6.5](zone_dependencies.md#65-learning). A zone calling for heat while its boiler is not called
-(a start threshold, an activation delay) learns with the power 0, and not around the boiler's
-stop and start; see [Water input, §11](water_input.md#11-a-boiler-that-is-not-called).
+With water heating, `u` is the power at the reference water (the command times `φ`).
 
 ### 3.5 Dead-time estimation
 
@@ -170,6 +196,12 @@ Therefore OFF -> ON learns `heat` in HEAT mode but `cool` in COOL mode. The
 ON -> OFF transition learns the opposite passive response.
 
 Reliability becomes true as soon as at least one valid measurement has been captured on the corresponding channel. Published values are the averages of the `heat` and `cool` histories.
+
+The estimator pauses while a learning gate is set. Each time a gate starts or ends, the
+observation in progress is reset. With water heating it gets the command, not the power (0 during
+domestic hot water). While the zone calls for heat and the boiler is not called, it gets 0, so it
+times no response. The boiler's start after such a hold is not timed either: that delay is the
+water's, not the valve's.
 
 ---
 
@@ -185,7 +217,7 @@ Reliability becomes true as soon as at least one valid measurement has been capt
 
 $$ K_p = \frac{1}{|a| \cdot (\lambda + L)} $$
 
-3. compute $K_i = K_p / \tau$,
+3. compute $K_i = K_p / \tau$; with active heat exchanges, $\tau = 1 / (loss + \sum_i g_i)$, which the exchanges make shorter (section 2.1),
 4. clamp the gains and apply governance freezes.
 
 The active dead time is `deadtime_heat` in HEAT and `deadtime_cool` in COOL.
@@ -199,11 +231,15 @@ Important:
 
 The structural feed-forward is computed from:
 
-$$ k_{ff} = \frac{b}{a} $$
+$$ k_{ff} = \frac{b_{eff}}{a} $$
 
 and:
 
-$$ u_{ff1} = clamp(k_{ff} \cdot (SP - T_{ext}), 0, 1) \cdot warmup\_scale $$
+$$ u_{ff1} = clamp(k_{ff} \cdot (SP - T_{ref}), 0, 1) \cdot warmup\_scale $$
+
+Without known inputs, `b_eff = b` and `T_ref = T_ext` (section 2.1). FF3, the setpoint
+trajectory, the thermal twin, the near band and the FF trim windows use the same `b_eff` and
+`T_ref`.
 
 In COOL, $a < 0$ and therefore $k_{ff} < 0$. When outdoors is warmer than the
 setpoint, the two negative differences correctly produce positive cooling
@@ -221,9 +257,8 @@ This is combined with:
 - `ABConfidence`: confidence policy for `a/b`,
 - fallback in `AB_BAD` mode to a zero feed-forward after `AB_BAD_PERSIST_CYCLES = 3`.
 
-With zone dependencies, the control law uses the composed loss coefficient `b_eff` and
-reference temperature `T_ref` in place of `b` and `T_ext`; see
-[Zone dependencies, §2.2](zone_dependencies.md#22-composition).
+`FFTrim` is also frozen (`boiler_not_heating`) while the zone calls for heat and the boiler is not
+called, and while the zone's emitter settles before or after such a period.
 
 ### 4.3 FF3
 
@@ -394,7 +429,15 @@ Additional protections currently present are:
 - signed integral guard during resumes, catch-up phases, and setpoint changes,
 - explicit `I:HOLD` during the post-resume `deadtime_heat` phase for `window_resume` and `power_shedding_resume` in heating mode,
 - deadband hold logic,
-- with water heating, the `no_heat` hold: the command and the integral during domestic hot water, the integral only while the water brings next to no heat; see [Water input, §3.4](water_input.md#34-use-in-smartpi).
+- with water heating, the `no_heat` hold: the command and the integral are held during domestic hot water, and only the integral is held while the water brings almost no heat ([Water input, §3.4](water_input.md#34-use-in-smartpi)),
+- a neighbour's open window, while the connection to that neighbour is active: the reaction chosen for that neighbour. It is either off, through the window-off path with its protected resume, or the zone's frost or eco preset, and it never asks for more heating or cooling than the setpoint does ([Zone dependencies, §4.5](zone_dependencies.md#45-a-window-at-a-connected-neighbour)).
+
+The calculation also distinguishes two zones around the setpoint:
+
+- the hysteretic deadband, used to keep the `in_deadband` state stable,
+- the core deadband, defined by `abs(error_i) < deadband_c` once the time constant is reliable, used to actually freeze P and I.
+
+This split avoids keeping P and I frozen only because the hysteresis still holds the deadband state while the error has already left the configured deadband.
 
 ### 4.6 Auto-calibration
 
@@ -418,7 +461,11 @@ The forced cycle is managed by `CalibrationManager`:
 - `HEAT_UP`,
 - `COOL_DOWN_FINAL` back to `sp`.
 
-Supervisor decisions are published on the Home Assistant event bus. Every event carries `entity_id`, the climate entity of the thermostat, and `name`, the thermostat name:
+A calibration in progress is cancelled when a neighbour's open window triggers a reaction. It is
+also cancelled when the zone calls for heat and the boiler is not called, because the zone's
+response to heat would not come.
+
+The supervisor's decisions are published as Home Assistant events. Every event carries `entity_id`, the thermostat's climate entity, and `name`, the thermostat's name:
 
 | Event                              | Fired when                                                                    | Other fields                                                          |
 | ---------------------------------- | ----------------------------------------------------------------------------- | --------------------------------------------------------------------- |
@@ -427,6 +474,10 @@ Supervisor decisions are published on the Home Assistant event bus. Every event 
 | `smartpi_autocalib_success`        | a supervised calibration exits with all criteria met                          | `improved_params`, `retry_count`                                      |
 | `smartpi_autocalib_retry`          | a supervised calibration exits with missing criteria and a retry is scheduled | `retry_count`, `missing_criteria`                                     |
 | `smartpi_autocalib_degraded`       | the last retry fails and the model is marked degraded                         | `retry_count`                                                         |
+
+Before this format, the events carried the thermostat's name in `entity_id`, and Home Assistant's
+recorder rejected it. An automation that looked for the name in `entity_id` should now look for it
+in `name`.
 
 ---
 
@@ -452,6 +503,7 @@ Supervisor decisions are published on the Home Assistant event bus. Every event 
 | `controller.py`        | discrete PI, anti-windup, hold, hysteresis                  |
 | `deadband.py`          | deadband and near-band                                      |
 | `setpoint.py`          | analytical setpoint trajectory and HEAT landing cap         |
+| `integral_guard.py`    | guard against positive integral growth in recovery phases   |
 | `feedforward.py`       | `u_ff1/u_ff2/u_ff3` orchestration                           |
 | `ff_trim.py`           | causal slow bias and bounded trim/integral ownership plans  |
 | `command_ownership.py` | frozen command projection and scheduler binding tracker     |
@@ -467,10 +519,18 @@ Supervisor decisions are published on the Home Assistant event bus. Every event 
 | `diagnostic_history.py` | versioned envelope and stable Recorder series               |
 | `tint_filter.py`       | adaptive indoor-temperature filtering                       |
 | `timestamp_utils.py`   | monotonic / wall-clock conversion                           |
+| `effective_model.py`   | known inputs and their composition into `b_eff`, `T_ref`    |
+| `dependencies.py`, `dependency_inputs.py` | dependency items, their validation and state; readings of one calculation |
+| `dependency_model.py`  | known inputs, learning gates, a neighbour's window reaction; the zone with two sources |
+| `coupling_estimator.py` | learning of the exchange coefficients `k`                  |
+| `zone_fit.py`, `source_model.py`, `source_candidates.py` | the zone's joint fit, the second source's heat and time scales |
+| `split.py`, `source_settings.py`, `source_link.py` | split rules and allocation loop, source settings, the link between sources |
+| `water_input.py`       | the water's factor `φ` from Smart Boiler's data             |
+| `boiler_call.py`       | whether the boiler heats a calling zone                     |
 
-The modules of zone dependencies, the zone with two heat sources and the water input are
-listed in [Zone dependencies, §3](zone_dependencies.md#3-components) and
-[Water input, §4](water_input.md#4-components).
+The modules of the extensions are described in
+[Zone dependencies, §6](zone_dependencies.md#6-components-and-interfaces) and
+[Water input, §5](water_input.md#5-components-and-interfaces).
 
 ### 5.3 Internal composition of `SmartPI`
 
@@ -486,6 +546,7 @@ self.deadband_mgr = DeadbandManager(name, near_band_deg)
 self.calibration_mgr = CalibrationManager(name)
 self.gain_scheduler = GainScheduler(name)
 self.tint_filter = AdaptiveTintFilter(name, enabled=ENABLE_ADAPTIVE_TINT_FILTER)
+self.integral_guard = SmartPIIntegralGuard(name)
 self.twin = ThermalTwin1R1C(dt_s=SMARTPI_RECALC_INTERVAL_SEC, gamma=0.1)
 self.guards = SmartPIGuards()
 self.autocalib = AutoCalibTrigger(name)
@@ -494,6 +555,10 @@ self._fftrim_observer = CausalFFTrimObserver(cycle_min)
 self._fftrim_periodic_observer = PeriodicFFTrimObserver(cycle_min)
 self._command_ownership = CommandOwnershipTracker()
 self._ab_confidence = ABConfidence()
+self.dependency_state = DependencyState()
+self.dependency_model = DependencyModel(self.dependency_state)
+self.water = WaterInput()
+self.boiler = BoilerCall()
 ```
 
 ### 5.4 Current persistence
@@ -535,18 +600,21 @@ The current payload from `SmartPI.save_state()` notably contains:
     "db_state": {...},
     "cal_state": {...},
     "gs_state": {...},
+    "integral_guard_state": {...},
     "twin_state": {...},
     "guards_state": {...},
+    "ac_state": {...},
     "ff_v2_trim": {...},
     "tint_filter_state": {...},
+    # only when used:
+    "dependencies": {...},          # learned exchanges, the zone's fit and the source's state
+    "dependency_reset_token": "...",  # the last reset asked by a form, applied once
+    "water": {...},                 # the water input's availability and averages
 }
 ```
 
-Loading can also read `ac_state`, but that block is not currently emitted again by `save_state()`.
-
-Only when used, the payload also carries `dependencies` and `dependency_reset_token`
-([Zone dependencies, §8](zone_dependencies.md#8-persistent-state)) and `water`
-([Water input, §7](water_input.md#7-persistent-state)).
+The optional keys are described in [Zone dependencies, §8](zone_dependencies.md#8-persistent-state)
+and [Water input, §7](water_input.md#7-persistent-state). A payload without these keys loads as before.
 
 Only the learned trim remains persistent. Ownership windows, pending
 proposals, and integral transfers are transient; after restart the observer is
@@ -579,12 +647,18 @@ relative to the current Home Assistant process. Persisted model counters remain
 internal and are used for model quality and warm-up decisions. When the thermal
 twin is usable, its public diagnostic fields are exposed under `analysis.twin`.
 
-With zone dependencies configured, `live` also carries a `dependencies` block
-(composed model, learning gate, one entry per neighbour, and `second_source` for the main
-source of a zone with two heat sources; a thermostat working as an additional source shows
-only its role); see [Zone dependencies, §9](zone_dependencies.md#9-diagnostics). For a water
-heating type, `live` also carries a `water` block, and a `boiler` block where the boiler's call
-is known; see [Water input, §8](water_input.md#8-diagnostics).
+`live` also carries these blocks, only when they are used:
+
+- `dependencies`: the composed model (`b_eff`, `t_ref`), the learning gate, the window reaction,
+  one entry per neighbour, and `second_source` for the main source of a zone with two heat
+  sources; a thermostat that works as an additional source shows only its role
+  ([Zone dependencies, §9](zone_dependencies.md#9-diagnostics));
+- `water`: the water's factor, its source and the holds, for a water heating type;
+- `boiler`: whether the boiler is called, and the learning mode that follows from it
+  ([Water input, §8](water_input.md#8-diagnostics)).
+
+With water data, the `power` values are power at the reference water, while
+`current_cycle_percent` and `next_cycle_percent` are the command sent to the emitter.
 
 `feedforward.fftrim.command_ownership` exposes the latest binding status,
 rejection reason, request sequence, requested/projected/realized powers and

@@ -45,17 +45,20 @@ Le bloc `live` est organisé par responsabilité :
 
 | Bloc | Contenu |
 |---|---|
-| `control` | Phase, mode, gains, saturation et bandes de régulation |
-| `power` | Puissances du cycle courant et suivant, PI/FF, limites et puissance appliquée |
+| `control` | Phase, mode de régulation, gains, saturation et bandes de régulation |
+| `power` | Puissances du cycle courant et suivant, répartition PI/FF, limites et puissance appliquée |
 | `temperature` | Températures intérieure/extérieure, erreurs et état de l'intégrale |
 | `model` | Modèle A/B, confiance, constante de temps et temps morts |
-| `learning` | Étape d'apprentissage, bootstrap, mises à jour acceptées et dérive |
+| `learning` | Étape d'apprentissage, progression du bootstrap, mises à jour acceptées et état de dérive |
 | `governance` | Régime thermique et décision de mise à jour du modèle |
 | `feedforward` | État FF3, source de bande morte et diagnostics FFTrim canoniques |
 | `setpoint` | Consigne filtrée, trajectoire, boost et résumé d'atterrissage |
 | `autocalib` | État du superviseur de calibration automatique |
 | `calibration` | État, nombre d'essais et date de la dernière calibration |
 | `analysis` | Champs avancés utilisés par les cartes de diagnostic fournies |
+| `dependencies` | Seulement avec des dépendances entre zones : le modèle composé, le verrou d'apprentissage, la réaction à la fenêtre, les voisins et la zone à deux sources de chaleur |
+| `water` | Seulement pour un type de chauffage à eau : le facteur d'eau, sa source et les maintiens |
+| `boiler` | Seulement quand SmartPI sait si la chaudière est appelée : l'appel et le mode d'apprentissage qui en découle |
 
 `analysis` regroupe les valeurs live avancées dans `control`, `learning`,
 `trajectory`, `landing`, `deadtime`, `governance`, `feedforward` et, lorsqu'il
@@ -79,6 +82,39 @@ live:
       windows_since_update: ...
 ```
 
+### `dependencies`
+
+Quand un thermostat a des dépendances entre zones (des zones voisines, ou une zone à deux sources
+de chaleur), `live` reçoit un bloc `dependencies`. Il contient le modèle composé (`b_eff`,
+`t_ref`), le verrou d'apprentissage, la réaction à la fenêtre appliquée, et une entrée par voisin
+avec son échange de chaleur appris. Pour la source principale d'une zone à deux sources de chaleur,
+il contient aussi un bloc `second_source` : la commande et la chaleur de la source additionnelle,
+son plafond de puissance, le renfort de rattrapage et l'ajustement de la zone. Un thermostat qui
+sert de source additionnelle à un autre thermostat ne publie que son rôle, la source principale et
+la commande qu'il applique. Sans dépendances, le bloc est absent. Ses champs sont listés dans
+[Dépendances entre zones, §9](zone_dependencies.md#9-diagnostics).
+
+### `water`
+
+Pour un thermostat avec un type de chauffage à eau, `live` reçoit un bloc `water`. Il contient le
+facteur d'eau appliqué, sa source, le type de chauffage, la température de départ de l'eau moyennée,
+les dernières raisons données par Smart Boiler, le maintien pendant l'eau chaude sanitaire
+(`no_heat`), le maintien de l'intégrale quand l'eau chauffe peu (`low_heat`) et l'indicateur « eau
+trop froide ». Avec des données d'eau, les valeurs `power` sont des puissances pour l'eau de
+référence, tandis que `current_cycle_percent` et `next_cycle_percent` sont la commande envoyée à
+l'émetteur. Ses champs sont listés dans
+[Entrée eau, §8](water_input.md#8-diagnostics).
+
+### `boiler`
+
+Pour un type de chauffage à eau, quand SmartPI sait si la chaudière est appelée (par Smart Boiler,
+ou par la chaudière centrale de Versatile Thermostat), `live` reçoit un bloc `boiler`. Il contient
+la source, si la chaudière est appelée et, sinon, pourquoi, la façon dont l'apprentissage traite
+cette situation (`emitter_cooling`, `held`, `emitter_warming`) et, venant de Smart Boiler, la
+demande comparée à ses seuils de démarrage. Ses champs sont listés dans
+[Entrée eau, §8](water_input.md#8-diagnostics) et expliqués dans
+[§4](water_input.md#4-une-chaudière-qui-nest-pas-appelée).
+
 ## Fréquence de publication
 
 Le capteur de diagnostic est rafraîchi lors des entrées de contrôle
@@ -95,4 +131,4 @@ la temporisation de contrôle de SmartPI.
 
 Les consommateurs live doivent lire `attributes.live`. Les graphiques
 historiques doivent lire `attributes.history`. Les consommateurs doivent
-vérifier `attributes.schema_version == 2` avant d'interpréter la structure.
+vérifier `attributes.schema_version == 2` avant d'interpréter la structure imbriquée.
