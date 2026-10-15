@@ -4,6 +4,7 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+- Remove the second source's `response` property, which nothing read (found by the code coverage).
 - Tests for the four services (each reaches the thermostats a call names, skips the others) and
   for the paths the code coverage found untested: the migration's edge cases, the heating inputs
   without a registry, a diagnostic sensor removed after a takeover, the valve's activation floor
