@@ -265,6 +265,16 @@ The results are in [Water and boiler inputs, §4.4](water_input.md#44-results-si
 | `test_config_flow_paths.py` | the forms in the cases only some setups reach: an entity without a unique ID refused, a neighbour whose entry lists this zone back, a door that is also the window sensor, the split recommended for devices of similar speed, an entry whose thermostat was deleted, a change made in another window (or in VTherm's options) while a window is open (the save ends the window and writes nothing), a zone member's entry that cannot be created |
 | `test_services_routing.py` | the four services reach the thermostats a call names (in its target or its data, one or a list; the method on the thermostat or on its handler), each once, and skip the others (another algorithm, an entity that is not there, a thermostat without the method, which is warned about); they are registered once and removed |
 
+### 4.9 Changes taken from the author's new code
+
+The author's newer code (branch `trajectoryv2`, `SPINew` in the fork) is taken over in stages. The
+author's own tests come with each change; the tests below check that the fork's additions keep
+working with it.
+
+| File | What it checks |
+|---|---|
+| `test_smartpi_dependencies_handler.py` (one test added) | a main source switched off during the off phase of its cycle cancels the cycle and still sends 0 to its additional source |
+
 ## 5. Limits
 
 - **The simulator is kinder than a house.** It has no sensor noise except rounding; no sun, people
