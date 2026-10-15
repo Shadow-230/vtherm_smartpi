@@ -3177,6 +3177,7 @@ class SmartPI:
             self._last_u_pi = 0.0
             self._last_u_limited = 0.0
             self.ctl.last_i_mode = "I:FREEZE(missing_sensor)"
+            self._last_calculate_time = None
             return True
 
         if hvac_mode == VThermHvacMode_OFF:
@@ -3846,29 +3847,29 @@ class SmartPI:
         # Track active modes BEFORE validation so that missing presets in COOL
         # don't intercept the cycle and hide the transition.
         if hvac_mode in (VThermHvacMode_HEAT, VThermHvacMode_COOL):
-            if self._last_hvac_mode is not None and hvac_mode != self._last_hvac_mode:
+            # The persisted model mode covers the first tick after a restart.
+            previous_mode = self._last_hvac_mode or self.est.model_hvac_mode
+            mode_changed = previous_mode is not None and str(hvac_mode) != str(previous_mode)
+            if mode_changed:
                 self.ctl.reset()
                 self._recovery_hold_armed = False
                 self._ff_trim.clear_pending()
                 self._ff_trim.clear_last_transaction()
-                self._fftrim_observer.reset_runtime()
-                self._fftrim_periodic_observer.reset_runtime()
-                self._fftrim_observation_mode = "stationary"
-                self.reset_command_ownership("ownership_context_changed")
                 _LOGGER.info(
                     "%s - HVAC mode changed (%s → %s): PI state reset",
-                    self._name, self._last_hvac_mode, hvac_mode
+                    self._name, previous_mode, hvac_mode
                 )
             self._last_hvac_mode = hvac_mode
             model_reset = self.est.ensure_hvac_mode(hvac_mode)
             self.dt_est.ensure_hvac_mode(hvac_mode)
-            if model_reset is True:
-                self._ab_confidence.reset()
-                self._ff_trim.reset()
+            if mode_changed or model_reset is True:
                 self._fftrim_observer.reset_runtime()
                 self._fftrim_periodic_observer.reset_runtime()
                 self._fftrim_observation_mode = "stationary"
                 self.reset_command_ownership("ownership_context_changed")
+            if model_reset is True:
+                self._ab_confidence.reset()
+                self._ff_trim.reset()
                 self._cycles_since_reset = 0
                 self._session_learn_ok_count_base = self.est.learn_ok_count
                 self._session_learn_skip_count_base = self.est.learn_skip_count
@@ -3896,6 +3897,7 @@ class SmartPI:
             self.ctl.last_i_mode = "I:OVERRIDE(guard_cut)"
             self._last_aw_du = 0.0
             self._set_linear_output(0.0)
+            self._last_calculate_time = None
             return
 
         self._refresh_active_timestamp_and_expire_controller_memory()
