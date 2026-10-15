@@ -28,6 +28,29 @@ cytowanym fragmencie kodu.
 7. Decyzje otwarte (D1–D5) są w `ANALIZA.md`, sekcja 14. Bez zgody właściciela przyjmij
    rekomendację i zaznacz to w raporcie.
 
+## 0a. Zasady dla testów
+
+Dane, na których opiera się ta część, są w `ANALIZA.md`, sekcja 15.
+
+1. Każdy etap ma blok **Testy** w trzech częściach:
+   - testy autora do przeniesienia (przy cherry-picku przychodzą same, przy etapach ręcznych
+     przenieś je przez `git show <sha> -- tests | git apply`),
+   - nasze testy do aktualizacji,
+   - nowe testy do napisania.
+2. Test i zmiana kodu w tym samym commicie etapu.
+3. Istniejący test zmieniaj tylko wtedy, gdy sprawdza zachowanie, które etap **celowo** zmienia.
+   W commicie albo raporcie zapisz, co test sprawdzał i dlaczego to już nieaktualne. Każde inne
+   niepowodzenie to regresja do naprawy w kodzie.
+4. Nigdy nie wyłączaj, nie pomijaj (`skip`, `xfail`) ani nie usuwaj testu, żeby przejść etap.
+5. Testy symulacji (`tests/test_smartpi_sim_*.py`) oceniaj najpierw jako zachowanie: przekroczenie
+   nastawy, czas dojścia, średni błąd, nauczone a/b. Oczekiwania zmieniaj dopiero po wyjaśnieniu
+   różnicy, z wartościami przed i po w raporcie.
+6. Styl nowych testów jak w repozytorium: nazwa testu opisuje zachowanie (`test_<co się dzieje>`),
+   docstring jednym zdaniem, `pytest` z `asyncio_mode = "auto"`, fixture z `tests/conftest.py`
+   (`fake_runtime`, `fake_handler_runtime`, `hass`), symulator z `tests/sim`.
+7. Po każdej fazie zaktualizuj `documentation/{en,fr,pl}/testing.md` (rozdziały „Tests by
+   feature” i „Simulation scenarios”) o nowe testy.
+
 ## 1. Kolejność i zależności
 
 | Etap | Zakres | Źródło | Zależy od | Ryzyko |
@@ -92,6 +115,29 @@ Kryteria:
 Po etapie zanotuj do raportu decyzję D2: czy `_apply_zone_fit` nadal ma nadpisywać a/b strefy.
 Nic tu nie zmieniaj.
 
+**Testy A1**
+- Autora: `test_smartpi_deadtime_estimator.py` (przychodzi z cherry-pickiem).
+- Do aktualizacji:
+  - `test_smartpi_dependencies_algo.py` (sprawdzenie pustej `tin_history` po krawędzi bramki,
+    ok. linia 161): dodaj, że `_tin_lp_history` też jest pusta;
+  - `test_smartpi_sim_water.py` (`0.5 * A_REFERENCE < est.a < 1.2 * A_REFERENCE` i wynik
+    `results[water_data]`) i `test_smartpi_sim_boiler_call.py` (stosunki `est.a / a`, `est.b / b`):
+    uruchom na `dev` i po A1, zapisz wartości. Progi zawężaj tylko wtedy, gdy wynik jest bliżej
+    prawdy.
+- Nowe (`tests/test_smartpi_raw_slopes.py`):
+  - `test_learning_slope_uses_raw_samples_and_removes_known_rate`: okno uczenia ze znanym
+    `known_rate` i schodkowymi surowymi próbkami 0,1 °C daje nachylenie z surowych próbek minus
+    średni `known_rate`;
+  - `test_boiler_hold_keeps_raw_history`: przy `_deadtime_input() == 0` (kocioł bez ciepła)
+    `tin_history` nadal dostaje surową temperaturę;
+  - `test_gate_edge_clears_both_histories`: krawędź bramki uczenia (`_read_known_inputs`) czyści
+    obie historie.
+- Nowy test symulacji, dowód do decyzji D2
+  (`test_smartpi_sim_baseline.py::test_own_learning_with_a_tenth_degree_sensor`): SmartPI bez
+  dopasowania strefy, czujnik `resolution_c=0.1`. Porównaj nauczone `b` z prawdą symulatora; po A1
+  błąd ma być wyraźnie mniejszy niż na `dev`. Zmierz najpierw na `dev` i wpisz obie liczby do
+  docstringu.
+
 ### A2. Osobne liczniki dryfu a/b (`dd62923`)
 
 1. `git cherry-pick -x dd62923` (wchodzi czysto, dotyczy tylko `smartpi/ab_estimator.py`).
@@ -103,6 +149,17 @@ Nic tu nie zmieniaj.
 
 Kryterium: przy 3+ pomiarach grzania między pomiarami stygnięcia kandydat dryfu b nie jest
 odrzucany z powodu odstępu numerów.
+
+**Testy A2**
+- Autora: zmiany w `test_smartpi_ab_drift.py` (z cherry-pickiem; zastępują sprawdzenie
+  `_learn_seq` z ok. linii 153).
+- Do aktualizacji: brak.
+- Nowe (w `test_smartpi_ab_drift.py`):
+  - `test_a_legacy_state_from_the_qas_fixture_seeds_both_counters`: `est_state` z
+    `tests/qas/custom_components/smartpi_qas_helpers/fixtures/learned_room.json`
+    (`"learn_seq": 49`) daje `_learn_seq_a == _learn_seq_b == 49`;
+  - `test_zone_fit_seed_does_not_block_drift`: po zasianiu historii przez `_apply_zone_fit`
+    kolejne pomiary b z dryfem przesuwają historię mimo przeplatanych pomiarów a.
 
 ### A3. Reset PI po restarcie i przerwy w regulacji (`c506522`, ręcznie)
 
@@ -166,6 +223,19 @@ Kryteria:
 - Po powrocie czujnika, po „guard cut” i po wyjściu z roli drugiego źródła pierwszy tick ma
   `dt_min == 0` i nie zwiększa integrału.
 
+**Testy A3**
+- Autora: `git show c506522 -- tests | git apply` (zmiany w `test_smartpi_antiwindup.py` i
+  `test_smartpi_robustness.py`; na `dev` wchodzą czysto).
+- Do aktualizacji: brak spodziewanych.
+- Nowe (`tests/test_smartpi_regulation_gaps.py`):
+  - `test_leaving_the_source_role_does_not_integrate_the_role_period`: SmartPI z ustalonym
+    błędem; `enter_source_role("lead")`; ticki `calculate` przez 60 min (podmieniony
+    `time.monotonic`); `leave_source_role()`; pierwszy własny tick: integrał zmienia się nie
+    więcej niż w jednym zwykłym ticku, a `_last_calculate_time` był `None` przed tym tickiem;
+  - `test_restart_into_the_other_mode_with_a_zone_fit_resets_pi_once`: stan zapisany w HEAT z
+    aktywnym dopasowaniem strefy, `load_state`, pierwszy tick w COOL: `ctl` zresetowany raz,
+    kolejne ticki bez resetu.
+
 ### A4. Zapis stanu najwyżej co 5 min (`a4624e5`)
 
 1. `git cherry-pick -x a4624e5`. `state_store.py` (nowy) wejdzie, konflikt będzie w `handler.py`.
@@ -186,7 +256,9 @@ Kryteria:
    - `control_heating` (~898): zamiast `await self._async_save()` dodaj
      `if self._store and t.prop_algorithm: self._store.schedule_save(t.prop_algorithm)`.
 3. Zapis natychmiastowy (`_async_save`) zostaje w `_cancel_calibration_if_active` i we wszystkich
-   `service_*`.
+   `service_*`. Zalecane dopasowanie: w `_apply_reset_request` po `algo.reset_learning()` wywołaj
+   zapis natychmiastowy (`t.hass.async_create_task(self._store.save_now(algo))`), żeby token
+   resetu strefy nie czekał 5 min na zapis. Bez tego restart w tym oknie ponowi reset.
 4. `grep -n "_store\.\|Store(" custom_components/vtherm_smartpi/handler.py`: nie może zostać
    bezpośrednie `self._store.async_save(...)`.
 
@@ -198,6 +270,27 @@ Kryteria:
 - Nasze dane (`dependencies`, `dependency_reset_token`, `water`) są w zapisie, bo idą przez
   `algo.save_state()`.
 
+**Testy A4**
+- Autora: `test_handler_persistence.py` i zmiana w `test_smartpi_cycle_alignment.py` (z
+  cherry-pickiem).
+- Do aktualizacji:
+  - `test_smartpi_cycle_alignment.py` (linie 321, 679: `handler._store = AsyncMock()`): zmiana
+    autora na `MagicMock(save_now=AsyncMock())` przychodzi z cherry-pickiem;
+  - testy podmieniające `handler._async_save` (`test_handler_attributes`,
+    `test_smartpi_boiler_handler`, `test_smartpi_cycle_alignment`, `test_smartpi_guards`,
+    `test_smartpi_settings`, `test_smartpi_valve_runtime_sync`, `test_smartpi_water_handler`):
+    sprawdź każdy. Testy serwisów (np. `test_handler_attributes.py:79`) zostają, bo serwisy dalej
+    zapisują od razu. Test, który oczekuje zapisu po `control_heating`, ma oczekiwać
+    `handler._store.schedule_save`;
+  - `tests/sim/runner.py:521` i `test_smartpi_sim_second_source.py:262`: usuń
+    `handler._legacy_store = None`.
+- Nowe (`tests/test_handler_persistence_extensions.py`):
+  - `test_our_state_round_trips_through_the_state_store`: `save_now` i `async_load` zachowują
+    `dependencies`, `dependency_reset_token` i `water`;
+  - `test_control_passes_schedule_one_write_per_window`: kilka `control_heating` w ciągu 5 min
+    daje jedno `Store.async_delay_save`;
+  - `test_a_zone_reset_is_saved_at_once` (jeśli przyjęto dopasowanie z kroku 3).
+
 ### A5. OFF anuluje cykl i usunięcie setterów (`4070630`, `144ff02`)
 
 1. `git cherry-pick -x 4070630` (czysto). W gałęzi OFF `control_heating`
@@ -208,6 +301,15 @@ Kryteria:
    nie może znaleźć użyć poza `smartpi/guards.py`.
 
 Kryterium: termostat przełączony na OFF w fazie wyłączenia PWM nie przełącza już przekaźników.
+
+**Testy A5**
+- Autora: `test_smartpi_handler_off.py` (z cherry-pickiem `4070630`).
+- Do aktualizacji: brak (`test_smartpi_hysteresis_force.py` ustawia flagi na atrapie, nie na
+  `SmartPI`).
+- Nowe (w `test_smartpi_handler_off.py`):
+  - `test_a_lead_switched_off_in_the_off_phase_still_tells_its_source`: lider z drugim źródłem
+    przechodzi w OFF w fazie wyłączenia PWM; cykl jest anulowany, a źródło dalej dostaje sygnał
+    (heartbeat) i polecenie 0.
 
 ### Zakończenie fazy A
 
@@ -251,9 +353,10 @@ def _own_entries_using_defaults(hass) -> list[ConfigEntry]:
     return [e for e in hass.config_entries.async_entries(DOMAIN)
             if e.data.get(CONF_TARGET_VTHERM) and uses_defaults(entry_options(e))]
 
-async def _reload_smartpi_vtherms_without_own_entry(hass) -> None:
-    # = _reload_smartpi_vtherms_using_defaults z SPINew: pomija KAŻDY termostat z własnym wpisem
-    # (zbiór z _get_dedicated_target_unique_ids)
+async def _reload_smartpi_vtherms_using_defaults(hass) -> None:
+    # wersja z SPINew: pomija KAŻDY termostat z własnym wpisem (_get_dedicated_target_unique_ids).
+    # Nazwa autora celowo zostaje, żeby jego test_init_lifecycle.py działał bez zmian;
+    # termostaty z wpisem „używa domyślnych” przeładowuje _reload_affected_vtherms przez ich wpisy.
 
 async def _reload_affected_vtherms(hass, entry) -> None:
     target = entry.data.get(CONF_TARGET_VTHERM)
@@ -264,7 +367,7 @@ async def _reload_affected_vtherms(hass, entry) -> None:
     # przeładuje ich termostat (raz) i odtworzy sensor diagnostyczny (Record full diagnostics).
     for plugin_entry in _own_entries_using_defaults(hass):
         await hass.config_entries.async_reload(plugin_entry.entry_id)
-    await _reload_smartpi_vtherms_without_own_entry(hass)
+    await _reload_smartpi_vtherms_using_defaults(hass)
 
 async def _reload_zone_mains(hass, entry, reloading: set[str]) -> None:
     target = entry.data.get(CONF_TARGET_VTHERM)
@@ -328,16 +431,40 @@ Uwagi:
 Migracja 1.2, przeniesienie ustawień i powiadomienie naprawy działają jak w `dev`. Sensor
 diagnostyczny przechodzi na własny wpis (logika `sensor.py` bez zmian).
 
-#### Weryfikacja B1
+#### Testy B1
 
-1. Pełne testy. Testy cyklu życia z `dev` (`test_config_flow_save`, `test_config_migration`,
-   `test_sensor_own_entry`, `test_services_routing`) mogą wymagać dopasowania do nowego modelu.
-   Zmieniaj je tylko wtedy, gdy sprawdzają stary przepływ (np. wyrejestrowanie serwisów), a nie
-   wymagania z tabeli.
-2. `tests/test_init_lifecycle.py` z `SPINew` (`git show origin/SPINew:tests/test_init_lifecycle.py`)
-   jako wzór; dodaj przypadki dla „używa domyślnych” i głównych źródeł strefy.
-3. Zliczanie przeładowań w HA testowym: owiń `hass.config_entries.async_reload` licznikiem, ale
-   **bez** podmiany na atrapę (wywołuj oryginał), żeby wyszły podwójne przeładowania.
+Technika z testu autora (`git show origin/SPINew:tests/test_init_lifecycle.py`):
+- podmień `_reload_smartpi_vtherms_for_target` i `_reload_smartpi_vtherms_using_defaults` na
+  `AsyncMock` z `side_effect`, który zapisuje wywołanie i listę wpisów widocznych w tej chwili;
+- `hass.config_entries.async_reload` podmień na `AsyncMock(side_effect=...)`, który **naprawdę**
+  woła `async_unload_entry` i `async_setup_entry` dla danego wpisu (a nie atrapę bez efektu);
+- `hass.config_entries.async_forward_entry_setups = AsyncMock()`, `hass.state = CoreState.running`.
+
+Tylko tak widać podwójne przeładowania.
+
+- Autora: `test_init_lifecycle.py` (przenieś plik bez zmian: `git show b3c8939 -- tests | git apply`;
+  dzięki zachowanej nazwie `_reload_smartpi_vtherms_using_defaults` jego asercje pasują).
+- Do aktualizacji:
+  - `test_config_flow_save.py::test_a_save_reloads_each_entry_once_also_when_the_zone_moves`:
+    `async_reload` ma wołać setup (technika wyżej); oczekiwanie bez zmian (`vt-floor`,
+    `vt-radiator` po razie);
+  - `test_config_migration.py` (ok. linia 239), `test_sensor_own_entry.py` (linie 45, 91): zamiast
+    usuniętego `_reload_smartpi_vtherms` podmieniaj dwa helpery z techniki wyżej;
+  - `test_services_routing.py::test_services_are_registered_once_and_removed`: zostaje tylko
+    „zarejestrowane raz”, bez `DATA_SERVICES_REGISTERED` i `_unregister_services`.
+- Nowe (`tests/test_init_lifecycle_zones.py`), jeden test na wiersz tabeli kryteriów:
+  - `test_a_thermostat_save_reloads_it_and_the_zone_mains_once`;
+  - `test_a_zone_save_reloads_each_written_thermostat_once` (grupa `DATA_SAVE_GROUP`, główne
+    źródło nie drugi raz);
+  - `test_a_defaults_save_reloads_entries_using_defaults_and_thermostats_without_entry_once`
+    (wpis „używa domyślnych” przeładowany jako wpis, termostat z własnymi wartościami nie
+    przeładowany wcale);
+  - `test_creating_a_thermostat_entry_reloads_only_that_thermostat` (źródło `user` i `import`);
+  - `test_removing_a_thermostat_entry_reloads_it_after_it_left_the_registry` (lista widocznych
+    wpisów w chwili przeładowania nie zawiera usuwanego; przeładowane główne źródła strefy);
+  - `test_removing_the_defaults_entry_reloads_its_users`;
+  - `test_unloading_reloads_nothing_and_keeps_factory_and_services`;
+  - `test_a_settings_move_does_not_trigger_the_listener` (`DATA_SKIP_UPDATE`, migracja 1.2).
 
 Commit, np. `Reload only the thermostats an entry affects and keep the factory and services registered`.
 
@@ -353,6 +480,19 @@ Commit, np. `Reload only the thermostats an entry affects and keep the factory a
 4. Kryterium: po usunięciu wpisu domyślnego przy istniejących wpisach termostatów „Dodaj
    integrację” tworzy nowy wpis domyślny. Jego setup (B1) przeładowuje termostaty „używające
    domyślnych” i te bez własnego wpisu.
+
+**Testy B2**
+- Autora: `test_user_step_recreates_global_entry_when_only_dedicated_entries_exist` z
+  `b00384a` (`tests/test_config_flow.py`). Plik zmieniany po obu stronach, ale zmiana autora
+  wchodzi czysto. Oczekiwane `data` dopasuj do naszego `_shared_defaults()` (u autora jest
+  `DEFAULT_OPTIONS`).
+- Do aktualizacji: `test_config_flow_heating_type.py` (ok. linia 110): usuń parę
+  `("config", "global")`.
+- Nowe (w `tests/test_config_flow.py`):
+  - `test_a_legacy_defaults_entry_without_unique_id_is_not_duplicated`: wpis domyślny bez
+    `unique_id` (rozpoznawany przez `defaults_entry`) – krok `user` przechodzi do wyboru
+    termostatu, nie tworzy drugiego wpisu domyślnego;
+  - `test_recreated_defaults_reload_the_thermostats_that_use_them` (z techniką z B1).
 
 ### B3. Walidacja celu serwisów (`b00384a`, część; decyzja D1)
 
@@ -373,6 +513,21 @@ Przy rekomendacji D1 („przyjąć upstream”):
 
 Przy decyzji przeciwnej pomiń krok 1 i zostaw ciche ignorowanie, ale bez flag z B1.
 
+**Testy B3**
+- Autora: zmiany w `tests/test_services.py` z `b00384a` (wchodzą czysto).
+- Do aktualizacji, `test_services_routing.py`:
+  - `test_a_call_names_thermostats_by_target_and_data_and_reaches_the_handler`: identyfikatory
+    przychodzą już tylko z `async_extract_entity_ids`; test ma sprawdzać, że każdy termostat z
+    wyniku dostaje wywołanie raz (bez ręcznego łączenia `call.target` i `call.data`);
+  - `test_without_the_climate_component_or_a_target_nothing_is_called`: teraz oczekuje
+    `ServiceValidationError` z `translation_key="no_smartpi_target"`;
+  - `test_thermostats_that_cannot_take_the_service_are_skipped`: zostaje (termostat TPI
+    pominięty; jeśli żaden nie pasuje – błąd walidacji).
+- Nowe (w `test_services_routing.py`):
+  - `test_a_qas_style_call_with_entity_id_in_data_still_works`: wywołanie
+    `{"entity_id": "climate.living"}` w danych, jak w `tests/qas/scenarios/qa.py` i `qb.py`;
+  - `test_a_mixed_target_reaches_only_smartpi_thermostats`.
+
 ### B4. Zdarzenia, martwa gałąź, manifest (`b00384a`, część)
 
 1. `handler.py`: wszystkie `t.hass.bus.fire(` zamień na `t.hass.bus.async_fire(` (6 miejsc), z
@@ -384,6 +539,15 @@ Przy decyzji przeciwnej pomiń krok 1 i zostaw ciche ignorowanie, ale bez flag z
    (dla CANCELLED nigdy nie zwraca zdarzenia).
 3. `manifest.json`: dodaj `"requirements": ["vtherm_api>=0.5.0"]` (w środowisku testowym jest
    0.6.1).
+
+**Testy B4**
+- Autora: zmiana w `tests/test_handler_attributes.py` z `b00384a` (wchodzi czysto).
+- Do aktualizacji: `test_smartpi_autocalib_events.py`
+  (`test_forced_calibration_event_identifies_thermostat_entity` i pozostałe): podmieniaj
+  `hass.bus.async_fire` zamiast `bus.fire`; dane zdarzenia nadal z `entity_id` termostatu.
+- Nowe (w `test_smartpi_autocalib_events.py`):
+  `test_every_smartpi_event_is_fired_with_the_loop_safe_api`: wszystkie ścieżki zdarzeń handlera
+  (serwisy, kalibracja, AutoCalib) używają `async_fire`, a `bus.fire` nie jest wołany.
 
 ### Zakończenie fazy B
 
@@ -410,7 +574,9 @@ Kroki:
      `_fftrim_observer.reset_runtime()` / `_fftrim_periodic_observer.reset_runtime()` /
      `_fftrim_observation_mode = "stationary"` zastąp `self._reset_causal_observation_runtime()`;
    - `smartpi/const.py`, `smartpi/diagnostics.py`: suma (nasze klucze zależności, wody i kotła oraz
-     klucze gubernatora autora; klucze `landing_*` znikają).
+     klucze gubernatora autora; klucze `landing_*` znikają);
+   - `documentation/{en,fr}/*.md`: na czas cherry-picka weź naszą wersję
+     (`git checkout --ours -- documentation/`) i przepisz treść w C3. `cards/` wchodzą czysto.
 2. `git cherry-pick -x b2b0249` (czysto), potem `git cherry-pick -x 15fc13f` (po `c6f9f88`
    powinien wejść czysto; ewentualny konflikt w `smartpi/const.py` lub `diagnostics.py` rozwiąż
    sumą).
@@ -465,6 +631,49 @@ Kroki:
      wody i dwóch źródeł: `dev` kontra `port/c-gubernator`;
    - w raporcie podaj różnice.
 
+**Testy C1**
+- Autora (z cherry-pickami `c6f9f88`, `b2b0249`, `15fc13f`; lista w ANALIZA §15.1): nowe pliki
+  gubernatora, hamowania, ścieżki mocy, pomiarów i modelu oraz zmiany w
+  `test_smartpi_setpoint.py`, `test_smartpi_cycle_alignment.py`, `test_smartpi_ff_trim_observer.py`,
+  `test_smartpi_heartbeat_learning.py`, `test_smartpi_deadband_output.py`,
+  `test_smartpi_setpoint_change.py`, `test_smartpi_valve_runtime_sync.py`,
+  `test_diagnostic_history.py`, `test_sensor.py`. Wszystkie mają przejść bez zmian. Jeśli któryś
+  pada, to zwykle znak, że nasze podstawienie (woda, model efektywny) zmienia jego założenia;
+  opisz to, zanim go zmienisz.
+- Do aktualizacji:
+  - `test_smartpi_water_algo.py::test_the_feed_forward_trim_records_the_power`: podmieniaj
+    `algo._causal_power_trace.complete_applied_cycle` (zamiast `_fftrim_observer`);
+  - `test_smartpi_dependencies_algo.py::test_substitution_reaches_every_control_component`:
+    najpierw ustal przyczynę niepowodzenia z próby (najpewniej zmienione sygnatury
+    `deadband_mgr.update`, `twin.update_with_eta` lub `compute_ff3` po `c6f9f88`; popraw lambdy
+    wyciągające argumenty); potem rozszerz o nowe elementy (niżej);
+  - `test_smartpi_sim_neighbours.py` (3), `test_smartpi_sim_water.py` (1),
+    `test_smartpi_sim_harness.py::test_valve_cycle_starts_report_the_applied_opening` (2): wg
+    zasady 0a.5;
+  - `test_sensor_own_entry.py`: jeśli nadal pada po B1, sprawdź atrybuty sensora po `b2b0249`.
+- Nowe:
+  - w `test_substitution_reaches_every_control_component`: szpiedzy na
+    `algo._thermal_measurements.observe` (`outside_temperature == model.ext_temp`) i na
+    `algo.sp_mgr.resolve_reference_governor`, z oczekiwaniem C-e (`requested_u <=
+    algo._linear_output_upper()`);
+  - `tests/test_smartpi_governor_water.py`:
+    - `test_requested_power_is_limited_to_the_water_before_the_governor` (C-e);
+    - `test_braking_release_respects_the_water_limit` (C-e, `_try_release_terminal_braking`);
+    - `test_the_causal_power_trace_records_power_at_the_reference_water` (C-c);
+    - `test_the_dependency_model_still_records_the_cycle_power` (C-d:
+      `dependency_model.record_realized_power` jest wołane przy zakończonym cyklu z `e_eff`
+      w tych samych przypadkach co na `dev`; nowe `mark_discontinuity` niczego nie pomija);
+  - `tests/test_smartpi_governor_source_role.py`:
+    - `test_leaving_the_source_role_clears_the_governor_episode` (C-g: po `leave_source_role`
+      `sp_mgr.reference_governor_authority_selected` jest `False` i nie ma epizodu);
+    - `test_a_neighbour_window_preset_is_a_setpoint_change_for_the_governor` (C-h);
+  - nowy scenariusz symulacji `test_smartpi_sim_water.py::test_cold_water_does_not_cycle_governor_episodes`:
+    zimna woda ogranicza moc poniżej żądania; liczba wycofań epizodów z powodem
+    `prediction_falsified_below_target` jest zerowa (przed C-e niezerowa – zapisz obie liczby);
+  - nowy scenariusz `test_smartpi_sim_neighbours.py::test_landing_with_a_neighbour_exchange`:
+    dojście do nastawy z aktywną wymianą z sąsiadem; przekroczenie nastawy nie większe niż na
+    `dev`.
+
 Commit dopasowań, np. `Fit the reference governor to the water limit and the second source role`.
 
 ### C2. Poprawki COOL (`8823c17`, `770c444`)
@@ -483,6 +692,23 @@ Commit dopasowań, np. `Fit the reference governor to the water limit and the se
    - zmiana nastawy (także przez akcję okna sąsiada) w trakcie cyklu blokuje płynne przejęcie FF
      trim w tym cyklu.
 
+**Testy C2**
+- Autora (z cherry-pickami): `8823c17` zmienia `test_smartpi_learning_enablement.py`,
+  `test_smartpi_reference_governor_wiring.py`, `test_smartpi_setpoint.py`,
+  `test_smartpi_thermal_model.py`; `770c444` zmienia `test_smartpi_cycle_alignment.py`,
+  `test_smartpi_feedforward.py`, `test_smartpi_hysteresis_deadtime_window.py`.
+- Do aktualizacji: wywołania z `deadtime_cool_s=` są w `test_smartpi_feedforward.py` i
+  `test_smartpi_setpoint.py`. Oba pliki zmienia autor (`770c444`, `c6f9f88`/`8823c17`), więc
+  poprawki przychodzą z cherry-pickami; potwierdź `grep -rn "deadtime_cool_s=" tests/`.
+  `tests/qas/scenarios/qd.py` czyta tylko klucz diagnostyki `model.deadtime_cool_s`, który nadal
+  istnieje.
+- Nowe:
+  - `test_smartpi_dependencies_algo.py::test_cool_braking_uses_the_passive_deadtime_with_the_effective_model`:
+    w COOL `filter_setpoint` dostaje `stop_deadtime_s` z `dt_est.passive_deadtime(COOL)` oraz
+    `b == model.b` i `ext == model.ext_temp`;
+  - `test_smartpi_cycle_alignment.py::test_a_neighbour_preset_change_in_cycle_blocks_the_bumpless_transfer`:
+    akcja okna sąsiada `eco`/`frost` w trakcie cyklu ustawia `_setpoint_changed_in_cycle`.
+
 ### C3. Dokumentacja (decyzja D5)
 
 1. Pliki ze wzmianką o „landing” (liczba linii):
@@ -497,7 +723,15 @@ Commit dopasowań, np. `Fit the reference governor to the water limit and the se
 3. PL: przetłumacz te same fragmenty.
 4. `diagnostics.md` (wszystkie języki): zamień atrybuty `landing_*` na atrybuty gubernatora z
    `smartpi/diagnostics.py` po C1 oraz nowe atrybuty historii (`b2b0249`).
-5. Karta `cards/smartpi_diags-en.md` (D4): tylko jeśli właściciel zdecyduje.
+5. Karty `cards/smartpi_diags-{en,fr}.md`: autor zaktualizował je w `c6f9f88`, więc przyszły z
+   cherry-pickiem. Ewentualne dodanie naszych sekcji (zależności, woda, kocioł) tylko po decyzji
+   D4.
+6. `documentation/{en,fr,pl}/testing.md`: dopisz nowe testy z faz A–C (zasada 0a.7) i nowe
+   scenariusze symulacji (C1).
+
+**Testy C3**
+- Nowe: brak. Sprawdź tylko, że `grep -rn -i landing documentation README.md` znajduje już wyłącznie
+  wzmianki historyczne (jeśli jakieś celowo zostały).
 
 ### Zakończenie fazy C
 
@@ -511,6 +745,11 @@ listą decyzji.
 - Fazy A, B i C wypchnięte jako osobne gałęzie `port/*`. `dev`, `qas`, `master` nietknięte.
 - Każde kryterium z etapów spełnione albo opisane w raporcie, dlaczego nie.
 - Wynik testów porównany z bazą z A0; każda różnica wyjaśniona.
+- Testy autora z tabeli ANALIZA §15.1 przeniesione i przechodzą (albo opisano, dlaczego nie).
+- Nasze testy z tabeli ANALIZA §15.2 zaktualizowane zgodnie z zasadą 0a.3; żaden nie jest
+  wyłączony ani pominięty.
+- Nowe testy z bloków „Testy” napisane; luki z ANALIZA §15.3 pokryte.
+- `documentation/{en,fr,pl}/testing.md` zaktualizowane.
 - Decyzje D1–D5 podjęte przez właściciela albo przyjęte rekomendacje oznaczone w raporcie.
 - PR do `dev` tylko na prośbę właściciela.
 

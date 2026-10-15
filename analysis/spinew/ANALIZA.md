@@ -311,5 +311,68 @@ wcześnie”. Po lekturze `reference_governor.py` to nieprecyzyjne:
 | D1 | Serwisy: walidacja celu i błąd, gdy brak termostatu SmartPI (upstream), czy ciche ignorowanie (dev) | Wziąć upstream. Wywołania z `entity_id` w danych (np. pakiet QAS) nadal działają, bo `make_entity_service_schema` je przyjmuje. |
 | D2 | Po przeniesieniu surowych nachyleń (A1): czy `_apply_zone_fit` dalej ma nadpisywać a/b strefy | Na razie bez zmian; ocenić na symulatorze po A1 |
 | D3 | Czy przenosić zmiany tylko dla COOL (C2) | Tak, są małe, ale po C1 |
-| D4 | Karta diagnostyczna `cards/smartpi_diags-en.md` czyta atrybuty `landing_*`, które znikają po C1 (autor jej nie zaktualizował) | Zaktualizować po C1 albo zostawić autorowi |
+| D4 | Karty diagnostyczne `cards/smartpi_diags-{en,fr}.md` czytają atrybuty `landing_*`, które znikają po C1 | Autor zaktualizował obie karty w `c6f9f88`, a my ich nie zmienialiśmy, więc cherry-pick w C1 przeniesie je bez konfliktu. Sprawdzić tylko, czy nie brakuje w nich naszych sekcji (zależności, woda, kocioł) – osobna decyzja |
 | D5 | Dokumentacja: przepisać „landing” na gubernator w EN/FR/PL | Tak, w C3 (linie ze wzmianką: EN 22, FR 11, PL 13, `README.md` 1) |
+
+## 15. Testy – stan i wpływ przenoszenia
+
+Wszystkie ustalenia z porównania plików testów `master → SPINew` i `master → dev` oraz z
+`git apply --check` testów autora na `origin/dev` (na sucho, bez zmian).
+
+### 15.1 Testy autora (przychodzą razem z jego commitami)
+
+Commit przeniesiony przez `cherry-pick` przynosi swoje testy. Przy etapach przenoszonych ręcznie
+(A3, B1–B4) testy trzeba przenieść osobno: `git show <sha> -- tests | git apply`.
+
+| Commit | Nowe pliki testów | Zmienione pliki testów | vs dev |
+|---|---|---|---|
+| `c6f9f88` | `test_causal_power_trace.py`, `test_causal_thermal_balance.py`, `test_causal_thermal_balance_admission.py`, `test_reference_governor_braking_release.py`, `test_smartpi_braking_release.py`, `test_smartpi_learning_enablement.py`, `test_smartpi_learning_window_setpoint_transient.py`, `test_smartpi_reference_governor.py`, `test_smartpi_reference_governor_authority.py`, `test_smartpi_reference_governor_runtime.py`, `test_smartpi_reference_governor_wiring.py`, `test_smartpi_thermal_model.py`, `test_thermal_measurement.py` | `test_smartpi_cycle_alignment.py`, `test_smartpi_deadband_output.py`, `test_smartpi_ff_trim_observer.py`, `test_smartpi_heartbeat_learning.py`, `test_smartpi_setpoint.py` (przepisany), `test_smartpi_setpoint_change.py`, `test_smartpi_valve_runtime_sync.py` | czysto |
+| `b2b0249` | – | `test_diagnostic_history.py`, `test_sensor.py` | czysto |
+| `15fc13f` | `test_smartpi_governor_falsification.py` | testy gubernatora z `c6f9f88` | czysto |
+| `4070630` | `test_smartpi_handler_off.py` | – | czysto |
+| `b3c8939` | `test_init_lifecycle.py` | – | czysto |
+| `dd62923` | – | `test_smartpi_ab_drift.py` | czysto |
+| `c506522` | – | `test_smartpi_antiwindup.py`, `test_smartpi_robustness.py` | czysto |
+| `a4624e5` | `test_handler_persistence.py` | `test_smartpi_cycle_alignment.py` | czysto |
+| `69da036` | – | `test_smartpi_deadtime_estimator.py` | czysto |
+| `b00384a` | – | `test_config_flow.py`, `test_handler_attributes.py`, `test_services.py` | czysto |
+| `8823c17` | – | `test_smartpi_learning_enablement.py`, `test_smartpi_reference_governor_wiring.py`, `test_smartpi_setpoint.py`, `test_smartpi_thermal_model.py` | zależy od `c6f9f88` |
+| `770c444` | – | `test_smartpi_cycle_alignment.py`, `test_smartpi_feedforward.py`, `test_smartpi_hysteresis_deadtime_window.py` | zależy od `c6f9f88` |
+
+Pliki testów zmienione po obu stronach: tylko `test_config_flow.py` i
+`test_smartpi_valve_runtime_sync.py`. Zmiany autora wchodzą w nie czysto.
+
+Cherry-pick `c6f9f88`, `b2b0249` i `15fc13f` zmienia też `documentation/{en,fr}` (konflikty z
+naszą dokumentacją, rozwiązanie w `PLAN.md`, C1 i C3) oraz obie karty w `cards/` (bez konfliktu).
+
+### 15.2 Nasze testy dotknięte przenoszeniem
+
+| Test | Dlaczego | Etap | Rodzaj zmiany |
+|---|---|---|---|
+| `test_smartpi_sim_water.py` (a ≈ `A_REFERENCE`), `test_smartpi_sim_boiler_call.py` (stosunek nauczonych a, b) | nachylenia z surowych pomiarów zmieniają nauczone a/b | A1 | zmienić progi tylko wtedy, gdy wynik jest bliżej prawdy; zapisać wartości przed i po |
+| `test_smartpi_dependencies_algo.py` (ok. linia 161: `tin_history` pusta po krawędzi bramki) | po A1 są dwie historie | A1 | dodać sprawdzenie `_tin_lp_history` |
+| `test_smartpi_ab_drift.py` (ok. linia 153: `_learn_seq`) | jeden licznik zastąpiony dwoma | A2 | przychodzi z cherry-pickiem autora |
+| testy z `handler._async_save = AsyncMock()` (`test_handler_attributes`, `test_smartpi_boiler_handler`, `test_smartpi_cycle_alignment`, `test_smartpi_guards`, `test_smartpi_settings`, `test_smartpi_valve_runtime_sync`, `test_smartpi_water_handler`) | `control_heating` woła `schedule_save` zamiast `_async_save` | A4 | sprawdzić każdy; testy serwisów (np. `test_handler_attributes.py:79`) zostają, bo serwisy zapisują od razu; `test_smartpi_cycle_alignment.py` (linie 321, 679) poprawia autor |
+| `tests/sim/runner.py:521`, `test_smartpi_sim_second_source.py:262` (`handler._legacy_store = None`) | atrybut znika | A4 | usunąć te linie |
+| `test_config_flow_save.py` | podmienia `async_reload` na atrapę bez efektu, więc nie widzi podwójnych przeładowań; po B1 listener nie przeładowuje celu sam | B1 | przepisać na wzór `test_init_lifecycle.py` autora |
+| `test_config_migration.py` (ok. linia 239), `test_sensor_own_entry.py` (linie 45, 91) | podmieniają usuwane `_reload_smartpi_vtherms` | B1 | podmieniać `_reload_smartpi_vtherms_for_target` i `_reload_smartpi_vtherms_using_defaults`; `test_sensor_own_entry` padł też w próbnym merge |
+| `test_services_routing.py` (`DATA_SERVICES_REGISTERED`, `_unregister_services`, zliczanie z `call.target` i `call.data`, „brak celu = nic”) | rejestracja na stałe; walidacja celu (D1) | B1, B3 | przepisać na kontrakt autora (`test_services.py`) |
+| `test_config_flow_heating_type.py` (ok. linia 110: `("config", "global")`) | krok `global` znika | B2 | usunąć tę parę |
+| `test_smartpi_autocalib_events.py` | podmienia `bus.fire` | B4 | `bus.async_fire` |
+| `test_smartpi_water_algo.py::test_the_feed_forward_trim_records_the_power` | podmienia `_fftrim_observer.complete_applied_cycle` | C1 | `_causal_power_trace.complete_applied_cycle` |
+| `test_smartpi_dependencies_algo.py::test_substitution_reaches_every_control_component` | nowe elementy regulacji; padł w próbnym merge | C1 | znaleźć przyczynę (sygnatury `deadband_mgr.update`, `twin`, `ff3` po `c6f9f88`), rozszerzyć o gubernator i pomiary |
+| `test_smartpi_sim_neighbours.py` (3), `test_smartpi_sim_water.py` (1), `test_smartpi_sim_harness.py::test_valve_cycle_starts_report_the_applied_opening` (2) | zmiana zachowania regulacji; padły w próbnym merge | C1 | **najpierw** ocenić jako możliwą regresję, dopiero potem zmieniać oczekiwania |
+| `tests/qas/scenarios/*` | czytają klucze diagnostyki | C1 | klucze, z których korzystają (`model.a/b`, `model.deadtime_*`, `power.*`, `temperature.integral_error`, `learning.accepted_updates_*`, `control.phase`), istnieją u autora; sprawdzić po C1 |
+
+### 15.3 Luki w testach (z analizy)
+
+1. **Cykl życia:** żaden test nie liczy rzeczywistych przeładowań; podwójne przeładowania i
+   „usunięty wpis działa do restartu” (§10.2) przeszły niezauważone.
+2. **Rola drugiego źródła:** brak testu, że powrót do własnej regulacji nie całkuje przerwy (§11).
+3. **Woda a gubernator:** brak scenariusza zimnej wody z gubernatorem (§13).
+4. **Nasze dane w zapisie stanu:** brak testu, że `dependencies`, `dependency_reset_token`,
+   `water` przechodzą przez nowy `SmartPIStateStore`.
+5. **Błąd nachylenia przy czujniku 0,1 °C:** nie ma testu, który mierzy własne a/b SmartPI względem
+   prawdy w symulatorze; `_apply_zone_fit` go obchodzi, ale nie dokumentuje liczb (decyzja D2).
+6. **Podstawienie modelu:** test podstawienia nie obejmuje nowych elementów (gubernator, pomiary
+   FF trim, ścieżka mocy).
