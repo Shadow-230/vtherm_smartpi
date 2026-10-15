@@ -277,6 +277,16 @@ Les résultats sont dans [Entrées eau et chaudière, §4.4](water_input.md#44-r
 | `test_config_flow_paths.py` | les formulaires dans les cas que seules certaines installations atteignent : une entité sans identifiant unique refusée, un voisin dont l'entrée indique cette zone en retour, une porte qui est aussi le capteur de fenêtre, la répartition recommandée pour des appareils de vitesse proche, une entrée dont le thermostat a été supprimé, un changement fait dans une autre fenêtre (ou dans les options de VTherm) pendant qu'une fenêtre est ouverte (l'enregistrement ferme la fenêtre sans rien écrire), l'entrée d'un membre de zone qui ne peut pas être créée |
 | `test_services_routing.py` | les quatre services atteignent les thermostats qu'un appel nomme (dans sa cible ou ses données, un seul ou une liste ; la méthode sur le thermostat ou sur son gestionnaire), chacun une fois, et laissent les autres (un autre algorithme, une entité absente, un thermostat sans la méthode, signalé) ; ils sont enregistrés une fois et retirés |
 
+### 4.9 Changements repris du nouveau code de l'auteur
+
+Le code plus récent de l'auteur (branche `trajectoryv2`, `SPINew` dans le fork) est repris par étapes.
+Les tests de l'auteur viennent avec chaque changement ; les tests ci-dessous vérifient que les
+ajouts du fork fonctionnent toujours avec lui.
+
+| Fichier | Ce qu'il vérifie |
+|---|---|
+| `test_handler_persistence_extensions.py` | les parties de l'état propres au fork (dépendances, jeton de réinitialisation de la zone, entrée d'eau) survivent à une écriture et une lecture par le state store ; des appels chaque minute préparent une écriture différée toutes les cinq minutes ; une réinitialisation demandée par le formulaire de la zone est écrite tout de suite, une seule fois |
+
 ## 5. Limites
 
 - **Le simulateur est plus clément qu'une maison.** Il n'a pas de bruit de capteur, à part

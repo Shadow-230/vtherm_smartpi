@@ -271,6 +271,15 @@ Wyniki są w [Wejścia wody i kotła, §4.4](water_input.md#44-wyniki-symulacja)
 | `test_config_flow_paths.py` | formularze w przypadkach, do których dochodzą tylko niektóre instalacje: encja bez unikalnego ID odrzucona, sąsiad, którego wpis wskazuje z powrotem tę strefę, drzwi będące też czujnikiem okna, podział zalecany dla urządzeń o zbliżonej szybkości, wpis, którego termostat usunięto, zmiana zrobiona w innym oknie (albo w opcjach VTherm) przy otwartym oknie (zapis zamyka okno bez zapisu), wpis członka strefy, którego nie da się utworzyć |
 | `test_services_routing.py` | cztery usługi docierają do termostatów, które wywołanie wskazuje (w celu albo w danych, jeden albo lista; metoda na termostacie albo na jego obsłudze), do każdego raz, i pomijają inne (inny algorytm, encja, której nie ma, termostat bez tej metody, o czym jest ostrzeżenie); są rejestrowane raz i usuwane |
 
+### 4.9 Zmiany przejęte z nowego kodu autora
+
+Nowszy kod autora (gałąź `trajectoryv2`, w forku `SPINew`) przejmujemy etapami. Testy autora
+przychodzą z każdą zmianą; testy poniżej sprawdzają, że dodatki forka nadal z nim działają.
+
+| Plik | Co sprawdza |
+|---|---|
+| `test_handler_persistence_extensions.py` | części stanu dodane w forku (zależności, token resetu strefy, wejście wody) przechodzą przez zapis i odczyt w state store; wywołania co minutę planują jeden zapis odroczony na pięć minut; reset, o który prosi formularz strefy, jest zapisywany od razu i tylko raz |
+
 ## 5. Ograniczenia
 
 - **Symulator jest łagodniejszy niż dom.** Nie ma szumu czujników poza zaokrąglaniem; nie ma

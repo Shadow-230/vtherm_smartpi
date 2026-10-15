@@ -4,6 +4,13 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+- SmartPI writes its state at most once every five minutes from the control loop instead of at
+  each control call, about once a minute per thermostat (taken from the author's newer code, with
+  its `state_store.py`). The services, the removal of a thermostat and a cancelled calibration
+  still write at once, and so does a reset of the learned model asked by the zone's form, so that
+  a restart within the five minutes does not reset the model again. The fork's parts of the state
+  (dependencies, the zone's reset token, the water input) are written as before.
+
 - `testing.md` gets a section "Coverage": the code coverage per file against the baseline, the
   fork's own lines (99.2 % of the lines, 98.0 % of the branches) with the reason for each line left
   uncovered, and a matrix of the features, their variants and use cases with where each is tested.

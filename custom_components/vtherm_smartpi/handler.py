@@ -300,6 +300,10 @@ class SmartPIHandler:
         algo.reset_learning()
         algo.applied_reset_token = token
         _LOGGER.info("%s - Learned model reset after a change of the zone", t)
+        if self._store:
+            # Saved at once, as the reset service does: a restart before the next
+            # debounced write must not reset the model a second time.
+            t.hass.async_create_task(self._store.save_now(algo))
 
     async def async_startup(self):
         """Startup actions."""
