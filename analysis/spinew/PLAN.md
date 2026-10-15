@@ -84,7 +84,7 @@ Stan na: 2026-10-15.
 | A5 | OFF anuluje cykl; usunięcie setterów | `4070630`, `144ff02` | – | niskie |
 | B1 | Cykl życia wpisów (sposób autora, decyzja D6) | `b3c8939` + nasze elementy | – | średnie |
 | B2 | Wpis „SmartPI defaults” do odtworzenia, bez kroku `global` | `b00384a` (część) | B1 | niskie |
-| B3 | Walidacja celu serwisów (decyzja D1) | `b00384a` (część) | B1 | niskie |
+| B3 | Walidacja celu serwisów (D1: wersja autora) | `b00384a` (część) | B1 | niskie |
 | B4 | `bus.async_fire`, martwa gałąź, manifest | `b00384a` (część) | – | niskie |
 | C1 | Reference governor (zamiast lądowania) | `c6f9f88`, `b2b0249`, `15fc13f` | A, B | **wysokie** |
 | C2 | Poprawki COOL | `8823c17`, `770c444` | C1 | niskie |
@@ -251,9 +251,10 @@ zmienia całki.
    - `control_heating` (ok. 898): `if self._store and t.prop_algorithm:
      self._store.schedule_save(t.prop_algorithm)`.
 3. Zapis natychmiastowy zostaje w `_cancel_calibration_if_active` i w `service_*`.
-4. Propozycja do decyzji właściciela: w `_apply_reset_request`, po `algo.reset_learning()`, zapis
-   natychmiastowy, żeby token resetu strefy nie czekał 5 min (inaczej restart w tym oknie ponowi
-   reset).
+4. Decyzja D9 (2026-10-15): w `_apply_reset_request`, po `algo.reset_learning()`, zapis
+   natychmiastowy (`t.hass.async_create_task(self._store.save_now(algo))`), tak jak serwis
+   `reset_smartpi_learning` u autora. Token resetu strefy nie czeka 5 min; restart w tym oknie nie
+   ponawia resetu.
 5. `grep -n "_store\.\|Store(" custom_components/vtherm_smartpi/handler.py`: brak bezpośredniego
    `async_save`.
 
@@ -270,7 +271,7 @@ razu; stan spod klucza `versatile_thermostat.smartpi.<nazwa>` nadal się wczytuj
 - Nowe (`tests/test_handler_persistence_extensions.py`):
   - `test_our_state_round_trips_through_the_state_store`;
   - `test_control_passes_schedule_one_write_per_window`;
-  - `test_a_zone_reset_is_saved_at_once` (jeśli przyjęto krok 4).
+  - `test_a_zone_reset_is_saved_at_once` (D9: `save_now` wołane od razu po resecie strefy).
 
 **Dokumentacja A4:** `technical_doc.md` §5.4 „Current persistence”; `testing.md`; CHANGELOG.
 
@@ -314,7 +315,7 @@ def _register_factory(hass) -> None:
     # jak SPINew: bez flag; rejestruje, jeśli api.get_prop_algorithm(name) is None
 
 def _register_services(hass) -> None:
-    # B3 (decyzja D1); do B3 ciało z dev bez flagi DATA_SERVICES_REGISTERED
+    # B3 (D1: wersja autora); do B3 ciało z dev bez flagi DATA_SERVICES_REGISTERED
 
 async def async_setup(hass, config) -> bool:
     _register_factory(hass)
@@ -449,7 +450,7 @@ termostaty bez własnego wpisu.
 
 ### B3. Walidacja celu serwisów (`b00384a`, część) – decyzja D1
 
-Tylko po decyzji D1. Przy wariancie autora:
+Decyzja D1 (2026-10-15): wersja autora.
 1. `_register_services` jak w `SPINew`: `_call_on_vtherms` używa
    `service_helper.async_extract_entity_ids(call)`, a gdy żaden cel nie jest termostatem SmartPI,
    rzuca `ServiceValidationError(translation_domain=DOMAIN, translation_key="no_smartpi_target")`;
@@ -532,8 +533,9 @@ Kroki:
    `analysis/spinew/measure_governor_water.py` na gałęzi etapu i na `dev` (porównanie z
    `ANALIZA.md` §13.3). Testy, które padły w próbie merge (`ANALIZA.md` §17.2), oceniamy najpierw
    jako możliwe regresje.
-6. Obserwacje do raportu: „drganie” capa (D8, `ANALIZA.md` §13.5); nauczone `a` niższe o 5–10 %
-   (porównać po A1).
+6. Obserwacje do raportu: „drganie” capa (D8: obserwujemy, liczymy przełączenia capa w pomiarze z
+   kroku 5; zmiana w kodzie autora tylko po pomiarze i za zgodą właściciela); nauczone `a` niższe o
+   5–10 % (porównać po A1).
 
 **Testy C1**
 - Autora: lista `ANALIZA.md` §17.1 (`c6f9f88`, `b2b0249`, `15fc13f`); mają przejść bez zmian.
@@ -568,8 +570,10 @@ FR 6, PL 7); `vtherm_smartpi.md` (opis filtra nastawy; EN 8, FR 4, PL 5); `diagn
 (1); `water_input.md` §3.4 i §3.6 (przy ograniczeniu wodą reference governor nie hamuje; wyniki
 pomiaru); `testing.md`; CHANGELOG. Treść o reference governorze z
 `git show origin/SPINew:documentation/<jęz>/<plik>`; nasze etykiety UI (zgodne z
-`translations/en.json`) i nasze poprawki zostają; PL tłumaczymy. Karty `cards/` przychodzą od
-autora; nasze sekcje tylko po decyzji D4.
+`translations/en.json`) i nasze poprawki zostają; PL tłumaczymy. Karty
+`cards/smartpi_diags-{en,fr}.md` przychodzą od autora; dodajemy w nich nasze sekcje (D4): znane
+wejścia (`dependencies.*`), woda (`water.*`), kocioł (`boiler.*`), w EN i FR. Karty PL nie ma;
+nowa tylko po decyzji właściciela.
 
 ### C2. Poprawki COOL (`8823c17`, `770c444`)
 
