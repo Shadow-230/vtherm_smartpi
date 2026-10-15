@@ -14,7 +14,7 @@ from typing import Any
 from bench import RestTransport
 from flows import Form, Menu, form_defaults, walk
 from roles import opening_sensor, temperature_sensor
-from stages import SMARTPI
+from stages import SMARTPI, save_steps
 
 from .common import (
     DOOR_SETTLING_S,
@@ -81,7 +81,7 @@ def _edit(item_id: str, details: dict[str, Any], reset: bool = False) -> list[Fo
         Form("dependency_edit", {"dependency": item_id}),
         Form("neighbour_details", details),
         Form("neighbour_confirm", if_shown=True),
-        Form("model_reset", {"reset_model": reset}, if_shown=True),
+        *save_steps(reset),
     ]
 
 
@@ -90,7 +90,7 @@ def _remove(item_ids: list[str], reset: bool = False) -> list[Form | Menu]:
         Menu("dependencies"),
         Menu("dependency_remove"),
         Form("dependency_remove", {"remove": item_ids}),
-        Form("model_reset", {"reset_model": reset}, if_shown=True),
+        *save_steps(reset),
     ]
 
 
@@ -122,7 +122,7 @@ async def _base_neighbours_back(r: Any) -> None:
 
 @scenario("QD1", ("neighbours",), 45, "test_config_flow_neighbours.py", minimum=True)
 async def QD1(r: Any) -> None:
-    """The neighbour forms show each error and warning, suggest the door sensor of the two zones' areas, edit and remove with their reset step, and stop with neighbour_missing, dependencies_unchanged and zone_changed."""
+    """The neighbour forms show each error and warning, suggest the door sensor of the two zones' areas, edit and remove with the reset question at save, refuse a neighbour that is gone on the form, go back to the menu when nothing is chosen to remove, and stop the save with zone_changed."""
     transport = RestTransport(r.ha)
     entry_id = await _entry_id(r)
     removed_sensor = False
@@ -137,7 +137,7 @@ async def QD1(r: Any) -> None:
             r.check(bool(result.get("errors")), f"neighbour_details refuses {what}: {result.get('errors')}")
 
         await options_flow(r, TITLE, _remove([await _item_id(r, HALL)], reset=False))
-        r.check(not [i for i in await _items(r) if i.get("entity") and i["mode"] == "door"], "the hall removed, through the reset step")
+        r.check(not [i for i in await _items(r) if i.get("entity") and i["mode"] == "door"], "the hall removed, through the reset question at save")
         result = await walk(transport, "options", entry_id, _add() + [Form("neighbour_add", {"entity": HALL})])
         suggested = (result.get("description_placeholders") or {}).get("suggestions") or ""
         r.check(KITCHEN_DOOR in suggested, f"the details form lists the door sensor of the zones' areas: {suggested.strip()}")
@@ -150,7 +150,7 @@ async def QD1(r: Any) -> None:
         r.check(result.get("step_id") == "neighbour_confirm", f"a warning to confirm (the hall's own entry does not list the kitchen): {result.get('description_placeholders')}")
         result = await walk(
             transport, "options", entry_id,
-            [Form("neighbour_confirm", if_shown=True), Form("model_reset", {"reset_model": False}, if_shown=True)],
+            [Form("neighbour_confirm", if_shown=True), *save_steps()],
             resume=result,
         )  # fmt: skip
         r.check(result.get("type") == "create_entry", f"the hall added back: {result.get('type')}")
@@ -159,31 +159,39 @@ async def QD1(r: Any) -> None:
         dining = await _item_id(r, DINING)
         await options_flow(r, TITLE, _edit(dining, {"mode": "always", "door_sensors": [], "neighbour_window_action": "eco"}))
         stored = next(i for i in await _items(r) if i["id"] == dining)
-        r.check(stored.get("neighbour_window_action") == "eco", "editing the window action saves without a reset step")
+        r.check(stored.get("neighbour_window_action") == "eco", "editing the window action saves without the reset question")
 
         result = await walk(transport, "options", entry_id, [Menu("dependencies"), Menu("dependency_remove"), Form("dependency_remove", {"remove": []})])
-        r.check(result.get("type") == "abort" and result.get("reason") == "dependencies_unchanged", f"removing nothing: {result.get('type')} {result.get('reason')}")
+        note = (result.get("description_placeholders") or {}).get("note") or ""
+        r.check(result.get("step_id") == "thermostat_menu" and bool(note.strip()), f"removing nothing goes back to the menu, which says so: {result.get('step_id')} {note.strip()!r}")
+        await transport.abort("options", result["flow_id"])
 
         pending = await walk(
             transport, "options", entry_id,
             [Menu("dependencies"), Menu("dependency_remove"), Form("dependency_remove", {"remove": [dining]})],
         )  # fmt: skip
-        r.check(pending.get("step_id") == "model_reset", f"a removal waits at its reset step: {pending.get('step_id')}")
+        r.check(pending.get("step_id") == "thermostat_menu", f"a removal waits in the open window: {pending.get('step_id')}")
         await options_flow(r, TITLE, _edit(dining, {"mode": "always", "door_sensors": [], "neighbour_window_action": "nothing"}))
-        result = await walk(transport, "options", entry_id, [Form("model_reset", {"reset_model": False})], resume=pending)
-        r.check(result.get("type") == "abort" and result.get("reason") == "zone_changed", f"a form whose list changed meanwhile: {result.get('type')} {result.get('reason')}")
+        result = await walk(transport, "options", entry_id, [Menu("save")], resume=pending)
+        r.check(result.get("type") == "abort" and result.get("reason") == "zone_changed", f"a window whose list changed meanwhile: {result.get('type')} {result.get('reason')}")
 
         await options_flow(r, TITLE, _add() + [
             Form("neighbour_add", {"entity": HALL_SENSOR}),
             Form("neighbour_details", {"mode": "always", "door_sensors": []}),
             Form("neighbour_confirm", if_shown=True),
-            Form("model_reset", {"reset_model": False}, if_shown=True),
+            *save_steps(),
         ])  # fmt: skip
         sensor_item = await _item_id(r, HALL_SENSOR)
         await r.ha.ws_cmd({"type": "config/entity_registry/remove", "entity_id": HALL_SENSOR})
         removed_sensor = True
-        result = await walk(transport, "options", entry_id, [Menu("dependencies"), Menu("dependency_edit"), Form("dependency_edit", {"dependency": sensor_item})])
-        r.check(result.get("type") == "abort" and result.get("reason") == "neighbour_missing", f"editing a neighbour whose entity is gone: {result.get('type')} {result.get('reason')}")
+        result = await walk(
+            transport, "options", entry_id,
+            [Menu("dependencies"), Menu("dependency_edit"), Form("dependency_edit", {"dependency": sensor_item})],
+            refused_ok=True,
+        )  # fmt: skip
+        r.check((result.get("errors") or {}).get("dependency") == "neighbour_missing", f"editing a neighbour whose entity is gone is refused on the form: {result.get('errors')}")
+        if result.get("type") in ("form", "menu"):
+            await transport.abort("options", result["flow_id"])
         await options_flow(r, TITLE, _remove([sensor_item], reset=False))
     finally:
         await _base_neighbours_back(r)

@@ -4,6 +4,63 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+- `testing.md` gets a section "Coverage": the code coverage per file against the baseline, the
+  fork's own lines (99.2 % of the lines, 98.0 % of the branches) with the reason for each line left
+  uncovered, and a matrix of the features, their variants and use cases with where each is tested.
+  Section 4 lists the new test files.
+- Tests for the edge cases the code coverage found in the options forms (entities without a unique
+  id, a zone or entry changed in another window, a member entry that cannot be created) and in the
+  computation of neighbours and zones (fits that cannot be published, saved states that cannot be
+  read, a missing outdoor temperature or target).
+- Remove the second source's `response` property, which nothing read (found by the code coverage).
+- Tests for the four services (each reaches the thermostats a call names, skips the others) and
+  for the paths the code coverage found untested: the migration's edge cases, the heating inputs
+  without a registry, a diagnostic sensor removed after a takeover, the valve's activation floor
+  with water data, a second source turned off, a thermostat range that is not a range.
+- The QAS test pack follows the new options forms: every setup and scenario window goes through
+  its menu and ends with "Save and finish" (and the reset question where a change affects what
+  was learned); a zone's member without a heating type gets it in the zone's setup. QD1 and QE1
+  check the errors and notes that replace the forms' aborts and the save stopped by
+  `zone_changed`; QB2 checks the migrated entries and QB3 that 0.4.0 still loads them. A new
+  scenario, QA7, checks that a closed window stores and reloads nothing, that the menu names the
+  change in the instance's language, and that a save reloads the entry once (the helpers count
+  the entry's setups). QZ1 also checks the new texts.
+- Rework the options forms: one save at the end, as in Versatile Thermostat. Each section is
+  reached from a menu and comes back to it; the changes stay in the open window, and only the
+  last item, "Save and finish", writes them. Closing the window discards everything, also what
+  a section would write to other entries (a zone moved to the main source's entry, an entry for
+  a zone's member). The menu names the sections with unsaved changes, with the labels of the
+  interface's language, and follows the choices (a water heating type chosen in the window
+  shows "Water and boiler" at once). A thermostat's settings start with the heating type, then
+  the "thermostat only" settings and "Use the SmartPI defaults"; with the switch off, a second
+  step holds the thermostat's own values of the shared settings. The defaults entry's menu holds
+  the shared settings, the boiler's signals and the save. Creating a thermostat's entry opens
+  the same menu, with every section; the entry is created at save. The reset question is asked
+  once, at save, with its reasons (heating type, water data, zone, neighbours). No section
+  aborts any more: a neighbour that is gone is an error on its form, a missing master or a
+  removal with nothing chosen goes back to the menu with a note, neighbours that cannot be
+  merged are an error on the zone's parameter step; only the save stops when the zone or the
+  dependencies changed in another window meanwhile. A zone's member without a heating type is
+  asked for it. The menus of the zone and of the neighbours have an item to go back. Each entry
+  written by one save reloads once.
+- Sort the settings into shared and "this thermostat only", and read them per key. The
+  heating type, the activation delays, the valve curve and the PWM cycle restart belong to one
+  thermostat: they leave the "SmartPI defaults" entry and are set in the thermostat's own entry;
+  not set means not used (no heating type: no water data and no boiler's call; no delays; no
+  valve curve; no PWM restart), as in the release 0.4.0. The other settings are shared: they
+  come from the defaults, or from the thermostat's own entry when its new switch "Use the
+  SmartPI defaults" (`smart_pi_use_defaults`) is off. At run time no value is taken from the
+  code where an entry can hold one; a shared setting missing from an entry edited by hand is
+  logged once and takes the form's value. Versatile Thermostat's TPI delays are no longer read
+  for a thermostat on SmartPI. A thermostat without an entry of its own runs as in the release.
+  The heating type gets a "Not set" choice and comes first in a thermostat's settings; the
+  zone's emitter types and "Record full diagnostics" follow the same rule, and a save of the
+  defaults reloads every thermostat that uses them. The entries move to minor version 2 (the
+  major version stays 1, so 0.4.0 still loads them): a thermostat's entry keeps its values with
+  the switch off; the defaults entry keeps the shared settings only, and the "thermostat only"
+  settings it set (such as the heating type of the fork's earlier versions) go, once Home
+  Assistant has started, to an entry created for each thermostat on SmartPI that has none, with
+  a repair notice listing them.
 - Add the sources of the inputs from the heating system. The water data (the supply water
   temperature of a thermostat's circuit, the boiler can heat, hot water has priority, a fault)
   and the boiler's call now come from a source chosen in a new "Water and boiler" item of a

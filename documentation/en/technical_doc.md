@@ -497,6 +497,20 @@ The handler reads the inputs from the heating system through the plugin's `heati
 the water data and the boiler's call from the source chosen in the thermostat's options (entities,
 a provider, or Versatile Thermostat's central boiler).
 
+The handler reads the thermostat's settings per key, through the plugin's `settings.py`, when
+the algorithm starts. First Versatile Thermostat's entry, without the settings that belong to
+one thermostat (Versatile Thermostat's own TPI delays are not used). Then the shared settings
+(`SHARED_SETTINGS` in `const.py`: deadband, hysteresis, release tau factor, setpoint filter, FF3,
+damped P, full diagnostics) from the "SmartPI defaults" entry, or from the thermostat's own entry
+when its switch "Use the SmartPI defaults" is off. Then the thermostat's own entry: its
+"thermostat only" settings (`THERMOSTAT_SETTINGS`: heating type, activation delays, PWM cycle
+restart, valve curve), its neighbours, its zone and its water source. A "thermostat only"
+setting that is not set is not used. The code's starting values (`DEFAULT_OPTIONS`) only fill
+the forms; a shared setting missing from an entry edited by hand takes the form's value and is
+logged once as a configuration error. Saved options replace the entry's first data as a whole,
+so a setting removed in the options stays removed. A save of the defaults entry reloads every
+thermostat that uses them.
+
 ### 5.2 `smartpi/` modules effectively used
 
 | Module                 | Main role                                                   |

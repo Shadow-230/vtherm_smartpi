@@ -25,7 +25,6 @@ from .smartpi.const import (
     NEAR_BAND_HYSTERESIS_C,
 )
 from .const import (
-    CONF_TARGET_VTHERM,
     CONF_MINIMAL_ACTIVATION_DELAY,
     CONF_MINIMAL_DEACTIVATION_DELAY,
     CONF_SMART_PI_DEADBAND,
@@ -42,13 +41,12 @@ from .const import (
     CONF_SMART_PI_KNEE_DEMAND,
     CONF_SMART_PI_KNEE_VALVE,
     CONF_SMART_PI_MAX_VALVE,
+    VALVE_CURVE_POINTS,
     CONF_SMART_PI_DEPENDENCIES,
-    CONF_SMART_PI_HEATING_TYPE,
     CONF_SMART_PI_RESET_TOKEN,
     CONF_SMART_PI_MODEL_KEPT_FOR_WATER,
     CONF_SMART_PI_WATER_SOURCE,
     DATA_SOURCE_LINK,
-    DEFAULT_OPTIONS,
     DIAGNOSTIC_SENSOR_UNIQUE_ID_PREFIX,
     DOMAIN,
     EventType,
@@ -57,6 +55,7 @@ from .const import (
 from .hvac_mode import VThermHvacMode_OFF, VThermHvacMode_HEAT, VThermHvacMode_COOL
 from .commons import write_event_log
 from .smartpi.valve_curve import ValveCurveParams
+from .settings import defaults_entry, effective_settings, entry_options, heating_type_of, own_heating_type
 from .smartpi.water_input import AVAILABILITY_NONE, AVAILABILITY_USED, SOURCE_LASTING, WaterInput, WaterReading
 from .smartpi.boiler_call import SOURCE_VTHERM, BoilerReading
 from .heating_inputs import (
@@ -171,63 +170,40 @@ class SmartPIHandler:
             minimal_deactivation_delay,
         )
 
-        # SmartPI specific
-        deadband = entry.get(CONF_SMART_PI_DEADBAND, 0.05)
-        use_setpoint_filter = entry.get(CONF_SMART_PI_USE_SETPOINT_FILTER, True)
-        use_ff3 = entry.get(
-            CONF_SMART_PI_USE_FF3,
-            DEFAULT_OPTIONS[CONF_SMART_PI_USE_FF3],
-        )
-        hyst_on = entry.get(CONF_SMART_PI_HYSTERESIS_ON, 0.3)
-        hyst_off = entry.get(CONF_SMART_PI_HYSTERESIS_OFF, 0.5)
-        release_tau_factor = entry.get(CONF_SMART_PI_RELEASE_TAU_FACTOR, 0.5)
-        deadband_allow_p = entry.get(CONF_SMART_PI_DEADBAND_ALLOW_P, False)
-        self._allow_pwm_cycle_force = entry.get(
-            CONF_SMART_PI_ALLOW_PWM_CYCLE_FORCE,
-            DEFAULT_OPTIONS[CONF_SMART_PI_ALLOW_PWM_CYCLE_FORCE],
-        )
-        debug_mode = entry.get(CONF_SMART_PI_DEBUG, False)
+        # SmartPI specific: the shared settings are always there (settings.py); the
+        # "thermostat only" ones are not used when they are not set.
+        deadband = entry[CONF_SMART_PI_DEADBAND]
+        use_setpoint_filter = entry[CONF_SMART_PI_USE_SETPOINT_FILTER]
+        use_ff3 = entry[CONF_SMART_PI_USE_FF3]
+        hyst_on = entry[CONF_SMART_PI_HYSTERESIS_ON]
+        hyst_off = entry[CONF_SMART_PI_HYSTERESIS_OFF]
+        release_tau_factor = entry[CONF_SMART_PI_RELEASE_TAU_FACTOR]
+        deadband_allow_p = entry[CONF_SMART_PI_DEADBAND_ALLOW_P]
+        self._allow_pwm_cycle_force = entry.get(CONF_SMART_PI_ALLOW_PWM_CYCLE_FORCE, False) is True
+        debug_mode = entry[CONF_SMART_PI_DEBUG]
         self._valve_linearization_configured = entry.get(
             CONF_SMART_PI_ENABLE_VALVE_LINEARIZATION,
             False,
-        )
+        ) is True
         valve_mode_enabled = bool(getattr(t.cycle_scheduler, "is_valve_mode", False))
         valve_linearization_enabled = (
             self._valve_linearization_configured
             and valve_mode_enabled
         )
-        try:
-            self._valve_curve_params = ValveCurveParams(
-                min_valve=float(
-                    entry.get(
-                        CONF_SMART_PI_MIN_VALVE,
-                        DEFAULT_OPTIONS[CONF_SMART_PI_MIN_VALVE],
-                    )
-                ),
-                knee_demand=float(
-                    entry.get(
-                        CONF_SMART_PI_KNEE_DEMAND,
-                        DEFAULT_OPTIONS[CONF_SMART_PI_KNEE_DEMAND],
-                    )
-                ),
-                knee_valve=float(
-                    entry.get(
-                        CONF_SMART_PI_KNEE_VALVE,
-                        DEFAULT_OPTIONS[CONF_SMART_PI_KNEE_VALVE],
-                    )
-                ),
-                max_valve=float(
-                    entry.get(
-                        CONF_SMART_PI_MAX_VALVE,
-                        DEFAULT_OPTIONS[CONF_SMART_PI_MAX_VALVE],
-                    )
-                ),
-            )
-        except (TypeError, ValueError) as err:
-            _LOGGER.error("%s - Invalid SmartPI valve curve parameters: %s", t, err)
-            self._valve_linearization_configured = False
-            valve_linearization_enabled = False
-            self._valve_curve_params = None
+        self._valve_curve_params = None
+        if self._valve_linearization_configured or all(key in entry for key in VALVE_CURVE_POINTS):
+            try:
+                self._valve_curve_params = ValveCurveParams(
+                    min_valve=float(entry[CONF_SMART_PI_MIN_VALVE]),
+                    knee_demand=float(entry[CONF_SMART_PI_KNEE_DEMAND]),
+                    knee_valve=float(entry[CONF_SMART_PI_KNEE_VALVE]),
+                    max_valve=float(entry[CONF_SMART_PI_MAX_VALVE]),
+                )
+            except (KeyError, TypeError, ValueError) as err:
+                _LOGGER.error("%s - Invalid SmartPI valve curve parameters: %s", t, err)
+                self._valve_linearization_configured = False
+                valve_linearization_enabled = False
+                self._valve_curve_params = None
         # Create SmartPI instance
         # Note: saved_state is loaded asynchronously later
         t.prop_algorithm = SmartPI(
@@ -253,9 +229,8 @@ class SmartPIHandler:
             self._valve_curve_params,
             valve_mode=valve_mode_enabled,
         )
-        t.prop_algorithm.configure_heating_type(
-            entry.get(CONF_SMART_PI_HEATING_TYPE, DEFAULT_OPTIONS[CONF_SMART_PI_HEATING_TYPE])
-        )
+        # Not set: no water data and no boiler's call, as in the release.
+        t.prop_algorithm.configure_heating_type(heating_type_of(entry))
         self._dependency_items = parse_dependencies(entry.get(CONF_SMART_PI_DEPENDENCIES))
         t.prop_algorithm.set_known_inputs_provider(
             self._read_dependencies if self._dependency_items else None
@@ -272,15 +247,15 @@ class SmartPIHandler:
         async_dispatcher_send(t.hass, SIGNAL_SMARTPI_TARGET_UPDATED, t.unique_id)
 
     def _with_heating_types(self, item: DependencyItem, own_config: dict) -> DependencyItem:
-        """The zone's source item with the heating types the two thermostats' entries set now.
+        """The zone's source item with the heating types the two thermostats' own entries set now.
 
-        A custom response set in the zone form is kept.
+        A custom response set in the zone form is kept, and so is the type the zone form
+        stored for a thermostat whose entry sets none.
         """
         extra = dict(item.extra)
-        if extra.get(KEY_LEAD_EMITTER) != EMITTER_CUSTOM:
-            extra[KEY_LEAD_EMITTER] = own_config.get(
-                CONF_SMART_PI_HEATING_TYPE, DEFAULT_OPTIONS[CONF_SMART_PI_HEATING_TYPE]
-            )
+        lead_type = heating_type_of(own_config)
+        if extra.get(KEY_LEAD_EMITTER) != EMITTER_CUSTOM and lead_type is not None:
+            extra[KEY_LEAD_EMITTER] = lead_type
         if extra.get(KEY_SOURCE_EMITTER) != EMITTER_CUSTOM:
             heating_type = self._source_heating_type(item.entity)
             if heating_type is not None:
@@ -288,45 +263,18 @@ class SmartPIHandler:
         return replace(item, extra=extra)
 
     def _source_heating_type(self, registry_id: str) -> str | None:
-        """The heating type of the source thermostat's SmartPI entry (else the defaults')."""
+        """The heating type of the source thermostat's own SmartPI entry (None: not set)."""
         hass = self._thermostat.hass
         try:
             unique_id = self._resolve_unique_id(registry_id)
-            entries = hass.config_entries.async_entries(DOMAIN)
+            return own_heating_type(hass, unique_id)
         except Exception:  # pylint: disable=broad-except
             return None
-        own = next((e for e in entries if unique_id and e.data.get(CONF_TARGET_VTHERM) == unique_id), None)
-        chosen = own or next((e for e in entries if e.unique_id == DOMAIN), None)
-        if chosen is None:
-            return None
-        config = {**chosen.data, **chosen.options}
-        return config.get(CONF_SMART_PI_HEATING_TYPE)
 
     def _resolve_effective_config(self) -> tuple[dict, object | None]:
-        """Return the merged SmartPI configuration for the thermostat."""
+        """The thermostat's settings, read per key (settings.py), and its own SmartPI entry."""
         t = self._thermostat
-        config = dict(DEFAULT_OPTIONS)
-        config.update(t.entry_infos or {})
-
-        plugin_entries = t.hass.config_entries.async_entries(DOMAIN)
-        matching_entry = next(
-            (
-                entry
-                for entry in plugin_entries
-                if entry.data.get(CONF_TARGET_VTHERM) == t.unique_id
-            ),
-            None,
-        )
-        global_entry = next(
-            (entry for entry in plugin_entries if entry.unique_id == DOMAIN),
-            None,
-        )
-        entry_to_apply = matching_entry or global_entry
-        if entry_to_apply is not None:
-            config.update(entry_to_apply.data)
-            config.update(entry_to_apply.options)
-
-        return config, entry_to_apply
+        return effective_settings(t.hass, t.unique_id, t.entry_infos)
 
     def _get_effective_config(self) -> dict:
         """Return the merged SmartPI configuration for the thermostat."""
@@ -1124,11 +1072,8 @@ class SmartPIHandler:
         """The sources chosen in this thermostat's options; the boiler's signals from the
         defaults entry unless the thermostat sets its own."""
         t = self._thermostat
-        global_entry = next(
-            (entry for entry in t.hass.config_entries.async_entries(DOMAIN) if entry.unique_id == DOMAIN),
-            None,
-        )
-        defaults = {**global_entry.data, **global_entry.options} if global_entry is not None else None
+        global_entry = defaults_entry(t.hass)
+        defaults = entry_options(global_entry) if global_entry is not None else None
         return config_from_options(
             self._get_effective_config(), defaults, getattr(t, "is_used_by_central_boiler", None) is True
         )

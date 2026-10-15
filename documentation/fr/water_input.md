@@ -102,9 +102,9 @@ Décisions et raisons :
 
 ## 2. Configuration
 
-**Type de chauffage** (`smart_pi_heating_type`) — réglé dans les réglages du régulateur de l'entrée
-« SmartPI defaults » (comme valeur par défaut) et de chaque entrée de thermostat. Par défaut :
-radiateur à eau. Seul un type à eau lit les données d'eau et l'appel de la chaudière.
+**Type de chauffage** (`smart_pi_heating_type`) — le premier des réglages d'un thermostat, réglé
+seulement dans son entrée propre (pas dans l'entrée « SmartPI defaults »). Par défaut : non défini.
+Seul un type à eau lit les données d'eau et l'appel de la chaudière.
 
 | Valeur | Type de chauffage | Exposant `n` | Eau de référence `T_wref` | Utilise les entrées |
 |---|---|---|---|---|
@@ -117,16 +117,19 @@ Les exposants et les eaux de référence sont provisoires. Ils doivent encore ê
 données d'installations réelles.
 
 **L'entrée « SmartPI defaults ».** Ses options ouvrent un menu (ses libellés sont affichés en
-anglais) : **Regulator settings** (les réglages, comme avant) et **Boiler signals** (les signaux de
-la chaudière). Les signaux de la chaudière sont des entités, toutes optionnelles : laissez un champ
+anglais) : **Regulator settings** (les réglages partagés), **Boiler signals** (les signaux de la
+chaudière) et **Save and finish** (enregistrer et terminer). Les signaux de la chaudière sont des entités, toutes optionnelles : laissez un champ
 vide si vous n'avez pas une telle entité. Chaque thermostat qui lit des entités les utilise, sauf
 s'il règle les siens.
 
-**L'entrée d'un thermostat.** Pour un type de chauffage à eau, son menu a **Water and boiler** (eau
-et chaudière), à côté des réglages du régulateur, de la zone et des voisins. Un thermostat qui sert
-de source additionnelle à une zone ouvre un menu à lui : ses réglages, et **Water and boiler** avec
-seulement les données d'eau (son apprentissage est en pause tant qu'il suit la source principale,
-donc l'appel de la chaudière n'est pas lu pour lui).
+**L'entrée d'un thermostat.** Pour un type de chauffage à eau (choisi dans la fenêtre, même avant
+d'être enregistré), son menu a **Water and boiler** (eau et chaudière), à côté du type de chauffage
+et de la régulation, de la zone et des voisins. Un thermostat qui sert de source additionnelle à
+une zone ouvre un menu à lui : ses réglages, et **Water and boiler** avec seulement les données
+d'eau (son apprentissage est en pause tant qu'il suit la source principale, donc l'appel de la
+chaudière n'est pas lu pour lui). Comme chaque section, Water and boiler revient au menu ; les choix
+sont écrits à **Save and finish**, et fermer la fenêtre les abandonne
+([Dépendances entre zones, §2.1](zone_dependencies.md#21-options-et-formulaires)).
 
 ```mermaid
 flowchart TD
@@ -135,10 +138,12 @@ flowchart TD
     E -- oui --> F["heating_entities : capteur de départ si l'eau vient d'entités, signaux de la chaudière par défaut ou propres"]
     F --> O{"signaux propres ?"}
     O -- oui --> G["heating_signals : les signaux que lisent les sources choisies"]
-    O -- non --> R
-    G --> R{"source de l'eau ou capteur de départ changé ?"}
-    E -- non --> R
-    R -- oui --> Q["heating_reset : remettre à zéro le modèle appris, coché par défaut"]
+    O -- non --> B["retour au menu"]
+    G --> B
+    E -- non --> B
+    B --> SV["Save and finish"]
+    SV --> R{"source de l'eau ou capteur de départ changé ?"}
+    R -- oui --> Q["model_reset : remettre à zéro le modèle appris, coché par défaut"]
     R -- non --> V["enregistré"]
     Q --> V
 ```
@@ -162,10 +167,10 @@ flowchart TD
   registre (registry id), donc elle fonctionne encore après un renommage. Une entité sans entrée
   dans le registre (par exemple un capteur YAML sans identifiant unique) est stockée par son
   identifiant d'entité.
-- **L'étape de remise à zéro.** Quand la source de l'eau ou le capteur de départ change, la
+- **La question de remise à zéro.** Quand la source de l'eau ou le capteur de départ change, la
   puissance apprise change d'unités : avec des données d'eau, elle est mesurée à l'eau de référence.
-  Le formulaire demande donc s'il faut remettre à zéro le modèle appris de SmartPI pour ce
-  thermostat (coché par défaut). Si vous gardez le modèle, SmartPI s'en souvient
+  **Save and finish** demande donc s'il faut remettre à zéro le modèle appris de SmartPI pour ce
+  thermostat (coché par défaut ; une seule question pour toutes les raisons de l'enregistrement). Si vous gardez le modèle, SmartPI s'en souvient
   (`smart_pi_model_kept_for_water`) et ne redemande pas quand les données de ces entrées commencent
   (section 3.4). Un changement de l'appel de la chaudière ou des signaux ne change pas les unités et
   ne demande rien.
@@ -191,9 +196,9 @@ flowchart TD
   chaudière, si le fournisseur le donne).
 - Dans les diagnostics, `water.source` vaut `live` et `inputs.*.source` vaut `provider:<name>`.
 
-Une entrée sans type de chauffage à elle prend la valeur par défaut, qui est un radiateur à eau.
-Pour un émetteur électrique, choisissez un type électrique : il ne lit ni l'eau ni l'appel de la
-chaudière.
+Un thermostat sans type de chauffage (sans entrée propre, ou « Not set ») ne lit ni l'eau ni
+l'appel de la chaudière, comme dans la version 0.4.0 : choisissez un type à eau pour les utiliser.
+Pour un émetteur électrique, choisissez un type électrique : il ne les lit pas non plus.
 
 ## 3. Données d'eau
 
@@ -319,8 +324,8 @@ il ne sert plus le thermostat, ou quand le capteur de départ a disparu.
    thermostat. SmartPI ne convertit pas le modèle appris dans les nouvelles unités (décision du
    propriétaire du 2026-10-12) ; il propose la remise à zéro à la place. Les règles :
    - une interruption passagère ne crée jamais la réparation ;
-   - **un changement fait dans les options y est réglé.** L'étape de remise à zéro des options a
-     déjà posé la question (section 2). D'autres entrées d'eau effacent tout de suite ce qui a été
+   - **un changement fait dans les options y est réglé.** La question de remise à zéro de
+     l'enregistrement des options a déjà été posée (section 2). D'autres entrées d'eau effacent tout de suite ce qui a été
      appris de l'eau des anciennes (leur disponibilité et leurs moyennes, pour que les nouvelles
      entrées partent comme neuves), et une réparation de l'eau encore ouverte est retirée. Si le
      modèle est gardé, les premières données des nouvelles entrées ne créent pas de réparation.
@@ -625,7 +630,7 @@ même quand la chaudière est toujours appelée. Cela cache les différences.
 | `SmartPI._apply_soft_constraints` | `algo.py` | Limite de puissance `max_on_percent × max(φ, WATER_NO_HEAT)` ; `water_too_cold`. |
 | `BoilerCall`, `BoilerReading` | `smartpi/boiler_call.py` | Logique pure : l'appel de la chaudière, le mode d'apprentissage (`emitter_cooling`, `held`, `emitter_warming`), le délai de grâce et le temps de stabilisation selon le type de chauffage, les diagnostics `boiler` avec la source choisie et ses entrées (section 4). |
 | `SmartPI.update_boiler`, `_read_known_inputs`, `_learning_power`, `_deadtime_input` | `algo.py` | Le mode d'apprentissage à chaque calcul : apprentissage avec la puissance 0 pendant le maintien, le verrou `boiler_settling` pendant que l'émetteur refroidit ou se réchauffe, l'entrée et les sauts de l'estimateur de temps mort, la correction du feed-forward gelée, la couche des dépendances informée (`heat_withheld`), la puissance réalisée d'un cycle enregistrée à 0. |
-| Options : `async_step_boiler_signals`, `async_step_heating_inputs`, `heating_entities`, `heating_signals`, `heating_reset`, `source_menu` | `config_flow.py` | Les formulaires de la section 2 ; les listes de sources construites à partir des fournisseurs inscrits. |
+| Options : `async_step_boiler_signals`, `async_step_heating_inputs`, `heating_entities`, `heating_signals`, `source_menu`, et la question de remise à zéro de `async_step_save` (`model_reset`) | `config_flow.py` | Les formulaires de la section 2 ; les listes de sources construites à partir des fournisseurs inscrits. |
 | `WaterModelResetFlow` | `repairs.py` | L'étape de la réparation : remettre à zéro le modèle appris (coché par défaut). |
 | Type de chauffage | `config_flow.py`, `const.py` | Le sélecteur `smart_pi_heating_type` dans les réglages du régulateur. |
 
@@ -745,12 +750,14 @@ flowchart TD
 | `smart_pi_supply_entity` | thermostat | le capteur de départ (identifiant de registre, ou identifiant d'entité) |
 | `smart_pi_boiler_signals` | thermostat | `defaults` ou `own` |
 | `smart_pi_heat_available_entity`, `smart_pi_dhw_entity`, `smart_pi_fault_entity`, `smart_pi_boiler_called_entity`, `smart_pi_boiler_reason_entity` | « SmartPI defaults » ; un thermostat avec `own` | les signaux de la chaudière |
-| `smart_pi_model_kept_for_water` | thermostat | les entrées d'eau (source et capteur de départ) pour lesquelles l'utilisateur a gardé le modèle appris à l'étape de remise à zéro |
-| `smart_pi_reset_token` | thermostat | posé par l'étape de remise à zéro pour remettre à zéro le modèle appris une seule fois (comme pour les voisins et la zone) |
+| `smart_pi_model_kept_for_water` | thermostat | les entrées d'eau (source et capteur de départ) pour lesquelles l'utilisateur a gardé le modèle appris à la question de remise à zéro |
+| `smart_pi_reset_token` | thermostat | posé par l'enregistrement quand l'utilisateur a choisi la remise à zéro, pour remettre à zéro le modèle appris une seule fois (comme pour les voisins et la zone) |
 
-Une entrée sans ces clés fonctionne comme avant (section 2). L'entrée que le formulaire de zone crée
-pour une source additionnelle ne copie pas les signaux des valeurs par défaut : elle les prend dans
-les valeurs par défaut.
+Une entrée sans ces clés fonctionne comme avant (section 2). Une entrée que SmartPI crée lui-même
+(pour un membre d'une zone, ou à la migration de l'entrée « SmartPI defaults ») ne contient que les
+réglages de ce seul thermostat : elle prend les réglages partagés et les signaux de la chaudière dans
+les valeurs par défaut. L'endroit où chaque autre réglage est lu est décrit dans
+[SmartPI, « Configuration »](vtherm_smartpi.md#configuration).
 
 **L'état de l'algorithme.** `SmartPI.save_state()` ajoute une clé `water` dès que l'entrée eau a vu
 des données ou une raison durable. Ainsi, un thermostat sans données d'eau garde l'ancien format. La

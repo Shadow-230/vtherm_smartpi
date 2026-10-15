@@ -18,6 +18,7 @@ from custom_components.vtherm_smartpi.const import (
     CONF_SMART_PI_BOILER_CALLED_ENTITY,
     CONF_SMART_PI_BOILER_REASON_ENTITY,
     CONF_SMART_PI_BOILER_SIGNALS,
+    CONF_SMART_PI_DEADBAND,
     CONF_SMART_PI_DEPENDENCIES,
     CONF_SMART_PI_DHW_ENTITY,
     CONF_SMART_PI_FAULT_ENTITY,
@@ -26,6 +27,7 @@ from custom_components.vtherm_smartpi.const import (
     CONF_SMART_PI_MODEL_KEPT_FOR_WATER,
     CONF_SMART_PI_RESET_TOKEN,
     CONF_SMART_PI_SUPPLY_ENTITY,
+    CONF_SMART_PI_USE_DEFAULTS,
     CONF_SMART_PI_WATER_SOURCE,
     CONF_TARGET_VTHERM,
     DEFAULT_OPTIONS,
@@ -33,6 +35,8 @@ from custom_components.vtherm_smartpi.const import (
     PROP_FUNCTION_SMART_PI,
 )
 from custom_components.vtherm_smartpi.heating_inputs import PROVIDERS_KEY
+
+from flow_helpers import save
 
 VT_DOMAIN = "versatile_thermostat"
 
@@ -135,7 +139,7 @@ async def test_the_defaults_keep_the_boiler_s_signals(hass) -> None:
     entry = _defaults_entry(hass, **{CONF_SMART_PI_FAULT_ENTITY: "binary_sensor.old_fault"})
 
     result = await hass.config_entries.options.async_init(entry.entry_id)
-    assert result["menu_options"] == ["settings", "boiler_signals"]
+    assert result["menu_options"] == ["regulator", "boiler_signals", "save"]
     result = await _configure(hass, result, {"next_step_id": "boiler_signals"})
     assert result["step_id"] == "boiler_signals"
     assert _fields(result) == [
@@ -149,14 +153,17 @@ async def test_the_defaults_keep_the_boiler_s_signals(hass) -> None:
     result = await _configure(
         hass, result, {CONF_SMART_PI_HEAT_AVAILABLE_ENTITY: heat.entity_id, CONF_SMART_PI_DHW_ENTITY: "binary_sensor.yaml_dhw"}
     )
+    assert result["step_id"] == "init"
+    # The defaults ask nothing about a learned model.
+    result = await save(hass, result)
 
     assert result["type"] == FlowResultType.CREATE_ENTRY
     # A registered entity is kept by its registry id; the field left empty goes.
     assert entry.options[CONF_SMART_PI_HEAT_AVAILABLE_ENTITY] == heat.id
     assert entry.options[CONF_SMART_PI_DHW_ENTITY] == "binary_sensor.yaml_dhw"
     assert CONF_SMART_PI_FAULT_ENTITY not in entry.options
-    # The regulator settings are kept.
-    assert entry.options[CONF_SMART_PI_HEATING_TYPE] == DEFAULT_OPTIONS[CONF_SMART_PI_HEATING_TYPE]
+    # The shared settings are kept.
+    assert entry.options[CONF_SMART_PI_DEADBAND] == DEFAULT_OPTIONS[CONF_SMART_PI_DEADBAND]
 
 
 # --- a thermostat's "Water and boiler" --------------------------------------------------
@@ -200,8 +207,8 @@ async def test_the_lists_show_the_registered_providers(hass) -> None:
     result = await _configure(
         hass, result, {CONF_SMART_PI_WATER_SOURCE: "provider:alpha", CONF_SMART_PI_BOILER_CALL_SOURCE: "provider:alpha"}
     )
-    assert result["step_id"] == "heating_reset"
-    result = await _configure(hass, result, {"reset_model": True})
+    assert result["step_id"] == "thermostat_menu"
+    result = await save(hass, result, reset=True)
     assert result["type"] == FlowResultType.CREATE_ENTRY
     assert entry.options[CONF_SMART_PI_WATER_SOURCE] == "provider:alpha"
     assert entry.options[CONF_SMART_PI_BOILER_CALL_SOURCE] == "provider:alpha"
@@ -218,6 +225,7 @@ async def test_a_provider_no_longer_registered_stays_chosen_and_is_marked(hass) 
     assert _choices(result, CONF_SMART_PI_WATER_SOURCE)[-1] == ("provider:gone", "gone (not available)")
     # Saved unchanged: no question about the model.
     result = await _configure(hass, result, {CONF_SMART_PI_WATER_SOURCE: "provider:gone", CONF_SMART_PI_BOILER_CALL_SOURCE: "none"})
+    result = await save(hass, result)
     assert result["type"] == FlowResultType.CREATE_ENTRY
     assert CONF_SMART_PI_RESET_TOKEN not in entry.options
 
@@ -238,8 +246,8 @@ async def test_water_from_entities_with_the_default_signals(hass) -> None:
     assert "- boiler_called" not in result["description_placeholders"]["defaults"]
     result = await _configure(hass, result, {CONF_SMART_PI_SUPPLY_ENTITY: supply.entity_id, CONF_SMART_PI_BOILER_SIGNALS: "defaults"})
 
-    assert result["step_id"] == "heating_reset"
-    result = await _configure(hass, result, {"reset_model": False})
+    assert result["step_id"] == "thermostat_menu"
+    result = await save(hass, result, reset=False)
     assert result["type"] == FlowResultType.CREATE_ENTRY
     assert entry.options[CONF_SMART_PI_WATER_SOURCE] == "entities"
     assert entry.options[CONF_SMART_PI_SUPPLY_ENTITY] == supply.id
@@ -270,6 +278,7 @@ async def test_the_thermostat_s_own_signals_are_prefilled_from_the_defaults(hass
     )
 
     # The water source did not change: no question about the model.
+    result = await save(hass, result)
     assert result["type"] == FlowResultType.CREATE_ENTRY
     assert entry.options[CONF_SMART_PI_BOILER_CALL_SOURCE] == "entities"
     assert entry.options[CONF_SMART_PI_BOILER_SIGNALS] == "own"
@@ -298,6 +307,7 @@ async def test_an_own_signal_left_empty_stays_empty(hass) -> None:
     assert _suggested(result, CONF_SMART_PI_FAULT_ENTITY) is None
     assert _suggested(result, CONF_SMART_PI_BOILER_CALLED_ENTITY) == "binary_sensor.own_call"
     result = await _configure(hass, result, {CONF_SMART_PI_BOILER_CALLED_ENTITY: "binary_sensor.own_call"})
+    result = await save(hass, result)
     assert result["type"] == FlowResultType.CREATE_ENTRY
     assert CONF_SMART_PI_FAULT_ENTITY not in entry.options
 
@@ -321,9 +331,8 @@ async def test_the_reset_is_asked_on_a_change_of_the_water_source_or_its_sensor_
         result = await _configure(
             hass, result, {CONF_SMART_PI_SUPPLY_ENTITY: after[CONF_SMART_PI_SUPPLY_ENTITY], CONF_SMART_PI_BOILER_SIGNALS: "defaults"}
         )
-    assert (result.get("step_id") == "heating_reset") is asked
-    if asked:
-        result = await _configure(hass, result, {"reset_model": True})
+    assert result["step_id"] == "thermostat_menu"
+    result = await save(hass, result, reset=True if asked else None)
     assert result["type"] == FlowResultType.CREATE_ENTRY
     assert bool(entry.options.get(CONF_SMART_PI_RESET_TOKEN)) is asked
     if water == "none":
@@ -363,18 +372,19 @@ async def test_a_zone_s_additional_source_chooses_its_water_data_only(hass) -> N
     floor_entry = _thermostat_entry(hass, "vt-floor", "floor_water", **{CONF_SMART_PI_BOILER_CALL_SOURCE: "entities"})
     result = await hass.config_entries.options.async_init(floor_entry.entry_id)
     assert result["step_id"] == "source_menu"
+    assert result["menu_options"] == ["source_role", "heating_inputs", "save"]
     result = await _configure(hass, result, {"next_step_id": "heating_inputs"})
     assert _fields(result) == [CONF_SMART_PI_WATER_SOURCE]
     result = await _configure(hass, result, {CONF_SMART_PI_WATER_SOURCE: "provider:alpha"})
     # Its call is not read: no entities to ask for, though the stored call source is entities.
-    assert result["step_id"] == "heating_reset"
-    result = await _configure(hass, result, {"reset_model": False})
+    assert result["step_id"] == "source_menu"
+    result = await save(hass, result, reset=False)
     assert floor_entry.options[CONF_SMART_PI_WATER_SOURCE] == "provider:alpha"
     assert floor_entry.options[CONF_SMART_PI_MODEL_KEPT_FOR_WATER] == "provider:alpha"
 
 
 async def test_a_zone_s_new_entry_takes_the_boiler_s_signals_from_the_defaults(hass) -> None:
-    """The entry the zone form creates starts from the defaults, without copying their signals."""
+    """The entry the zone form creates uses the defaults, without copying their signals."""
     _vtherm(hass, "vt-floor", "floor")
     _defaults_entry(hass, **{CONF_SMART_PI_DHW_ENTITY: "binary_sensor.boiler_dhw", CONF_SMART_PI_BOILER_SIGNALS: "own"})
     result = await hass.config_entries.flow.async_init(
@@ -383,4 +393,5 @@ async def test_a_zone_s_new_entry_takes_the_boiler_s_signals_from_the_defaults(h
     assert result["type"] == FlowResultType.CREATE_ENTRY
     data = result["result"].data
     assert CONF_SMART_PI_DHW_ENTITY not in data
+    assert data == {CONF_TARGET_VTHERM: "vt-floor", CONF_SMART_PI_USE_DEFAULTS: True}
     assert CONF_SMART_PI_BOILER_SIGNALS not in data

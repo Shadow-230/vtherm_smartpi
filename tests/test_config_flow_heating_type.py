@@ -18,6 +18,8 @@ from custom_components.vtherm_smartpi.const import (
 from custom_components.vtherm_smartpi.repairs import CONF_RESET_MODEL, WaterModelResetFlow, async_create_fix_flow
 from custom_components.vtherm_smartpi.smartpi.const import HEATING_TYPES
 
+from flow_helpers import save
+
 
 def _field(schema, name):
     for key, value in schema.schema.items():
@@ -26,38 +28,52 @@ def _field(schema, name):
     raise AssertionError(f"{name} not in schema")
 
 
-def test_heating_type_defaults_to_water_radiator():
-    assert DEFAULT_OPTIONS[CONF_SMART_PI_HEATING_TYPE] == "radiator"
-    for schema in (build_options_schema(DEFAULT_OPTIONS), build_main_options_schema(DEFAULT_OPTIONS, include_valve_linearization=True)):
-        key, value = _field(schema, CONF_SMART_PI_HEATING_TYPE)
-        assert key.default() == "radiator"
-        assert isinstance(value, selector.SelectSelector)
-        assert value.config["options"] == list(HEATING_TYPES)
-        assert value.config["translation_key"] == "heating_type"
+def test_the_heating_type_comes_first_and_starts_not_set():
+    """Set for one thermostat only: not in the defaults; not set = no water data, no boiler's call."""
+    assert CONF_SMART_PI_HEATING_TYPE not in DEFAULT_OPTIONS
+    assert CONF_SMART_PI_HEATING_TYPE not in {getattr(k, "schema", k) for k in build_options_schema(DEFAULT_OPTIONS).schema}
+    schema = build_main_options_schema(DEFAULT_OPTIONS, include_valve_linearization=True)
+    assert getattr(next(iter(schema.schema)), "schema", None) == CONF_SMART_PI_HEATING_TYPE
+    key, value = _field(schema, CONF_SMART_PI_HEATING_TYPE)
+    assert key.default() == "not_set"
+    assert isinstance(value, selector.SelectSelector)
+    assert value.config["options"] == ["not_set", *HEATING_TYPES]
+    assert value.config["translation_key"] == "heating_type"
 
 
-def test_an_entry_without_the_key_shows_the_default():
-    defaults = {k: v for k, v in DEFAULT_OPTIONS.items() if k != CONF_SMART_PI_HEATING_TYPE}
-    key, _ = _field(build_main_options_schema(defaults, include_valve_linearization=False), CONF_SMART_PI_HEATING_TYPE)
-    assert key.default() == "radiator"
+def test_an_entry_with_a_heating_type_shows_it():
+    key, _ = _field(
+        build_main_options_schema({**DEFAULT_OPTIONS, CONF_SMART_PI_HEATING_TYPE: "floor_water"}, include_valve_linearization=False),
+        CONF_SMART_PI_HEATING_TYPE,
+    )
+    assert key.default() == "floor_water"
 
 
 @pytest.mark.asyncio
-async def test_global_options_store_the_heating_type(hass) -> None:
-    entry = MockConfigEntry(domain=DOMAIN, title="SmartPI defaults", unique_id=DOMAIN, data=dict(DEFAULT_OPTIONS))
-    entry.add_to_hass(hass)
-    result = await hass.config_entries.options.async_init(entry.entry_id)
-    assert result["type"] == FlowResultType.MENU
-    result = await hass.config_entries.options.async_configure(result["flow_id"], {"next_step_id": "settings"})
-    assert result["type"] == FlowResultType.FORM
-    shown = {getattr(key, "schema", key) for key in result["data_schema"].schema}
-    user_input = {key: value for key, value in DEFAULT_OPTIONS.items() if key in shown}
-    result = await hass.config_entries.options.async_configure(
-        result["flow_id"], {**user_input, CONF_SMART_PI_HEATING_TYPE: "floor_water"}
+@pytest.mark.parametrize("chosen, stored", [("floor_water", "floor_water"), ("not_set", None)])
+async def test_a_thermostat_s_settings_store_the_heating_type(hass, chosen, stored) -> None:
+    """"Not set" is stored as no key."""
+    from unittest.mock import patch
+
+    from custom_components.vtherm_smartpi.const import CONF_TARGET_VTHERM
+
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        unique_id=f"{DOMAIN}-vt-x",
+        data={CONF_TARGET_VTHERM: "vt-x", **DEFAULT_OPTIONS},
+        options={CONF_TARGET_VTHERM: "vt-x", **DEFAULT_OPTIONS, CONF_SMART_PI_HEATING_TYPE: "radiator"},
     )
+    entry.add_to_hass(hass)
+    with patch("custom_components.vtherm_smartpi.async_setup_entry", return_value=True):
+        result = await hass.config_entries.options.async_init(entry.entry_id)
+        result = await hass.config_entries.options.async_configure(result["flow_id"], {"next_step_id": "settings"})
+        result = await hass.config_entries.options.async_configure(
+            result["flow_id"], {CONF_SMART_PI_HEATING_TYPE: chosen, "smart_pi_use_defaults": True}
+        )
+        # Another heating type changes what was learned: the reset question at save.
+        result = await save(hass, result, reset=False)
     assert result["type"] == FlowResultType.CREATE_ENTRY
-    stored = {**entry.data, **entry.options}
-    assert stored[CONF_SMART_PI_HEATING_TYPE] == "floor_water"
+    assert entry.options.get(CONF_SMART_PI_HEATING_TYPE) == stored
 
 
 @pytest.mark.asyncio
@@ -88,9 +104,11 @@ def test_english_texts_cover_the_heating_type_and_the_reset_offer():
 
     path = Path(__file__).parents[1] / "custom_components" / "vtherm_smartpi" / "translations" / "en.json"
     texts = json.loads(path.read_text(encoding="utf-8"))
-    assert set(texts["selector"]["heating_type"]["options"]) == set(HEATING_TYPES)
-    for section, step in (("config", "global"), ("config", "thermostat_settings"), ("options", "init"), ("options", "settings")):
+    assert set(texts["selector"]["heating_type"]["options"]) == {"not_set", *HEATING_TYPES}
+    for section, step in (("config", "settings"), ("options", "settings"), ("options", "source_role")):
         assert CONF_SMART_PI_HEATING_TYPE in texts[section]["step"][step]["data"]
+    for section, step in (("config", "global"), ("options", "regulator")):
+        assert CONF_SMART_PI_HEATING_TYPE not in texts[section]["step"][step]["data"]
     for issue in ("water_data_appeared", "water_data_gone"):
         confirm = texts["issues"][issue]["fix_flow"]["step"]["confirm"]
         assert CONF_RESET_MODEL in confirm["data"]

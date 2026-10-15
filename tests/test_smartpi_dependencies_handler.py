@@ -4,8 +4,17 @@ from __future__ import annotations
 
 from homeassistant.helpers import entity_registry as er
 
-from custom_components.vtherm_smartpi.const import CONF_SMART_PI_DEPENDENCIES
+from pytest_homeassistant_custom_component.common import MockConfigEntry
+
+from custom_components.vtherm_smartpi.const import (
+    CONF_SMART_PI_DEPENDENCIES,
+    CONF_TARGET_VTHERM,
+    DEFAULT_OPTIONS,
+    DOMAIN,
+    SHARED_SETTINGS,
+)
 from custom_components.vtherm_smartpi.handler import SmartPIHandler
+from custom_components.vtherm_smartpi.settings import own_entry
 
 from fakes.fake_thermostat_runtime import FakeThermostatRuntime
 
@@ -20,10 +29,29 @@ def _hall_attributes(temperature=21.5, window="off"):
     }
 
 
+def _set_options(hass, thermostat, options: dict) -> None:
+    """The thermostat's own SmartPI entry (with its own shared settings) holds ``options``."""
+    full = {
+        CONF_TARGET_VTHERM: thermostat.unique_id,
+        **{key: DEFAULT_OPTIONS[key] for key in SHARED_SETTINGS},
+        **options,
+    }
+    entry = own_entry(hass, thermostat.unique_id)
+    if entry is None:
+        MockConfigEntry(
+            domain=DOMAIN,
+            unique_id=f"{DOMAIN}-{thermostat.unique_id}",
+            data={CONF_TARGET_VTHERM: thermostat.unique_id},
+            options=full,
+        ).add_to_hass(hass)
+    else:
+        hass.config_entries.async_update_entry(entry, options=full)
+
+
 def _handler(hass, dependencies) -> tuple[SmartPIHandler, FakeThermostatRuntime]:
     thermostat = FakeThermostatRuntime()
     thermostat.hass = hass
-    thermostat.entry_infos = {CONF_SMART_PI_DEPENDENCIES: dependencies}
+    _set_options(hass, thermostat, {CONF_SMART_PI_DEPENDENCIES: dependencies})
     handler = SmartPIHandler(thermostat)
     handler.init_algorithm()
     return handler, thermostat
@@ -221,7 +249,7 @@ async def test_the_zone_reads_both_heating_types_from_the_entries(hass) -> None:
     stale = {**_source_item(floor.id), "lead_emitter": "floor_water", "source_emitter": "radiator"}
     thermostat = FakeThermostatRuntime()
     thermostat.hass = hass
-    thermostat.entry_infos = {CONF_SMART_PI_DEPENDENCIES: [stale], CONF_SMART_PI_HEATING_TYPE: "electric_fast"}
+    _set_options(hass, thermostat, {CONF_SMART_PI_DEPENDENCIES: [stale], CONF_SMART_PI_HEATING_TYPE: "electric_fast"})
     handler = SmartPIHandler(thermostat)
     handler.init_algorithm()
 
@@ -229,7 +257,7 @@ async def test_the_zone_reads_both_heating_types_from_the_entries(hass) -> None:
     assert (settings.lead_emitter, settings.source_emitter) == ("electric_fast", "floor_electric")
 
     custom = {**_source_item(floor.id), "source_emitter": "custom", "source_lag_min": 40, "source_tau_min": 200}
-    thermostat.entry_infos = {CONF_SMART_PI_DEPENDENCIES: [custom]}
+    _set_options(hass, thermostat, {CONF_SMART_PI_DEPENDENCIES: [custom]})
     handler.init_algorithm()
     assert handler._source_settings.source_emitter == "custom"
     assert handler._source_settings.source.lag_s == 2400.0
@@ -242,22 +270,22 @@ async def test_a_reset_asked_by_the_zone_form_is_applied_once(hass, monkeypatch)
     algo = thermostat.prop_algorithm
     resets = []
     monkeypatch.setattr(algo, "reset_learning", lambda: resets.append(1))
-    thermostat.entry_infos = {CONF_SMART_PI_RESET_TOKEN: "t1"}
+    _set_options(hass, thermostat, {CONF_SMART_PI_RESET_TOKEN: "t1"})
 
     handler._apply_reset_request()
     handler._apply_reset_request()
     assert resets == [1]
     assert algo.save_state()["dependency_reset_token"] == "t1"
 
-    thermostat.entry_infos = {CONF_SMART_PI_RESET_TOKEN: "t2"}
+    _set_options(hass, thermostat, {CONF_SMART_PI_RESET_TOKEN: "t2"})
     handler._apply_reset_request()
     assert resets == [1, 1]
 
 
-async def test_a_source_without_its_own_entry_follows_the_global_heating_type(hass) -> None:
-    from pytest_homeassistant_custom_component.common import MockConfigEntry
-
-    from custom_components.vtherm_smartpi.const import CONF_SMART_PI_HEATING_TYPE, DEFAULT_OPTIONS, DOMAIN
+async def test_a_source_without_a_heating_type_of_its_own_keeps_the_zone_s(hass) -> None:
+    """The defaults entry holds no heating type (it is set for one thermostat only): a source
+    whose entry sets none keeps the emitter the zone form stored."""
+    from custom_components.vtherm_smartpi.const import CONF_SMART_PI_HEATING_TYPE
 
     registry = er.async_get(hass)
     floor = registry.async_get_or_create("climate", VT_DOMAIN, "vt-floor", suggested_object_id="floor")
@@ -265,19 +293,19 @@ async def test_a_source_without_its_own_entry_follows_the_global_heating_type(ha
         domain=DOMAIN, unique_id=DOMAIN, data={**DEFAULT_OPTIONS, CONF_SMART_PI_HEATING_TYPE: "floor_water"}
     ).add_to_hass(hass)
     handler, _ = _handler(hass, [{**_source_item(floor.id), "source_emitter": "radiator"}])
-    assert handler._source_settings.source_emitter == "floor_water"
+    assert handler._source_settings.source_emitter == "radiator"
 
 
 async def test_the_reset_token_survives_a_restart(hass, monkeypatch) -> None:
     from custom_components.vtherm_smartpi.const import CONF_SMART_PI_RESET_TOKEN
 
     handler, thermostat = _handler(hass, [])
-    thermostat.entry_infos = {CONF_SMART_PI_RESET_TOKEN: "t1"}
+    _set_options(hass, thermostat, {CONF_SMART_PI_RESET_TOKEN: "t1"})
     handler._apply_reset_request()
     saved = thermostat.prop_algorithm.save_state()
 
     restarted, again = _handler(hass, [])
-    again.entry_infos = {CONF_SMART_PI_RESET_TOKEN: "t1"}
+    _set_options(hass, again, {CONF_SMART_PI_RESET_TOKEN: "t1"})
     again.prop_algorithm.load_state(saved)
     resets = []
     monkeypatch.setattr(again.prop_algorithm, "reset_learning", lambda: resets.append(1))
@@ -321,7 +349,7 @@ def _zone_as_vtherm_builds_it(hass, devices: list[str]) -> SmartPIHandler:
     thermostat = FakeThermostatRuntime()
     thermostat.hass = hass
     thermostat.entity_id = None
-    thermostat.entry_infos = {CONF_SMART_PI_DEPENDENCIES: [{**_source_item(floor.id), "zone_master": master.id}]}
+    _set_options(hass, thermostat, {CONF_SMART_PI_DEPENDENCIES: [{**_source_item(floor.id), "zone_master": master.id}]})
     handler = SmartPIHandler(thermostat)
     handler.init_algorithm()
     thermostat.entity_id = "climate.fake_smartpi"
@@ -366,3 +394,46 @@ async def test_a_source_entry_change_reloads_its_zone_s_main_too(hass) -> None:
 
     assert _zone_mains_of(hass, "vt-floor") == ["vt-radiator"]
     assert _zone_mains_of(hass, "vt-radiator") == []
+
+
+async def test_a_thermostat_range_that_is_not_a_range_is_not_used(hass) -> None:
+    _, thermostat = _handler(
+        hass,
+        [{"id": "n1", "kind": "neighbour", "entity": "0123456789abcdef", "mode": "none"}],
+    )
+    hass.states.async_set(thermostat.entity_id, "heat", {"min_temp": 25.0, "max_temp": 20.0})
+
+    assert _readings(thermostat).temp_range is None
+
+
+async def test_a_second_source_turned_off_turns_its_device_off(hass) -> None:
+    """Off while its device still runs: the device is turned off, nothing left on in the cycle."""
+    handler, thermostat = _handler(hass, [])
+    thermostat.vtherm_hvac_mode = "off"
+    thermostat.is_device_active = True
+
+    await handler._control_as_source(False)
+
+    thermostat.async_underlying_entity_turn_off.assert_awaited_once()
+    assert thermostat._on_time_sec == 0
+
+
+async def test_a_source_that_cannot_be_resolved_has_no_heating_type(hass, monkeypatch) -> None:
+    handler, _ = _handler(hass, [])
+
+    def _fail(_registry_id):
+        raise RuntimeError("registry not ready")
+
+    monkeypatch.setattr(handler, "_resolve_unique_id", _fail)
+
+    assert handler._source_heating_type("0123456789abcdef") is None
+
+
+async def test_a_zone_whose_master_was_deleted_is_reported(hass, caplog) -> None:
+    """The master thermostat removed from Home Assistant while the zone still names it."""
+    registry = er.async_get(hass)
+    floor = registry.async_get_or_create("climate", VT_DOMAIN, "vt-floor", suggested_object_id="floor")
+
+    _handler(hass, [{**_source_item(floor.id), "zone_master": "0123456789abcdef"}])
+
+    assert "The zone's master thermostat cannot be found" in caplog.text

@@ -29,6 +29,7 @@ from custom_components.vtherm_smartpi.smartpi.effective_model import (
 from sim.metrics import identification, learning_finished
 from sim.runner import FixedNeighbour, Simulation, ZoneSpec
 from sim.weather import Weather
+from tests.helpers import force_smartpi_stable_mode
 
 K = 0.001
 NEIGHBOUR_C = 24.0
@@ -458,3 +459,41 @@ async def test_smartpi_holds_the_zone_fit_and_its_evidence(monkeypatch) -> None:
     algo.est.a = -0.02
     algo._apply_zone_fit(VThermHvacMode_COOL)
     assert algo.est.a == -0.02
+
+
+async def test_neighbour_window_preset_applies_without_a_target(monkeypatch) -> None:
+    algo = Simulation(monkeypatch, _zone(neighbours=())).algo
+    algo._known_inputs = KnownInputs(control_action="eco", action_setpoint=17.0, status=STATUS)
+
+    assert algo._apply_neighbour_window_action(None, VThermHvacMode_HEAT, None) == (17.0, VThermHvacMode_HEAT, None)
+
+
+async def test_a_source_command_is_ignored_outside_the_source_role(monkeypatch) -> None:
+    algo = Simulation(monkeypatch, _zone(neighbours=())).algo
+    before = algo.on_percent
+
+    algo.set_source_command(0.7)
+
+    assert not algo.is_executive and algo.on_percent == before
+
+
+async def test_a_lead_that_can_give_nothing_has_no_output_share(monkeypatch) -> None:
+    """VTherm's maximum on-percent at 0: the lead's share of what it can give is 0, not a
+    division by zero."""
+    algo = Simulation(monkeypatch, _zone(neighbours=())).algo
+    algo._max_on_percent = 0.0
+
+    assert algo._lead_output_share() == 0.0
+
+
+async def test_a_zone_fit_published_after_the_learning_phase_does_not_replace_a_and_b(monkeypatch) -> None:
+    """The joint fit seeds a and b only while SmartPI still learns them (hysteresis phase)."""
+    algo = Simulation(monkeypatch, _zone(neighbours=())).algo
+    force_smartpi_stable_mode(algo)
+    a, b = algo.est.a, algo.est.b
+    algo.dependency_model.pending_seed = (a * 2.0, b * 2.0)
+
+    algo._apply_zone_fit(VThermHvacMode_HEAT)
+
+    assert (algo.est.a, algo.est.b) == (a, b)
+    assert algo.dependency_model.pending_seed is None

@@ -16,7 +16,7 @@ from typing import Any
 from bench import RestTransport
 from flows import Form, Menu, run_flow, walk
 from roles import MAX_POWER_INPUT, Thermostat
-from stages import SMARTPI, VT, vt_thermostat_steps, zone_steps
+from stages import SMARTPI, VT, save_steps, vt_thermostat_steps, zone_steps
 
 from .common import (
     MARGIN_S,
@@ -66,7 +66,7 @@ async def _ensure_zone(r: Any) -> None:
     """The zone as the role has it: set up again from the main source's entry if it is not there."""
     zone = _zone()
     if await _source_item(r, _title(zone.main)) is None:
-        await options_flow(r, _title(zone.main), zone_steps(zone))
+        await options_flow(r, _title(zone.main), zone_steps(zone, role()))
         r.note("put back: the zone set up again from the main source")
 
 
@@ -76,6 +76,10 @@ async def _resend_master(r: Any) -> None:
     await set_hvac(r, master, "off")
     await asyncio.sleep(5.0)
     await put_back_thermostats(r)
+
+
+# The zone removed from its main source's entry, the model kept.
+_REMOVE: list[Form | Menu] = [Menu("zone"), Menu("zone_remove"), *save_steps()]
 
 
 def zone_master_steps(has_zone: bool, master: str) -> list[Form | Menu]:
@@ -89,7 +93,7 @@ def _master(name: str, devices: tuple[str, ...], self_regulation: str = "auto_re
 
 @scenario("QE1", ("zone",), 60, "test_config_flow_zone.py", minimum=True)
 async def QE1(r: Any) -> None:
-    """The zone form refuses each wrong master, creates the missing entry of a device restarting only that thermostat, moves a zone set up from the additional source to the main one, stops with zone_changed, and removes the zone."""
+    """The zone form refuses each wrong master, creates at save the missing entry of a device restarting only that thermostat, moves a zone set up from the additional source to the main one, stops the save with zone_changed, and removes the zone."""
     zone = _zone()
     main_title, other_title = _title(zone.main), _title(zone.additional)
     transport = RestTransport(r.ha)
@@ -121,8 +125,8 @@ async def QE1(r: Any) -> None:
         created.clear()
         await _resend_master(r)
 
-        await options_flow(r, main_title, [Menu("zone"), Menu("zone_remove"), Form("zone_reset", {"reset_model": False}, if_shown=True)])
-        r.check(await _source_item(r, main_title) is None, "the zone removed through its reset step")
+        await options_flow(r, main_title, _REMOVE)
+        r.check(await _source_item(r, main_title) is None, "the zone removed, the reset question at save")
         other_entry = await entry(r, SMARTPI, other_title)
         await r.ha.rest("DELETE", f"/api/config/config_entries/entry/{other_entry['entry_id']}")
         diag = await diag_entity(r, zone.main)
@@ -137,15 +141,15 @@ async def QE1(r: Any) -> None:
 
         watcher = asyncio.create_task(watch())
         try:
-            await options_flow(r, main_title, zone_steps(zone))
+            await options_flow(r, main_title, zone_steps(zone, role()))
             await asyncio.sleep(30.0)
         finally:
             watcher.cancel()
         r.check(any(e["title"] == other_title for e in await api(r).entries() if e["domain"] == SMARTPI), f"the form created {other_title!r}'s entry")
         r.check(unavailable == 0, f"the main source kept running meanwhile (diagnostics unavailable {unavailable} times)")
 
-        await options_flow(r, main_title, [Menu("zone"), Menu("zone_remove"), Form("zone_reset", {"reset_model": False}, if_shown=True)])
-        await options_flow(r, other_title, zone_steps(zone))
+        await options_flow(r, main_title, _REMOVE)
+        await options_flow(r, other_title, zone_steps(zone, role()))
         r.check(await _source_item(r, main_title) is not None and await _source_item(r, other_title) is None,
                 "set up from the additional source, the zone is stored in the main source's entry")  # fmt: skip
 
@@ -153,15 +157,12 @@ async def QE1(r: Any) -> None:
         pending = await walk(
             transport, "options", main_entry,
             [Menu("zone"), Menu("zone_master"), Form("zone_master", {"master": zone.master}),
-             Form("zone_sources", {"main_source": zone.main, "split_rule": zone.rule, "custom_response": False})],
+             Form("zone_sources", {"main_source": zone.main, "split_rule": zone.rule, "custom_response": False}),
+             Form("zone_parameter")],
         )  # fmt: skip
-        await options_flow(r, main_title, [Menu("zone"), Menu("zone_remove"), Form("zone_reset", {"reset_model": False}, if_shown=True)])
-        result = await walk(
-            transport, "options", main_entry,
-            [Form("zone_parameter"), Form("zone_reset", {"reset_model": False}, if_shown=True)],
-            resume=pending,
-        )  # fmt: skip
-        r.check(result.get("type") == "abort" and result.get("reason") == "zone_changed", f"a form whose zone changed meanwhile: {result.get('type')} {result.get('reason')}")
+        await options_flow(r, main_title, _REMOVE)
+        result = await walk(transport, "options", main_entry, [Menu("save")], resume=pending)
+        r.check(result.get("type") == "abort" and result.get("reason") == "zone_changed", f"a window whose zone changed meanwhile: {result.get('type')} {result.get('reason')}")
     finally:
         for entry_id in created:
             await r.ha.rest("DELETE", f"/api/config/config_entries/entry/{entry_id}")
@@ -192,11 +193,11 @@ async def QE2(r: Any) -> None:
     r.check((path(data, "learning.accepted_updates_a"), path(data, "learning.accepted_updates_b")) == learned, f"the floor learned nothing: {learned}")
     other_title = _title(zone.additional)
     try:
-        await options_flow(r, other_title, [Menu("source_role", if_shown=True), Form("source_role", {"smart_pi_heating_type": "floor_electric"})])
+        await options_flow(r, other_title, [Menu("source_role"), Form("source_role", {"smart_pi_heating_type": "floor_electric"}), *save_steps()])
         took, data = await wait_live(r, zone.main, lambda d: path(d, "dependencies.second_source.source_emitter") == "floor_electric", 3 * MARGIN_S, 10.0)
         r.check(took is not None, f"the main source restarted with the floor's new type: {path(data, 'dependencies.second_source.source_emitter')}")
     finally:
-        await options_flow(r, other_title, [Menu("source_role", if_shown=True), Form("source_role", {"smart_pi_heating_type": "floor_water"})])
+        await options_flow(r, other_title, [Menu("source_role"), Form("source_role", {"smart_pi_heating_type": "floor_water"}), *save_steps()])
         r.note("put back: the floor's heating type floor_water")
 
 

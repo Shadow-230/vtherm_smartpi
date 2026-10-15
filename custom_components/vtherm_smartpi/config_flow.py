@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import copy
+import time
 import uuid
 from typing import Any
 
@@ -10,6 +12,7 @@ from homeassistant.config_entries import SOURCE_IMPORT, ConfigFlow, OptionsFlow
 from homeassistant.helpers import selector
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
+from homeassistant.helpers.translation import async_get_translations
 from homeassistant.components.climate import DOMAIN as CLIMATE_DOMAIN
 
 from .const import (
@@ -34,6 +37,11 @@ from .const import (
     CONF_SMART_PI_USE_FF3,
     CONF_SMART_PI_USE_SETPOINT_FILTER,
     CONF_TARGET_VTHERM,
+    CONF_SMART_PI_USE_DEFAULTS,
+    DATA_SAVE_GROUP,
+    SHARED_SETTINGS,
+    THERMOSTAT_SETTINGS,
+    VALVE_CURVE_POINTS,
     BOILER_SIGNAL_KEYS,
     CONF_SMART_PI_BOILER_CALL_SOURCE,
     CONF_SMART_PI_BOILER_CALLED_ENTITY,
@@ -63,6 +71,7 @@ from .heating_inputs import (
     resolve_entity,
     stored_entity,
 )
+from .settings import defaults_entry, entry_options, heating_type_of, uses_defaults
 from .smartpi.boiler_call import SOURCE_VTHERM
 from .smartpi.const import HEATING_TYPES, WATER_EMITTERS
 from .smartpi.dependencies import (
@@ -98,7 +107,26 @@ from .smartpi.split import (
 )
 
 ERROR_INVALID_VALVE_CURVE = "invalid_valve_curve"
-ABORT_DEPENDENCIES_UNCHANGED = "dependencies_unchanged"
+# The heating type's "Not set" choice: stored as no key (no water data, no boiler's call).
+HEATING_TYPE_NOT_SET = "not_set"
+# The emitter a zone assumes for a member whose entry sets no heating type.
+ZONE_HEATING_TYPE = "radiator"
+# What an entry SmartPI creates itself may hold (async_step_import).
+IMPORT_KEYS = (*THERMOSTAT_SETTINGS, CONF_SMART_PI_DEPENDENCIES, CONF_SMART_PI_RESET_TOKEN)
+# A section that cannot go on returns to the menu with a note (its text is under "abort").
+NOTE_DEPENDENCIES_UNCHANGED = "dependencies_unchanged"
+NOTE_NO_MASTER = "no_master"
+ERROR_NEIGHBOUR_MISSING = "neighbour_missing"
+ERROR_ZONE_MOVE_CONFLICT = "zone_move_conflict"
+# Only "Save and finish" may end a window without writing: a change made elsewhere meanwhile.
+ABORT_ZONE_CHANGED = "zone_changed"
+ABORT_MAIN_ENTRY_MISSING = "main_entry_missing"
+# Why a save asks about the learned model, in the order the question names them.
+REASON_HEATING_TYPE = "heating_type"
+REASON_WATER = "water"
+REASON_ZONE = "zone"
+REASON_NEIGHBOURS = "neighbours"
+REASONS = (REASON_HEATING_TYPE, REASON_WATER, REASON_ZONE, REASON_NEIGHBOURS)
 FIELD_REMOVE_DEPENDENCIES = "remove"
 FIELD_EDIT_DEPENDENCY = "dependency"
 FIELD_NEIGHBOUR = "entity"
@@ -124,6 +152,14 @@ FIELD_CUSTOM_RESPONSE = "custom_response"
 FIELD_RESET_MODEL = "reset_model"
 # Versatile Thermostat's key: the thermostat counts for VT's central boiler.
 VT_USED_BY_CENTRAL_BOILER = "used_by_controls_central_boiler"
+# The settings of "Water and boiler".
+HEATING_INPUT_KEYS = (
+    CONF_SMART_PI_WATER_SOURCE,
+    CONF_SMART_PI_BOILER_CALL_SOURCE,
+    CONF_SMART_PI_SUPPLY_ENTITY,
+    CONF_SMART_PI_BOILER_SIGNALS,
+    *BOILER_SIGNAL_KEYS,
+)
 # The signals of the boiler, by the inputs that use them.
 _WATER_SIGNAL_KEYS = (CONF_SMART_PI_HEAT_AVAILABLE_ENTITY, CONF_SMART_PI_DHW_ENTITY, CONF_SMART_PI_FAULT_ENTITY)
 _CALL_SIGNAL_KEYS = (CONF_SMART_PI_BOILER_CALLED_ENTITY, CONF_SMART_PI_BOILER_REASON_ENTITY, CONF_SMART_PI_FAULT_ENTITY)
@@ -149,120 +185,113 @@ _RULE_HINT = {
 }
 
 
-def build_main_options_schema(
+def _seconds() -> selector.NumberSelector:
+    return selector.NumberSelector(
+        selector.NumberSelectorConfig(
+            min=0,
+            max=3600,
+            step=1,
+            mode=selector.NumberSelectorMode.BOX,
+            unit_of_measurement="s",
+        )
+    )
+
+
+def _number(maximum: float) -> selector.NumberSelector:
+    return selector.NumberSelector(
+        selector.NumberSelectorConfig(
+            min=0.0,
+            max=maximum,
+            step=0.01,
+            mode=selector.NumberSelectorMode.BOX,
+        )
+    )
+
+
+def build_heating_type_selector() -> selector.SelectSelector:
+    """The heating type, with "Not set" first (stored as no key)."""
+    return selector.SelectSelector(
+        selector.SelectSelectorConfig(
+            options=[HEATING_TYPE_NOT_SET, *HEATING_TYPES],
+            mode=selector.SelectSelectorMode.DROPDOWN,
+            translation_key="heating_type",
+        )
+    )
+
+
+def build_thermostat_settings_schema(
     defaults: dict[str, Any],
     *,
     include_valve_linearization: bool,
 ) -> vol.Schema:
-    """Build the SmartPI main options schema."""
-    schema = {
-        vol.Optional(
-            CONF_MINIMAL_ACTIVATION_DELAY,
-            default=defaults[CONF_MINIMAL_ACTIVATION_DELAY],
-        ): selector.NumberSelector(
-            selector.NumberSelectorConfig(
-                min=0,
-                max=3600,
-                step=1,
-                mode=selector.NumberSelectorMode.BOX,
-                unit_of_measurement="s",
-            )
-        ),
-        vol.Optional(
-            CONF_MINIMAL_DEACTIVATION_DELAY,
-            default=defaults[CONF_MINIMAL_DEACTIVATION_DELAY],
-        ): selector.NumberSelector(
-            selector.NumberSelectorConfig(
-                min=0,
-                max=3600,
-                step=1,
-                mode=selector.NumberSelectorMode.BOX,
-                unit_of_measurement="s",
-            )
-        ),
-        vol.Optional(
-            CONF_SMART_PI_DEADBAND,
-            default=defaults[CONF_SMART_PI_DEADBAND],
-        ): selector.NumberSelector(
-            selector.NumberSelectorConfig(
-                min=0.0,
-                max=2.0,
-                step=0.01,
-                mode=selector.NumberSelectorMode.BOX,
-            )
-        ),
-        vol.Optional(
-            CONF_SMART_PI_HYSTERESIS_ON,
-            default=defaults[CONF_SMART_PI_HYSTERESIS_ON],
-        ): selector.NumberSelector(
-            selector.NumberSelectorConfig(
-                min=0.0,
-                max=2.0,
-                step=0.01,
-                mode=selector.NumberSelectorMode.BOX,
-            )
-        ),
-        vol.Optional(
-            CONF_SMART_PI_HYSTERESIS_OFF,
-            default=defaults[CONF_SMART_PI_HYSTERESIS_OFF],
-        ): selector.NumberSelector(
-            selector.NumberSelectorConfig(
-                min=0.0,
-                max=2.0,
-                step=0.01,
-                mode=selector.NumberSelectorMode.BOX,
-            )
-        ),
-        vol.Optional(
-            CONF_SMART_PI_RELEASE_TAU_FACTOR,
-            default=defaults[CONF_SMART_PI_RELEASE_TAU_FACTOR],
-        ): selector.NumberSelector(
-            selector.NumberSelectorConfig(
-                min=0.0,
-                max=5.0,
-                step=0.01,
-                mode=selector.NumberSelectorMode.BOX,
-            )
-        ),
-        vol.Optional(
-            CONF_SMART_PI_USE_SETPOINT_FILTER,
-            default=defaults[CONF_SMART_PI_USE_SETPOINT_FILTER],
-        ): bool,
-        vol.Optional(
-            CONF_SMART_PI_USE_FF3,
-            default=defaults[CONF_SMART_PI_USE_FF3],
-        ): bool,
-        vol.Optional(
-            CONF_SMART_PI_DEADBAND_ALLOW_P,
-            default=defaults[CONF_SMART_PI_DEADBAND_ALLOW_P],
-        ): bool,
-        vol.Optional(
-            CONF_SMART_PI_ALLOW_PWM_CYCLE_FORCE,
-            default=defaults[CONF_SMART_PI_ALLOW_PWM_CYCLE_FORCE],
-        ): bool,
-        vol.Optional(
-            CONF_SMART_PI_DEBUG,
-            default=defaults[CONF_SMART_PI_DEBUG],
-        ): bool,
+    """The "thermostat only" settings: the heating type first, then the delays, the PWM
+    restart and, for a valve, the valve curve's on/off."""
+    schema: dict[Any, Any] = {
         vol.Optional(
             CONF_SMART_PI_HEATING_TYPE,
-            default=defaults.get(CONF_SMART_PI_HEATING_TYPE, DEFAULT_OPTIONS[CONF_SMART_PI_HEATING_TYPE]),
-        ): selector.SelectSelector(
-            selector.SelectSelectorConfig(
-                options=list(HEATING_TYPES),
-                mode=selector.SelectSelectorMode.DROPDOWN,
-                translation_key="heating_type",
-            )
-        ),
+            default=heating_type_of(defaults) or HEATING_TYPE_NOT_SET,
+        ): build_heating_type_selector(),
+        vol.Optional(
+            CONF_MINIMAL_ACTIVATION_DELAY,
+            default=defaults.get(CONF_MINIMAL_ACTIVATION_DELAY, DEFAULT_OPTIONS[CONF_MINIMAL_ACTIVATION_DELAY]),
+        ): _seconds(),
+        vol.Optional(
+            CONF_MINIMAL_DEACTIVATION_DELAY,
+            default=defaults.get(CONF_MINIMAL_DEACTIVATION_DELAY, DEFAULT_OPTIONS[CONF_MINIMAL_DEACTIVATION_DELAY]),
+        ): _seconds(),
+        vol.Optional(
+            CONF_SMART_PI_ALLOW_PWM_CYCLE_FORCE,
+            default=defaults.get(CONF_SMART_PI_ALLOW_PWM_CYCLE_FORCE, DEFAULT_OPTIONS[CONF_SMART_PI_ALLOW_PWM_CYCLE_FORCE]),
+        ): bool,
     }
     if include_valve_linearization:
         schema[
             vol.Optional(
                 CONF_SMART_PI_ENABLE_VALVE_LINEARIZATION,
-                default=defaults[CONF_SMART_PI_ENABLE_VALVE_LINEARIZATION],
+                default=defaults.get(
+                    CONF_SMART_PI_ENABLE_VALVE_LINEARIZATION, DEFAULT_OPTIONS[CONF_SMART_PI_ENABLE_VALVE_LINEARIZATION]
+                ),
             )
         ] = bool
     return vol.Schema(schema)
+
+
+def build_shared_settings_schema(defaults: dict[str, Any]) -> vol.Schema:
+    """The shared settings: set in the "SmartPI defaults" entry, or as a thermostat's own values."""
+
+    def default(key: str) -> Any:
+        return defaults.get(key, DEFAULT_OPTIONS[key])
+
+    return vol.Schema(
+        {
+            vol.Optional(CONF_SMART_PI_DEADBAND, default=default(CONF_SMART_PI_DEADBAND)): _number(2.0),
+            vol.Optional(CONF_SMART_PI_HYSTERESIS_ON, default=default(CONF_SMART_PI_HYSTERESIS_ON)): _number(2.0),
+            vol.Optional(CONF_SMART_PI_HYSTERESIS_OFF, default=default(CONF_SMART_PI_HYSTERESIS_OFF)): _number(2.0),
+            vol.Optional(
+                CONF_SMART_PI_RELEASE_TAU_FACTOR, default=default(CONF_SMART_PI_RELEASE_TAU_FACTOR)
+            ): _number(5.0),
+            vol.Optional(CONF_SMART_PI_USE_SETPOINT_FILTER, default=default(CONF_SMART_PI_USE_SETPOINT_FILTER)): bool,
+            vol.Optional(CONF_SMART_PI_USE_FF3, default=default(CONF_SMART_PI_USE_FF3)): bool,
+            vol.Optional(CONF_SMART_PI_DEADBAND_ALLOW_P, default=default(CONF_SMART_PI_DEADBAND_ALLOW_P)): bool,
+            vol.Optional(CONF_SMART_PI_DEBUG, default=default(CONF_SMART_PI_DEBUG)): bool,
+        }
+    )
+
+
+def build_main_options_schema(
+    defaults: dict[str, Any],
+    *,
+    include_valve_linearization: bool,
+) -> vol.Schema:
+    """A thermostat's settings: the "thermostat only" ones (heating type first), then the shared ones."""
+    return vol.Schema(
+        {
+            **build_thermostat_settings_schema(
+                defaults, include_valve_linearization=include_valve_linearization
+            ).schema,
+            **build_shared_settings_schema(defaults).schema,
+        }
+    )
 
 
 def build_valve_curve_schema(defaults: dict[str, Any]) -> vol.Schema:
@@ -318,8 +347,8 @@ def build_valve_curve_schema(defaults: dict[str, Any]) -> vol.Schema:
 
 
 def build_options_schema(defaults: dict[str, Any]) -> vol.Schema:
-    """Build the SmartPI defaults schema."""
-    return build_main_options_schema(defaults, include_valve_linearization=False)
+    """The "SmartPI defaults" entry's settings: the shared ones only."""
+    return build_shared_settings_schema(defaults)
 
 
 def build_user_target_schema() -> vol.Schema:
@@ -350,6 +379,20 @@ def _schema_defaults(user_input: dict[str, Any] | None = None) -> dict[str, Any]
     if user_input is not None:
         defaults.update(user_input)
     return defaults
+
+
+def _with_settings(stored: dict[str, Any], user_input: dict[str, Any]) -> dict[str, Any]:
+    """The stored settings with a form's answers; the heating type "Not set" is stored as no key."""
+    data = dict(stored)
+    data.update(user_input)
+    if data.get(CONF_SMART_PI_HEATING_TYPE) not in HEATING_TYPES:
+        data.pop(CONF_SMART_PI_HEATING_TYPE, None)
+    return data
+
+
+def _shared_defaults() -> dict[str, Any]:
+    """The shared settings at their form's starting values."""
+    return {key: DEFAULT_OPTIONS[key] for key in SHARED_SETTINGS}
 
 
 def _is_valve_state(state: Any) -> bool:
@@ -417,168 +460,6 @@ def _validate_valve_curve_config(config: dict[str, Any]) -> dict[str, str]:
     return {"base": ERROR_INVALID_VALVE_CURVE}
 
 
-class SmartPIConfigFlow(ConfigFlow, domain=DOMAIN):
-    """Manage SmartPI plugin config entries."""
-
-    VERSION = 1
-    _pending_thermostat_data: dict[str, Any] | None = None
-    _pending_thermostat_entity_id: str | None = None
-    _pending_thermostat_is_valve: bool = False
-    _pending_thermostat_title: str | None = None
-
-    async def async_step_user(self, user_input: dict[str, Any] | None = None):
-        """Create default plugin settings on first install."""
-        if not self._async_current_entries():
-            await self.async_set_unique_id(DOMAIN)
-            self._abort_if_unique_id_configured()
-            return self.async_create_entry(
-                title="SmartPI defaults",
-                data=dict(DEFAULT_OPTIONS),
-            )
-
-        return await self.async_step_thermostat(user_input)
-
-    async def async_step_global(self, user_input: dict[str, Any] | None = None):
-        """Handle the global defaults entry."""
-        await self.async_set_unique_id(DOMAIN)
-        self._abort_if_unique_id_configured()
-
-        if user_input is not None:
-            return self.async_create_entry(title="SmartPI defaults", data=user_input)
-
-        return self.async_show_form(
-            step_id="global",
-            data_schema=build_options_schema(DEFAULT_OPTIONS),
-        )
-
-    async def async_step_thermostat(self, user_input: dict[str, Any] | None = None):
-        """Select the target thermostat."""
-        if user_input is not None:
-            entity_id = user_input.get(CONF_TARGET_VTHERM)
-            registry = er.async_get(self.hass)
-            reg_entry = registry.async_get(entity_id)
-            if reg_entry is None or reg_entry.unique_id is None:
-                return self.async_show_form(
-                    step_id="thermostat",
-                    data_schema=build_user_target_schema(),
-                    errors={CONF_TARGET_VTHERM: "invalid_entity"},
-                )
-
-            target_unique_id = reg_entry.unique_id
-            await self.async_set_unique_id(f"{DOMAIN}-{target_unique_id}")
-            self._abort_if_unique_id_configured()
-
-            self._pending_thermostat_data = {CONF_TARGET_VTHERM: target_unique_id}
-            self._pending_thermostat_entity_id = entity_id
-            self._pending_thermostat_is_valve = _is_valve_entity(
-                self.hass,
-                entity_id,
-                target_unique_id,
-            )
-            state = self.hass.states.get(entity_id)
-            self._pending_thermostat_title = state.name if state is not None else entity_id
-            return await self.async_step_thermostat_settings()
-
-        return self.async_show_form(
-            step_id="thermostat",
-            data_schema=build_user_target_schema(),
-        )
-
-    async def async_step_thermostat_settings(
-        self, user_input: dict[str, Any] | None = None
-    ):
-        """Handle the per-thermostat main settings entry."""
-        data = dict(self._pending_thermostat_data or {})
-
-        if user_input is not None:
-            data.update(user_input)
-            self._pending_thermostat_data = data
-            if (
-                self._pending_thermostat_is_valve
-                and user_input.get(CONF_SMART_PI_ENABLE_VALVE_LINEARIZATION)
-            ):
-                return self.async_show_form(
-                    step_id="thermostat_valve_curve",
-                    data_schema=build_valve_curve_schema(_schema_defaults(user_input)),
-                )
-
-            return self.async_create_entry(
-                title=(
-                    self._pending_thermostat_title
-                    or self._pending_thermostat_entity_id
-                ),
-                data=data,
-            )
-
-        return self.async_show_form(
-            step_id="thermostat_settings",
-            data_schema=build_user_settings_schema(
-                _schema_defaults(data),
-                self._pending_thermostat_is_valve,
-            ),
-        )
-
-    async def async_step_thermostat_valve_curve(
-        self, user_input: dict[str, Any] | None = None
-    ):
-        """Handle the per-thermostat valve curve entry."""
-        data = dict(self._pending_thermostat_data or {})
-
-        if user_input is not None:
-            data.update(user_input)
-            errors = _validate_valve_curve_config(_schema_defaults(data))
-            if errors:
-                return self.async_show_form(
-                    step_id="thermostat_valve_curve",
-                    data_schema=build_valve_curve_schema(_schema_defaults(data)),
-                    errors=errors,
-                )
-            return self.async_create_entry(
-                title=(
-                    self._pending_thermostat_title
-                    or self._pending_thermostat_entity_id
-                ),
-                data=data,
-            )
-
-        return self.async_show_form(
-            step_id="thermostat_valve_curve",
-            data_schema=build_valve_curve_schema(_schema_defaults(data)),
-        )
-
-    async def async_step_import(self, import_data: dict[str, Any]):
-        """Create the entry of a thermostat that joins a zone with two heat sources.
-
-        It starts from the values the thermostat ran with: the global defaults.
-        """
-        target_unique_id = import_data[CONF_TARGET_VTHERM]
-        await self.async_set_unique_id(f"{DOMAIN}-{target_unique_id}")
-        self._abort_if_unique_id_configured()
-        data = dict(DEFAULT_OPTIONS)
-        global_entry = next(
-            (entry for entry in self._async_current_entries() if entry.unique_id == DOMAIN), None
-        )
-        if global_entry is not None:
-            data.update(global_entry.data)
-            data.update(global_entry.options)
-        data.pop(CONF_SMART_PI_DEPENDENCIES, None)
-        # The boiler's signals stay in the defaults: the new entry takes them from there.
-        for key in (*BOILER_SIGNAL_KEYS, CONF_SMART_PI_BOILER_SIGNALS):
-            data.pop(key, None)
-        data[CONF_TARGET_VTHERM] = target_unique_id
-        registry = er.async_get(self.hass)
-        entity_id = registry.async_get_entity_id(CLIMATE_DOMAIN, VT_DOMAIN, target_unique_id)
-        state = self.hass.states.get(entity_id) if entity_id else None
-        return self.async_create_entry(
-            title=state.name if state is not None else (entity_id or target_unique_id), data=data
-        )
-
-    @staticmethod
-    def async_get_options_flow(config_entry):
-        """Return the options flow handler."""
-        return SmartPIOptionsFlow(config_entry)
-
-
 def _source_response(extra: dict[str, Any]) -> tuple[float, float] | None:
     """The additional source's delay and lag a zone item gives, in seconds (None if invalid)."""
     try:
@@ -590,13 +471,43 @@ def _source_response(extra: dict[str, Any]) -> tuple[float, float] | None:
     return round(response.lag_s), round(response.tau_s)
 
 
-class SmartPIOptionsFlow(OptionsFlow):
-    """Edit SmartPI plugin defaults."""
+class SmartPIFlowSections:
+    """The sections of a thermostat's entry, shared by creating it and by its options.
 
-    def __init__(self, config_entry) -> None:
-        """Store the config entry being edited."""
-        self._config_entry = config_entry
-        self._pending_options_data: dict[str, Any] | None = None
+    A window works on a copy of the entry, the draft. Every section reads and writes the
+    draft, never the stored entries, and ends back in the menu. What a section writes to
+    other entries (the zone moved to the main source, an entry for a zone's member) waits in
+    the draft too. Only "Save and finish" (``async_step_save``) checks again, asks the reset
+    question once if needed, and writes; closing the window discards everything.
+    """
+
+    hass: Any
+    # The draft: this entry's settings as they will be saved.
+    _draft: dict[str, Any]
+    # This entry's settings when the window opened (for the unsaved changes and the checks).
+    _stored: dict[str, Any]
+    # The target thermostat's unique id, and the edited entry (None while creating one).
+    _target: str | None
+    _entry: Any
+    # The new settings of other thermostats' entries, by target unique id; an entry that does
+    # not exist yet is created at save.
+    _writes: dict[str, dict[str, Any]]
+    # What changes the learned model, by entry ("" is this entry), with the reasons.
+    _reset_reasons: dict[str, set[str]]
+    # A note for the menu, replacing an abort (a translation key under "abort").
+    _note: str | None
+    _valve_target: bool | None
+
+    def _init_sections(self, target: str | None, entry: Any, options: dict[str, Any]) -> None:
+        self._draft = dict(options)
+        self._stored = dict(options)
+        self._target = target
+        self._entry = entry
+        self._writes = {}
+        self._reset_reasons = {}
+        self._note = None
+        self._valve_target = None
+        self._stored_dependencies = repr(options.get(CONF_SMART_PI_DEPENDENCIES))
         self._editing: DependencyItem | None = None
         self._neighbour_entity: er.RegistryEntry | None = None
         self._pending_item: DependencyItem | None = None
@@ -605,137 +516,333 @@ class SmartPIOptionsFlow(OptionsFlow):
         self._zone_master: er.RegistryEntry | None = None
         self._zone_members: list[er.RegistryEntry] = []
         self._zone_pending: dict[str, Any] = {}
-        self._zone_item: DependencyItem | None = None
-        self._zone_main: er.RegistryEntry | None = None
         self._zone_snapshot: tuple = ()
-        self._pending_items: list[DependencyItem] = []
-        self._pending_base: str = ""
+        self._zone_edited = False
+        self._zone_error: str | None = None
+        # A zone moved to the other thermostat in this window: (its unique id, its dependencies
+        # before, the items that moved).
+        self._zone_moved: tuple | None = None
         # The water and boiler sources being chosen, and whether the call is part of the form.
         self._heating_pending: dict[str, Any] = {}
         self._heating_call_shown: bool = True
+        self._reset_choice: bool | None = None
+
+    # --- what every section reads ---------------------------------------------
+
+    @property
+    def _flow_category(self) -> str:
+        """Where Home Assistant reads this flow's texts: "config" or "options"."""
+        return "options"
+
+    def _is_defaults(self) -> bool:
+        return self._target is None
 
     def _is_valve_target_entry(self) -> bool:
-        """Return whether the edited entry targets a valve thermostat."""
-        target_unique_id = self._config_entry.data.get(CONF_TARGET_VTHERM)
-        if target_unique_id is None:
-            return False
+        """Whether the target thermostat works in a valve's command space."""
+        if self._valve_target is None:
+            self._valve_target = False
+            registry = er.async_get(self.hass)
+            for entry in registry.entities.values():
+                if entry.domain == CLIMATE_DOMAIN and entry.unique_id == self._target:
+                    self._valve_target = _is_valve_entity(self.hass, entry.entity_id, self._target)
+                    break
+        return self._valve_target
 
+    def _target_registry_entry(self) -> er.RegistryEntry | None:
+        """Registry entry of the thermostat this entry belongs to."""
         registry = er.async_get(self.hass)
-        for entry in registry.entities.values():
-            if entry.domain != CLIMATE_DOMAIN or entry.unique_id != target_unique_id:
-                continue
-            return _is_valve_entity(
-                self.hass,
-                entry.entity_id,
-                target_unique_id,
-            )
-        return False
-
-    def _current_options(self) -> dict[str, Any]:
-        """Return the stored options merged over the defaults."""
-        options = dict(DEFAULT_OPTIONS)
-        options.update(self._config_entry.options or self._config_entry.data)
-        return options
-
-    async def async_step_init(self, user_input: dict[str, Any] | None = None):
-        """Open the options: a menu for a thermostat entry, the settings form for the defaults.
-
-        A thermostat that works as the additional source of a zone shows where
-        the zone is configured and only the settings it still uses.
-        """
-        if self._config_entry.data.get(CONF_TARGET_VTHERM) is None:
-            del user_input
-            return self.async_show_menu(step_id="init", menu_options=["settings", "boiler_signals"])
-        own = self._target_registry_entry()
-        if self._main_naming(own.id if own is not None else None) is not None:
-            if self._uses_water():
-                return await self.async_step_source_menu()
-            return await self.async_step_source_role()
-        return await self.async_step_thermostat_menu()
-
-    async def async_step_source_menu(self, user_input: dict[str, Any] | None = None):
-        """The additional source of a zone heated by water: its settings, or its water data."""
-        del user_input
-        return self.async_show_menu(step_id="source_menu", menu_options=["source_role", "heating_inputs"])
-
-    async def async_step_thermostat_menu(self, user_input: dict[str, Any] | None = None):
-        """Offer the option groups of a thermostat entry."""
-        del user_input
-        menu_options = ["settings", "zone", "dependencies"]
-        if self._uses_water():
-            menu_options.append("heating_inputs")
-        if self._is_valve_target_entry() and self._current_options().get(
-            CONF_SMART_PI_ENABLE_VALVE_LINEARIZATION
-        ):
-            menu_options.append("valve_curve")
-        return self.async_show_menu(step_id="thermostat_menu", menu_options=menu_options)
-
-    async def async_step_settings(self, user_input: dict[str, Any] | None = None):
-        """Edit the regulator settings of a thermostat entry or of the defaults."""
-        return await self._async_settings_form("settings", user_input)
-
-    async def _async_settings_form(self, step_id: str, user_input: dict[str, Any] | None):
-        """Show or save the regulator settings form."""
-        defaults = self._current_options()
-        is_valve_target = self._is_valve_target_entry()
-
-        if user_input is not None:
-            data = dict(defaults)
-            data.update(user_input)
-            self._pending_options_data = data
-            if (
-                is_valve_target
-                and user_input.get(CONF_SMART_PI_ENABLE_VALVE_LINEARIZATION)
-            ):
-                return self.async_show_form(
-                    step_id="valve_curve",
-                    data_schema=build_valve_curve_schema(data),
-                )
-            return self.async_create_entry(title="", data=data)
-
-        return self.async_show_form(
-            step_id=step_id,
-            data_schema=build_main_options_schema(
-                defaults,
-                include_valve_linearization=is_valve_target,
-            ),
+        entity_id = (
+            registry.async_get_entity_id(CLIMATE_DOMAIN, VT_DOMAIN, self._target) if self._target else None
         )
+        return registry.async_get(entity_id) if entity_id else None
+
+    def _entity_id(self, registry_id: str) -> str | None:
+        return er.async_resolve_entity_id(er.async_get(self.hass), registry_id)
+
+    def _dependency_items(self) -> list[DependencyItem]:
+        return parse_dependencies(self._draft.get(CONF_SMART_PI_DEPENDENCIES))
 
     def _neighbour_items(self) -> list[DependencyItem]:
         """The neighbours: the zone's second source is configured in its own form."""
         return [item for item in self._dependency_items() if item.is_neighbour]
+
+    def _set_items(self, items: list[DependencyItem]) -> None:
+        self._draft[CONF_SMART_PI_DEPENDENCIES] = dump_dependencies(items)
+
+    def _add_reason(self, reason: str, entry_key: str = "") -> None:
+        self._reset_reasons.setdefault(entry_key, set()).add(reason)
+
+    def _smartpi_entries(self) -> list:
+        """The stored SmartPI entries of the other thermostats."""
+        return [
+            entry
+            for entry in self.hass.config_entries.async_entries(DOMAIN)
+            if entry.data.get(CONF_TARGET_VTHERM) and entry.data.get(CONF_TARGET_VTHERM) != self._target
+        ]
+
+    def _entry_of(self, unique_id: str | None):
+        """The stored SmartPI entry of another thermostat, by its unique id."""
+        return next(
+            (entry for entry in self._smartpi_entries() if entry.data.get(CONF_TARGET_VTHERM) == unique_id),
+            None,
+        )
+
+    def _options_of(self, unique_id: str | None) -> dict[str, Any] | None:
+        """A thermostat's settings as this window will leave them: the draft for this entry, a
+        pending write, else the stored entry (None: no entry)."""
+        if unique_id is None:
+            return None
+        if unique_id == self._target:
+            return self._draft
+        if unique_id in self._writes:
+            return self._writes[unique_id]
+        entry = self._entry_of(unique_id)
+        return entry_options(entry) if entry is not None else None
+
+    def _others(self) -> dict[str, dict[str, Any]]:
+        """The other thermostats' settings as this window will leave them, by unique id."""
+        others = {entry.data[CONF_TARGET_VTHERM]: entry_options(entry) for entry in self._smartpi_entries()}
+        others.update(self._writes)
+        return others
+
+    def _items_of(self, unique_id: str | None) -> list[DependencyItem]:
+        return parse_dependencies((self._options_of(unique_id) or {}).get(CONF_SMART_PI_DEPENDENCIES))
+
+    def _main_naming(self, registry_id: str | None) -> str | None:
+        """The unique id of the other thermostat whose zone has ``registry_id`` as its additional source."""
+        if registry_id is None:
+            return None
+        for unique_id, options in self._others().items():
+            items = parse_dependencies(options.get(CONF_SMART_PI_DEPENDENCIES))
+            if any(item.is_source and item.entity == registry_id for item in items):
+                return unique_id
+        return None
+
+    def _main_title(self, unique_id: str | None) -> str:
+        entry = self._entry_of(unique_id)
+        if entry is not None:
+            return entry.title
+        return self._entity_id_of(unique_id) or "-"
+
+    def _entity_id_of(self, unique_id: str | None) -> str | None:
+        if not unique_id:
+            return None
+        return er.async_get(self.hass).async_get_entity_id(CLIMATE_DOMAIN, VT_DOMAIN, unique_id)
+
+    def _is_additional_source(self) -> bool:
+        own = self._target_registry_entry()
+        return self._main_naming(own.id if own is not None else None) is not None
+
+    def _uses_water(self) -> bool:
+        """The heating type in the draft uses the water (radiator, water floor)."""
+        return heating_type_of(self._draft) in WATER_EMITTERS
+
+    def _defaults_options(self) -> dict[str, Any]:
+        """The options of the "SmartPI defaults" entry."""
+        return entry_options(defaults_entry(self.hass))
+
+    # --- the menu ----------------------------------------------------------------
+
+    def _menu_step(self) -> str:
+        if self._is_defaults():
+            return "init"
+        if self._source_entry:
+            return "source_menu"
+        return "thermostat_menu"
+
+    async def _async_menu(self):
+        """Back to this window's menu."""
+        if self._is_defaults():
+            return await self.async_step_init()
+        if self._source_entry:
+            return await self.async_step_source_menu()
+        return await self.async_step_thermostat_menu()
+
+    def _menu_options(self) -> list[str]:
+        if self._is_defaults():
+            return ["regulator", "boiler_signals", "save"]
+        valve_curve = self._is_valve_target_entry() and self._draft.get(CONF_SMART_PI_ENABLE_VALVE_LINEARIZATION) is True
+        if self._source_entry:
+            options = ["source_role"]
+            if self._uses_water():
+                options.append("heating_inputs")
+        else:
+            options = ["settings"]
+            if self._uses_water():
+                options.append("heating_inputs")
+            options += ["zone", "dependencies"]
+        if valve_curve:
+            options.append("valve_curve")
+        options.append("save")
+        return options
+
+    def _changed_sections(self) -> list[str]:
+        """The menu items whose settings differ from the stored ones."""
+        draft, stored = self._draft, self._stored
+
+        def value(options: dict[str, Any], key: str) -> Any:
+            # A setting not set is the same as the value its form starts with.
+            if key == CONF_SMART_PI_USE_DEFAULTS:
+                return uses_defaults(options)
+            return options.get(key, DEFAULT_OPTIONS.get(key))
+
+        def differ(keys) -> bool:
+            return any(value(draft, key) != value(stored, key) for key in keys)
+
+        if self._is_defaults():
+            sections = {"regulator": SHARED_SETTINGS, "boiler_signals": BOILER_SIGNAL_KEYS}
+            return [name for name, keys in sections.items() if differ(keys)]
+        changed: list[str] = []
+        settings_keys = [key for key in (*THERMOSTAT_SETTINGS, *SHARED_SETTINGS, CONF_SMART_PI_USE_DEFAULTS) if key not in VALVE_CURVE_POINTS]
+        if differ(settings_keys):
+            changed.append("source_role" if self._source_entry else "settings")
+        if differ(HEATING_INPUT_KEYS):
+            changed.append("heating_inputs")
+        before = parse_dependencies(stored.get(CONF_SMART_PI_DEPENDENCIES))
+        after = self._dependency_items()
+        if [i for i in before if i.is_source] != [i for i in after if i.is_source] or self._writes_change():
+            changed.append("zone")
+        if [i for i in before if i.is_neighbour] != [i for i in after if i.is_neighbour]:
+            changed.append("dependencies")
+        if differ(VALVE_CURVE_POINTS):
+            changed.append("valve_curve")
+        return changed
+
+    def _writes_change(self) -> bool:
+        """Whether the pending writes change another entry (or create one)."""
+        for unique_id, options in self._writes.items():
+            entry = self._entry_of(unique_id)
+            if entry is None or options != entry_options(entry):
+                return True
+        return False
+
+    async def _texts(self) -> dict[str, str]:
+        """This flow's texts in the installation's language (English where it has none)."""
+        return await async_get_translations(self.hass, self.hass.config.language, self._flow_category, [DOMAIN])
+
+    async def _menu_placeholders(self) -> dict[str, str]:
+        texts = await self._texts()
+        prefix = f"component.{DOMAIN}.{self._flow_category}"
+        menu = self._menu_step()
+        labels = [
+            texts.get(f"{prefix}.step.{menu}.menu_options.{section}", section) for section in self._changed_sections()
+        ]
+        note = ""
+        if self._note is not None:
+            note = texts.get(f"{prefix}.abort.{self._note}", self._note) + "\n\n"
+            self._note = None
+        return {"changes": ", ".join(labels) if labels else "—", "note": note}
+
+    async def _async_show_menu(self, step_id: str, **kwargs):
+        return self.async_show_menu(
+            step_id=step_id,
+            menu_options=self._menu_options(),
+            description_placeholders={**(await self._menu_placeholders()), **kwargs},
+        )
+
+    async def async_step_thermostat_menu(self, user_input: dict[str, Any] | None = None):
+        """The sections of a thermostat's entry."""
+        del user_input
+        return await self._async_show_menu("thermostat_menu")
+
+    async def async_step_source_menu(self, user_input: dict[str, Any] | None = None):
+        """The sections of a zone's additional source: its own settings, its water data."""
+        del user_input
+        return await self._async_show_menu("source_menu", main=self._main_title(self._main_naming(self._own_registry_id())))
+
+    def _own_registry_id(self) -> str | None:
+        own = self._target_registry_entry()
+        return own.id if own is not None else None
+
+    # --- settings ----------------------------------------------------------------
+
+    async def async_step_settings(self, user_input: dict[str, Any] | None = None):
+        """The heating type first, then the "thermostat only" settings and "Use the SmartPI defaults"."""
+        is_valve = self._is_valve_target_entry()
+        if user_input is not None:
+            use_defaults = bool(user_input.pop(CONF_SMART_PI_USE_DEFAULTS, True))
+            self._draft = _with_settings(self._draft, user_input)
+            self._draft[CONF_SMART_PI_USE_DEFAULTS] = use_defaults
+            if not use_defaults:
+                return await self.async_step_settings_own()
+            for key in SHARED_SETTINGS:
+                self._draft.pop(key, None)
+            return await self._async_after_settings()
+        schema = dict(build_thermostat_settings_schema(_schema_defaults(self._draft), include_valve_linearization=is_valve).schema)
+        # An entry from before the switch holds its own values: off.
+        schema[vol.Optional(CONF_SMART_PI_USE_DEFAULTS, default=uses_defaults(self._draft))] = bool
+        return self.async_show_form(step_id="settings", data_schema=vol.Schema(schema))
+
+    async def async_step_settings_own(self, user_input: dict[str, Any] | None = None):
+        """The thermostat's own values of the shared settings (they start as the defaults')."""
+        if user_input is not None:
+            self._draft.update(user_input)
+            return await self._async_after_settings()
+        start = {**_shared_defaults(), **self._defaults_options()}
+        start.update({key: self._draft[key] for key in SHARED_SETTINGS if key in self._draft})
+        return self.async_show_form(step_id="settings_own", data_schema=build_shared_settings_schema(start))
+
+    async def _async_after_settings(self):
+        if self._is_valve_target_entry() and self._draft.get(CONF_SMART_PI_ENABLE_VALVE_LINEARIZATION) is True:
+            return await self.async_step_valve_curve()
+        return await self._async_menu()
+
+    async def async_step_valve_curve(self, user_input: dict[str, Any] | None = None):
+        """The valve curve's four points."""
+        data = _schema_defaults(self._draft)
+        if user_input is not None:
+            data.update(user_input)
+            errors = _validate_valve_curve_config(data)
+            if errors:
+                return self.async_show_form(step_id="valve_curve", data_schema=build_valve_curve_schema(data), errors=errors)
+            self._draft.update({key: data[key] for key in VALVE_CURVE_POINTS})
+            return await self._async_menu()
+        return self.async_show_form(step_id="valve_curve", data_schema=build_valve_curve_schema(data))
+
+    async def async_step_source_role(self, user_input: dict[str, Any] | None = None):
+        """A zone's additional source: its heating type, activation delays and valve curve."""
+        is_valve = self._is_valve_target_entry()
+        if user_input is not None:
+            self._draft = _with_settings(self._draft, user_input)
+            return await self._async_after_settings()
+        # What still applies while it follows the main source: its heating type (its water
+        # factor and the zone's response), its cycle's delays and its valve curve.
+        kept = (
+            CONF_SMART_PI_HEATING_TYPE,
+            CONF_MINIMAL_ACTIVATION_DELAY,
+            CONF_MINIMAL_DEACTIVATION_DELAY,
+            CONF_SMART_PI_ENABLE_VALVE_LINEARIZATION,
+        )
+        return self.async_show_form(
+            step_id="source_role",
+            data_schema=vol.Schema(
+                {
+                    key: value
+                    for key, value in build_thermostat_settings_schema(
+                        _schema_defaults(self._draft), include_valve_linearization=is_valve
+                    ).schema.items()
+                    if getattr(key, "schema", key) in kept
+                }
+            ),
+            description_placeholders={"main": self._main_title(self._main_naming(self._own_registry_id()))},
+        )
+
+    # --- neighbouring zones ------------------------------------------------------
 
     def _dependency_label(self, item: DependencyItem) -> str:
         """Return a readable label: the kind and the current entity id of the item."""
         entity_id = er.async_resolve_entity_id(er.async_get(self.hass), item.entity)
         return f"{item.kind}: {entity_id or item.entity}"
 
-    def _dependency_items(self) -> list[DependencyItem]:
-        return parse_dependencies(self._current_options().get(CONF_SMART_PI_DEPENDENCIES))
-
-    def _save_dependencies(self, items: list[DependencyItem]):
-        data = self._current_options()
-        data[CONF_SMART_PI_DEPENDENCIES] = dump_dependencies(items)
-        return self.async_create_entry(title="", data=data)
-
-    def _target_registry_entry(self) -> er.RegistryEntry | None:
-        """Registry entry of the thermostat this options entry belongs to."""
-        target = self._config_entry.data.get(CONF_TARGET_VTHERM)
-        registry = er.async_get(self.hass)
-        entity_id = registry.async_get_entity_id(CLIMATE_DOMAIN, VT_DOMAIN, target) if target else None
-        return registry.async_get(entity_id) if entity_id else None
-
-    def _entity_id(self, registry_id: str) -> str | None:
-        return er.async_resolve_entity_id(er.async_get(self.hass), registry_id)
-
     async def async_step_dependencies(self, user_input: dict[str, Any] | None = None):
-        """Offer to add a neighbouring zone, or to edit or remove a dependency."""
+        """Offer to add a neighbouring zone, or to edit or remove one."""
         del user_input
         items = self._neighbour_items()
         menu_options = ["neighbour_add"]
         if items:
             menu_options.append("dependency_edit")
             menu_options.append("dependency_remove")
+        menu_options.append(self._menu_step())
         listing = "\n".join(f"- {self._dependency_label(item)}" for item in items) or "-"
         return self.async_show_menu(
             step_id="dependencies",
@@ -744,41 +851,42 @@ class SmartPIOptionsFlow(OptionsFlow):
         )
 
     async def async_step_dependency_remove(self, user_input: dict[str, Any] | None = None):
-        """Remove the selected dependencies."""
+        """Remove the selected neighbours; nothing chosen goes back to the menu."""
         items = self._neighbour_items()
         if user_input is not None:
             removed = set(user_input.get(FIELD_REMOVE_DEPENDENCIES, []))
             if not removed:
-                return self.async_abort(reason=ABORT_DEPENDENCIES_UNCHANGED)
-            return self._finish(
+                self._note = NOTE_DEPENDENCIES_UNCHANGED
+                return await self._async_menu()
+            return await self._finish(
                 [item for item in self._dependency_items() if item.item_id not in removed], True
             )
         return self.async_show_form(
             step_id="dependency_remove",
             data_schema=vol.Schema(
-                {
-                    vol.Optional(FIELD_REMOVE_DEPENDENCIES, default=[]): self._item_selector(
-                        items, multiple=True
-                    )
-                }
+                {vol.Optional(FIELD_REMOVE_DEPENDENCIES, default=[]): self._item_selector(items, multiple=True)}
             ),
         )
 
     async def async_step_dependency_edit(self, user_input: dict[str, Any] | None = None):
-        """Choose the neighbour to edit."""
-        neighbours = [item for item in self._dependency_items() if item.is_neighbour]
+        """Choose the neighbour to edit; one that is gone is refused on the form."""
+        neighbours = self._neighbour_items()
+        errors: dict[str, str] = {}
         if user_input is not None:
             item = next(i for i in neighbours if i.item_id == user_input[FIELD_EDIT_DEPENDENCY])
-            self._editing = item
-            self._neighbour_entity = er.async_get(self.hass).async_get(item.entity)
-            if self._neighbour_entity is None:
-                return self.async_abort(reason="neighbour_missing")
-            return await self.async_step_neighbour_details()
+            entity = er.async_get(self.hass).async_get(item.entity)
+            if entity is None:
+                errors[FIELD_EDIT_DEPENDENCY] = ERROR_NEIGHBOUR_MISSING
+            else:
+                self._editing = item
+                self._neighbour_entity = entity
+                return await self.async_step_neighbour_details()
         return self.async_show_form(
             step_id="dependency_edit",
             data_schema=vol.Schema(
                 {vol.Required(FIELD_EDIT_DEPENDENCY): self._item_selector(neighbours, multiple=False)}
             ),
+            errors=errors,
         )
 
     def _item_selector(self, items: list[DependencyItem], multiple: bool) -> selector.SelectSelector:
@@ -916,7 +1024,7 @@ class SmartPIOptionsFlow(OptionsFlow):
                 if warnings:
                     self._pending_warnings = warnings
                     return await self.async_step_neighbour_confirm()
-                return self._store_neighbour(item)
+                return await self._store_neighbour(item)
             defaults = {
                 FIELD_MODE: user_input.get(FIELD_MODE, MODE_ALWAYS),
                 FIELD_DOOR_SENSORS: user_input.get(FIELD_DOOR_SENSORS, []),
@@ -999,10 +1107,8 @@ class SmartPIOptionsFlow(OptionsFlow):
         own = self._target_registry_entry()
         neighbour = self._neighbour_entity
         if neighbour.domain == CLIMATE_DOMAIN and own is not None:
-            for entry in self.hass.config_entries.async_entries(DOMAIN):
-                if entry.data.get(CONF_TARGET_VTHERM) != neighbour.unique_id:
-                    continue
-                options = entry.options or entry.data
+            options = self._options_of(neighbour.unique_id)
+            if options is not None:
                 back = parse_dependencies(options.get(CONF_SMART_PI_DEPENDENCIES))
                 if not any(i.is_neighbour and i.entity == own.id for i in back):
                     warnings.append(
@@ -1022,9 +1128,9 @@ class SmartPIOptionsFlow(OptionsFlow):
         return warnings
 
     async def async_step_neighbour_confirm(self, user_input: dict[str, Any] | None = None):
-        """Show the warnings and save on confirmation."""
+        """Show the warnings; confirming keeps the neighbour."""
         if user_input is not None:
-            return self._store_neighbour(self._pending_item)
+            return await self._store_neighbour(self._pending_item)
         return self.async_show_form(
             step_id="neighbour_confirm",
             data_schema=vol.Schema({}),
@@ -1033,7 +1139,7 @@ class SmartPIOptionsFlow(OptionsFlow):
             },
         )
 
-    def _store_neighbour(self, item: DependencyItem):
+    async def _store_neighbour(self, item: DependencyItem):
         items = self._dependency_items()
         replaced_id = self._editing.item_id if self._editing is not None else item.item_id
         replaced = [item if existing.item_id == replaced_id else existing for existing in items]
@@ -1041,78 +1147,33 @@ class SmartPIOptionsFlow(OptionsFlow):
             replaced.append(item)
         # A new connection (added, another mode or other doors) changes what was learned.
         affects_learning = self._editing is None or self._editing.item_id != item.item_id
-        return self._finish(replaced, affects_learning)
+        return await self._finish(replaced, affects_learning)
 
-    def _finish(self, items: list[DependencyItem], affects_learning: bool):
-        """Save the dependency list, asking first about the learned model when the change affects it."""
-        if not affects_learning:
-            return self._save_dependencies(items)
-        self._pending_items = items
-        self._pending_base = repr(self._current_options().get(CONF_SMART_PI_DEPENDENCIES))
-        return self.async_show_form(
-            step_id="model_reset",
-            data_schema=vol.Schema({vol.Required(FIELD_RESET_MODEL, default=True): bool}),
-        )
-
-    async def async_step_model_reset(self, user_input: dict[str, Any] | None = None):
-        """Reset the zone's learned model with the change of its neighbours, as recommended."""
-        if user_input is None:
-            return self._finish(self._pending_items, True)
-        if repr(self._current_options().get(CONF_SMART_PI_DEPENDENCIES)) != self._pending_base:
-            return self.async_abort(reason="zone_changed")
-        return self._save_items(self._pending_items, reset=bool(user_input.get(FIELD_RESET_MODEL)))
+    async def _finish(self, items: list[DependencyItem], affects_learning: bool):
+        """Keep the dependency list in the draft; a change that affects the learned model is a
+        reason for the reset question at save."""
+        self._set_items(items)
+        if affects_learning:
+            self._add_reason(REASON_NEIGHBOURS)
+        return await self._async_menu()
 
     # --- zone with two heat sources ---------------------------------------
 
-    def _smartpi_entries(self) -> list:
-        return [
-            entry
-            for entry in self.hass.config_entries.async_entries(DOMAIN)
-            if entry.data.get(CONF_TARGET_VTHERM)
-        ]
-
-    @staticmethod
-    def _entry_options(entry) -> dict[str, Any]:
-        options = dict(DEFAULT_OPTIONS)
-        options.update(entry.options or entry.data)
-        return options
-
-    def _entry_items(self, entry) -> list[DependencyItem]:
-        return parse_dependencies(self._entry_options(entry).get(CONF_SMART_PI_DEPENDENCIES))
-
-    def _entry_of(self, unique_id: str | None):
-        """The SmartPI entry of a thermostat, by its unique id."""
-        return next(
-            (entry for entry in self._smartpi_entries() if entry.data.get(CONF_TARGET_VTHERM) == unique_id),
-            None,
-        )
-
-    def _main_naming(self, registry_id: str | None):
-        """The SmartPI entry, other than this one, whose zone has ``registry_id`` as its additional source."""
-        if registry_id is None:
-            return None
-        for entry in self._smartpi_entries():
-            if entry.entry_id == self._config_entry.entry_id:
-                continue
-            if any(item.is_source and item.entity == registry_id for item in self._entry_items(entry)):
-                return entry
-        return None
-
     def _zone_signature(self, members: list[er.RegistryEntry]) -> tuple:
-        """What the zone form relies on: the dependency lists of this entry and of the members' entries."""
-        entries = {self._config_entry.entry_id: self._config_entry}
+        """What the zone section relies on: the stored dependency lists of this entry and of the members' entries."""
+        signature = []
+        if self._entry is not None:
+            stored = self.hass.config_entries.async_get_entry(self._entry.entry_id)
+            signature.append(("", repr(entry_options(stored).get(CONF_SMART_PI_DEPENDENCIES)) if stored else None))
         for member in members:
             entry = self._entry_of(member.unique_id)
             if entry is not None:
-                entries[entry.entry_id] = entry
-        return tuple(
-            (entry_id, repr(self._entry_options(entry).get(CONF_SMART_PI_DEPENDENCIES)))
-            for entry_id, entry in sorted(entries.items())
-        )
+                signature.append((entry.entry_id, repr(entry_options(entry).get(CONF_SMART_PI_DEPENDENCIES))))
+        return tuple(sorted(signature))
 
     def _zone_changed(self) -> bool:
-        """Another form changed the zone, or the master's devices changed, since this form read them."""
-        error, members = self._master_error(self._zone_master)
+        """Another window changed the zone, or the master's devices changed, since this one read them."""
+        error, members = self._master_error(self._zone_master, stored=True)
         if error is not None or {m.id for m in members} != {m.id for m in self._zone_members}:
             return True
         return self._zone_signature(self._zone_members) != self._zone_snapshot
@@ -1129,16 +1190,13 @@ class SmartPIOptionsFlow(OptionsFlow):
             return {}
         return {**vt_entry.data, **vt_entry.options}
 
-    def _heating_type(self, member: er.RegistryEntry) -> str:
-        """The heating type set in a thermostat's SmartPI entry (else the defaults')."""
-        entry = self._entry_of(member.unique_id)
-        if entry is None:
-            entry = next(
-                (e for e in self.hass.config_entries.async_entries(DOMAIN) if e.unique_id == DOMAIN), None
-            )
-        options = self._entry_options(entry) if entry is not None else dict(DEFAULT_OPTIONS)
-        heating_type = options.get(CONF_SMART_PI_HEATING_TYPE)
-        return heating_type if heating_type in HEATING_TYPES else DEFAULT_OPTIONS[CONF_SMART_PI_HEATING_TYPE]
+    def _heating_type(self, member: er.RegistryEntry, stored: bool = False) -> str | None:
+        """The heating type a member's own entry sets (in this window, or as stored); None: not set."""
+        if stored:
+            if member.unique_id == self._target:
+                return heating_type_of(self._stored)
+            return heating_type_of(entry_options(self._entry_of(member.unique_id)))
+        return heating_type_of(self._options_of(member.unique_id) or {})
 
     def _masters(self) -> list[er.RegistryEntry]:
         """Versatile Thermostat over_climate thermostats with this thermostat among their devices."""
@@ -1157,8 +1215,13 @@ class SmartPIOptionsFlow(OptionsFlow):
                 masters.append(entry)
         return sorted(masters, key=lambda entry: entry.entity_id)
 
-    def _master_error(self, master: er.RegistryEntry) -> tuple[str | None, list[er.RegistryEntry]]:
-        """Why the master cannot carry a zone with two heat sources, and its two devices."""
+    def _master_error(
+        self, master: er.RegistryEntry, stored: bool = False
+    ) -> tuple[str | None, list[er.RegistryEntry]]:
+        """Why the master cannot carry a zone with two heat sources, and its two devices.
+
+        ``stored``: the members' zones as stored (at save), not as this window leaves them.
+        """
         config = self._vt_config(master)
         if config.get(CONF_AUTO_REGULATION_MODE_KEY, VT_AUTO_REGULATION_NONE) != VT_AUTO_REGULATION_NONE:
             return "master_auto_regulation", []
@@ -1173,17 +1236,36 @@ class SmartPIOptionsFlow(OptionsFlow):
         sensors = {self._vt_config(member).get(VT_TEMP_SENSOR) for member in members}
         if len(sensors) != 1 or None in sensors:
             return "members_not_one_sensor", []
+        member_ids = {m.id for m in members}
         for member in members:
-            naming = self._main_naming(member.id)
+            if member.unique_id == self._target:
+                continue
+            if stored:
+                entry = self._entry_of(member.unique_id)
+                items = parse_dependencies(entry_options(entry).get(CONF_SMART_PI_DEPENDENCIES)) if entry else []
+                others = {
+                    entry.data[CONF_TARGET_VTHERM]: entry_options(entry) for entry in self._smartpi_entries()
+                }
+            else:
+                items = self._items_of(member.unique_id)
+                others = self._others()
+            naming = next(
+                (
+                    unique_id
+                    for unique_id, options in others.items()
+                    if unique_id != member.unique_id
+                    and unique_id != self._target
+                    and any(
+                        item.is_source and item.entity == member.id
+                        for item in parse_dependencies(options.get(CONF_SMART_PI_DEPENDENCIES))
+                    )
+                ),
+                None,
+            )
             if naming is not None:
                 return "member_in_another_zone", []
-            entry = self._entry_of(member.unique_id)
-            if entry is not None and entry.entry_id != self._config_entry.entry_id:
-                if any(
-                    item.is_source and item.entity not in {m.id for m in members}
-                    for item in self._entry_items(entry)
-                ):
-                    return "member_in_another_zone", []
+            if any(item.is_source and item.entity not in member_ids for item in items):
+                return "member_in_another_zone", []
         return None, members
 
     async def async_step_zone(self, user_input: dict[str, Any] | None = None):
@@ -1197,7 +1279,7 @@ class SmartPIOptionsFlow(OptionsFlow):
         master = registry.async_get(item.extra.get(KEY_ZONE_MASTER, "")) if item.extra.get(KEY_ZONE_MASTER) else None
         return self.async_show_menu(
             step_id="zone",
-            menu_options=["zone_master", "zone_remove"],
+            menu_options=["zone_master", "zone_remove", self._menu_step()],
             description_placeholders={
                 "master": master.entity_id if master is not None else "-",
                 "source": other.entity_id if other is not None else item.entity,
@@ -1206,10 +1288,11 @@ class SmartPIOptionsFlow(OptionsFlow):
         )
 
     async def async_step_zone_master(self, user_input: dict[str, Any] | None = None):
-        """Choose the master thermostat whose two devices heat the zone."""
+        """Choose the master thermostat whose two devices heat the zone; without one, the menu says why."""
         masters = self._masters()
         if not masters:
-            return self.async_abort(reason="no_master")
+            self._note = NOTE_NO_MASTER
+            return await self._async_menu()
         errors: dict[str, str] = {}
         current = self._zone_source_item()
         default = None
@@ -1222,7 +1305,10 @@ class SmartPIOptionsFlow(OptionsFlow):
             if error is None:
                 self._zone_master, self._zone_members = master, members
                 self._zone_pending = {}
-                self._zone_snapshot = self._zone_signature(members)
+                if not self._zone_edited:
+                    self._zone_snapshot = self._zone_signature(members)
+                if any(self._heating_type(member) is None for member in members):
+                    return await self.async_step_zone_heating_types()
                 return await self.async_step_zone_sources()
             errors[FIELD_MASTER] = error
             default = user_input[FIELD_MASTER]
@@ -1239,8 +1325,54 @@ class SmartPIOptionsFlow(OptionsFlow):
             errors=errors,
         )
 
-    def _response_of(self, member: er.RegistryEntry) -> SourceResponse:
-        return SourceResponse.for_emitter(self._heating_type(member))
+    async def async_step_zone_heating_types(self, user_input: dict[str, Any] | None = None):
+        """The heating type of a member whose entry sets none: the zone needs both emitters.
+
+        It is written to that member's entry at save.
+        """
+        missing = [(index, member) for index, member in enumerate(self._zone_members, 1) if self._heating_type(member) is None]
+        if user_input is not None:
+            for index, member in missing:
+                self._set_heating_type(member, user_input[f"source_{index}_heating_type"])
+            return await self.async_step_zone_sources()
+        schema = {
+            vol.Required(f"source_{index}_heating_type", default=ZONE_HEATING_TYPE): selector.SelectSelector(
+                selector.SelectSelectorConfig(
+                    options=list(HEATING_TYPES), mode=selector.SelectSelectorMode.DROPDOWN, translation_key="heating_type"
+                )
+            )
+            for index, _member in missing
+        }
+        return self.async_show_form(
+            step_id="zone_heating_types",
+            data_schema=vol.Schema(schema),
+            description_placeholders={
+                "source_1": self._zone_members[0].entity_id,
+                "source_2": self._zone_members[1].entity_id,
+            },
+        )
+
+    def _set_heating_type(self, member: er.RegistryEntry, heating_type: str) -> None:
+        if member.unique_id == self._target:
+            self._draft[CONF_SMART_PI_HEATING_TYPE] = heating_type
+            return
+        options = self._pending_options_of(member)
+        options[CONF_SMART_PI_HEATING_TYPE] = heating_type
+
+    def _pending_options_of(self, member: er.RegistryEntry) -> dict[str, Any]:
+        """Another member's settings to write at save: its stored entry's, or those of an entry
+        SmartPI creates for it (it uses the defaults)."""
+        if member.unique_id not in self._writes:
+            entry = self._entry_of(member.unique_id)
+            self._writes[member.unique_id] = (
+                entry_options(entry)
+                if entry is not None
+                else {CONF_TARGET_VTHERM: member.unique_id, CONF_SMART_PI_USE_DEFAULTS: True}
+            )
+        return self._writes[member.unique_id]
+
+    def _response_of(self, member: er.RegistryEntry, stored: bool = False) -> SourceResponse:
+        return SourceResponse.for_emitter(self._heating_type(member, stored) or ZONE_HEATING_TYPE)
 
     def _faster_first(self) -> list[er.RegistryEntry]:
         """The two members, the faster to respond first: the recommended main source."""
@@ -1299,9 +1431,9 @@ class SmartPIOptionsFlow(OptionsFlow):
             description_placeholders={
                 "master": self._zone_master.entity_id,
                 "source_1": members[0].entity_id,
-                "source_1_type": self._heating_type(members[0]),
+                "source_1_type": self._heating_type(members[0]) or "-",
                 "source_2": members[1].entity_id,
-                "source_2_type": self._heating_type(members[1]),
+                "source_2_type": self._heating_type(members[1]) or "-",
                 "recommendation": text,
             },
         )
@@ -1319,16 +1451,21 @@ class SmartPIOptionsFlow(OptionsFlow):
         key, default, low, high = _RULE_PARAMETER[rule]
         current = self._zone_source_item()
         same_pair = current is not None and current.entity == other.id
+        errors: dict[str, str] = {"base": self._zone_error} if self._zone_error else {}
+        self._zone_error = None
         if user_input is not None:
             pending.update(user_input)
-            return await self._async_store_zone(main, other)
+            error = self._store_zone(main, other)
+            if error is None:
+                return await self._async_menu()
+            errors["base"] = error
         percent = selector.NumberSelector(
             selector.NumberSelectorConfig(
                 min=low, max=high, step=1, mode=selector.NumberSelectorMode.BOX, unit_of_measurement="%"
             )
         )
         stored = current.extra.get(key) if same_pair else None
-        schema: dict[Any, Any] = {vol.Required(key, default=stored if stored is not None else default): percent}
+        schema: dict[Any, Any] = {vol.Required(key, default=pending.get(key, stored if stored is not None else default)): percent}
         if pending.get(FIELD_CUSTOM_RESPONSE):
             minutes = selector.NumberSelector(
                 selector.NumberSelectorConfig(
@@ -1338,7 +1475,7 @@ class SmartPIOptionsFlow(OptionsFlow):
             response = self._response_of(other)
             for key, start_s in ((KEY_SOURCE_LAG_MIN, response.lag_s), (KEY_SOURCE_TAU_MIN, response.tau_s)):
                 value = current.extra.get(key) if same_pair and current.extra.get(key) is not None else round(start_s / 60.0)
-                schema[vol.Required(key, default=value)] = minutes
+                schema[vol.Required(key, default=pending.get(key, value))] = minutes
         hint = _RULE_HINT[rule].format(main=main.entity_id, other=other.entity_id)
         if recommend(self._response_of(main), self._response_of(other)).roles_reversed:
             hint += (
@@ -1348,6 +1485,7 @@ class SmartPIOptionsFlow(OptionsFlow):
         return self.async_show_form(
             step_id="zone_parameter",
             data_schema=vol.Schema(schema),
+            errors=errors,
             description_placeholders={"main": main.entity_id, "source": other.entity_id, "hint": hint},
         )
 
@@ -1363,13 +1501,13 @@ class SmartPIOptionsFlow(OptionsFlow):
         # The heating types of the thermostats' entries; the handler reads them again at
         # start. Only the additional source's response may be custom: it starts the
         # candidates of its time scale, while the main source's delay comes from the fit.
-        extra[KEY_LEAD_EMITTER] = self._heating_type(main)
+        extra[KEY_LEAD_EMITTER] = self._heating_type(main) or ZONE_HEATING_TYPE
         if pending.get(FIELD_CUSTOM_RESPONSE):
             extra[KEY_SOURCE_EMITTER] = EMITTER_CUSTOM
             extra[KEY_SOURCE_LAG_MIN] = pending[KEY_SOURCE_LAG_MIN]
             extra[KEY_SOURCE_TAU_MIN] = pending[KEY_SOURCE_TAU_MIN]
         else:
-            extra[KEY_SOURCE_EMITTER] = self._heating_type(other)
+            extra[KEY_SOURCE_EMITTER] = self._heating_type(other) or ZONE_HEATING_TYPE
         current = self._zone_source_item()
         same_pair = current is not None and current.entity == other.id
         return DependencyItem(
@@ -1379,11 +1517,59 @@ class SmartPIOptionsFlow(OptionsFlow):
             extra=extra,
         )
 
-    async def _async_store_zone(self, main: er.RegistryEntry, other: er.RegistryEntry):
-        """Ask about the learned model when the change affects it, then save."""
+    def _effective(self, item: DependencyItem, main: er.RegistryEntry, other: er.RegistryEntry) -> dict[str, Any]:
+        """A stored zone item as it runs now: emitters that are not custom follow the
+        heating types the thermostats' stored entries set, as the handler reads them."""
+        extra = dict(item.extra)
+        for member, key in ((main, KEY_LEAD_EMITTER), (other, KEY_SOURCE_EMITTER)):
+            heating_type = self._heating_type(member, stored=True)
+            if extra.get(key) != EMITTER_CUSTOM and heating_type is not None:
+                extra[key] = heating_type
+        return extra
+
+    def _store_zone(self, main: er.RegistryEntry, other: er.RegistryEntry) -> str | None:
+        """Keep the zone in the draft (this entry, or the main source's entry when the zone
+        moves there); the other member gets an entry at save if it has none.
+
+        Choosing the other thermostat as the main source moves the zone, with this
+        entry's neighbours, to that thermostat's entry. Returns an error, or None.
+        """
         item = self._build_zone_item(main, other)
         own = self._target_registry_entry()
-        current = self._zone_source_item()
+        before = (self._zone_moved, copy.deepcopy(self._writes), copy.deepcopy(self._reset_reasons))
+        own_items = self._undo_zone_move()
+        error = self._place_zone(item, main, other, own, own_items)
+        if error:
+            self._zone_moved, self._writes, self._reset_reasons = before
+        return error
+
+    def _undo_zone_move(self) -> list[DependencyItem]:
+        """This entry's items, with a zone moved earlier in this window brought back: the
+        entry it moved to gets its dependencies back, the items that moved come back here."""
+        items = self._dependency_items()
+        if self._zone_moved is None:
+            return items
+        unique_id, dependencies, moved = self._zone_moved
+        self._zone_moved = None
+        # The move wrote that entry's settings and gave it the zone's reset reason; only a move does.
+        options = self._writes[unique_id]
+        if dependencies is None:
+            options.pop(CONF_SMART_PI_DEPENDENCIES, None)
+        else:
+            options[CONF_SMART_PI_DEPENDENCIES] = dependencies
+        self._reset_reasons.get(unique_id, set()).discard(REASON_ZONE)
+        return [*moved, *items]
+
+    def _place_zone(
+        self,
+        item: DependencyItem,
+        main: er.RegistryEntry,
+        other: er.RegistryEntry,
+        own: er.RegistryEntry | None,
+        own_items: list[DependencyItem],
+    ) -> str | None:
+        """Put the zone in this entry, or move it to the main source's entry."""
+        current = next((existing for existing in own_items if existing.is_source), None)
         # Only the additional source's response shapes what the zone learns, and the
         # learned fits are kept when its delay and lag stay the same (as at run time).
         affects_learning = (
@@ -1393,54 +1579,6 @@ class SmartPIOptionsFlow(OptionsFlow):
             or current.entity != item.entity
             or _source_response(self._effective(current, main, other)) != _source_response(item.extra)
         )
-        self._zone_item, self._zone_main = item, main
-        if affects_learning:
-            return await self.async_step_zone_reset()
-        return await self._async_save_zone(reset=False)
-
-    def _effective(self, item: DependencyItem, main: er.RegistryEntry, other: er.RegistryEntry) -> dict[str, Any]:
-        """A stored zone item as it runs now: emitters that are not custom follow the
-        heating types the thermostats' entries set today, as the handler reads them."""
-        extra = dict(item.extra)
-        for member, key in ((main, KEY_LEAD_EMITTER), (other, KEY_SOURCE_EMITTER)):
-            if extra.get(key) != EMITTER_CUSTOM:
-                extra[key] = self._heating_type(member)
-        return extra
-
-    async def async_step_zone_reset(self, user_input: dict[str, Any] | None = None):
-        """Reset the zone's learned model with the change, as recommended."""
-        if user_input is not None:
-            if self._zone_item is None:
-                return await self._async_remove_zone(reset=bool(user_input.get(FIELD_RESET_MODEL)))
-            return await self._async_save_zone(reset=bool(user_input.get(FIELD_RESET_MODEL)))
-        return self.async_show_form(
-            step_id="zone_reset",
-            data_schema=vol.Schema({vol.Required(FIELD_RESET_MODEL, default=True): bool}),
-        )
-
-    async def _async_entry_for(self, member: er.RegistryEntry):
-        """The SmartPI entry of a zone member, created from the defaults if it has none."""
-        entry = self._entry_of(member.unique_id)
-        if entry is None:
-            await self.hass.config_entries.flow.async_init(
-                DOMAIN, context={"source": SOURCE_IMPORT}, data={CONF_TARGET_VTHERM: member.unique_id}
-            )
-            entry = self._entry_of(member.unique_id)
-        return entry
-
-    async def _async_save_zone(self, reset: bool):
-        """Store the zone in the main source's entry; the other member gets an entry if it has none.
-
-        Choosing the other thermostat as the main source moves the zone, with
-        its neighbours, to that thermostat's entry.
-        """
-        if self._zone_changed():
-            return self.async_abort(reason="zone_changed")
-        item, main = self._zone_item, self._zone_main
-        own = self._target_registry_entry()
-        other_member = next(m for m in self._zone_members if m.id != main.id)
-        await self._async_entry_for(other_member)
-        own_items = self._dependency_items()
         if own is not None and main.id == own.id:
             items = [
                 existing
@@ -1449,19 +1587,25 @@ class SmartPIOptionsFlow(OptionsFlow):
             ]
             items.append(item)
             if validate_dependencies(items, own.id):
-                return self.async_abort(reason="zone_move_conflict")
-            return self._save_items(items, reset)
+                return ERROR_ZONE_MOVE_CONFLICT
+            if other.unique_id != self._target and self._options_of(other.unique_id) is None:
+                # The other member gets an entry at save (it uses the defaults).
+                self._pending_options_of(other)
+            self._set_items(items)
+            if affects_learning:
+                self._add_reason(REASON_ZONE)
+            self._zone_edited = True
+            return None
         # The zone moves to the other thermostat's entry.
-        target = await self._async_entry_for(main)
-        if target is None:
-            return self.async_abort(reason="main_entry_missing")
+        target = dict(self._options_of(main.unique_id) or {CONF_TARGET_VTHERM: main.unique_id, CONF_SMART_PI_USE_DEFAULTS: True})
+        dependencies_before = target.get(CONF_SMART_PI_DEPENDENCIES)
         zone_entities = {main.id, item.entity}
         moved = [existing for existing in own_items if existing.is_neighbour and existing.entity not in zone_entities]
         moved_sensors = {sensor for existing in moved for sensor in existing.door_sensors}
         # The moved neighbours win over the new main's own ones that clash with them.
         kept = [
             existing
-            for existing in self._entry_items(target)
+            for existing in parse_dependencies(target.get(CONF_SMART_PI_DEPENDENCIES))
             if existing.is_neighbour
             and existing.entity not in zone_entities
             and existing.entity not in {m.entity for m in moved}
@@ -1469,49 +1613,27 @@ class SmartPIOptionsFlow(OptionsFlow):
         ]
         merged = [*kept, *moved, item]
         if validate_dependencies(merged, main.id):
-            return self.async_abort(reason="zone_move_conflict")
-        target_options = self._entry_options(target)
-        target_options[CONF_SMART_PI_DEPENDENCIES] = dump_dependencies(merged)
-        if reset:
-            target_options[CONF_SMART_PI_RESET_TOKEN] = uuid.uuid4().hex
-        self.hass.config_entries.async_update_entry(target, options=target_options)
-        return self._save_items([], reset=False)
+            return ERROR_ZONE_MOVE_CONFLICT
+        target[CONF_SMART_PI_DEPENDENCIES] = dump_dependencies(merged)
+        self._zone_moved = (
+            main.unique_id,
+            copy.deepcopy(dependencies_before),
+            [existing for existing in own_items if existing.is_neighbour or existing.is_source],
+        )
+        self._writes[main.unique_id] = target
+        self._add_reason(REASON_ZONE, main.unique_id)
+        self._set_items([])
+        self._zone_edited = True
+        return None
 
     async def async_step_zone_remove(self, user_input: dict[str, Any] | None = None):
         """Remove the zone: this thermostat regulates alone again, the other one too."""
         del user_input
-        self._zone_item = None
-        self._pending_base = repr(self._current_options().get(CONF_SMART_PI_DEPENDENCIES))
-        return await self.async_step_zone_reset()
-
-    async def _async_remove_zone(self, reset: bool):
-        if repr(self._current_options().get(CONF_SMART_PI_DEPENDENCIES)) != self._pending_base:
-            return self.async_abort(reason="zone_changed")
-        items = [existing for existing in self._dependency_items() if not existing.is_source]
-        return self._save_items(items, reset)
-
-    def _save_items(self, items: list[DependencyItem], reset: bool):
-        """Save this entry's dependency list (and a reset request)."""
-        data = self._current_options()
-        data[CONF_SMART_PI_DEPENDENCIES] = dump_dependencies(items)
-        if reset:
-            data[CONF_SMART_PI_RESET_TOKEN] = uuid.uuid4().hex
-        return self.async_create_entry(title="", data=data)
+        self._set_items([existing for existing in self._dependency_items() if not existing.is_source])
+        self._add_reason(REASON_ZONE)
+        return await self._async_menu()
 
     # --- water and boiler (heating_inputs.py) -----------------------------
-
-    def _uses_water(self) -> bool:
-        """The thermostat's heating type uses the water (radiator, water floor)."""
-        return self._current_options().get(CONF_SMART_PI_HEATING_TYPE) in WATER_EMITTERS
-
-    def _is_additional_source(self) -> bool:
-        own = self._target_registry_entry()
-        return self._main_naming(own.id if own is not None else None) is not None
-
-    def _defaults_options(self) -> dict[str, Any]:
-        """The options of the "SmartPI defaults" entry."""
-        entry = next((e for e in self.hass.config_entries.async_entries(DOMAIN) if e.unique_id == DOMAIN), None)
-        return {**entry.data, **entry.options} if entry is not None else {}
 
     def _used_by_central_boiler(self) -> bool:
         return self._vt_config(self._target_registry_entry()).get(VT_USED_BY_CENTRAL_BOILER) is True
@@ -1546,8 +1668,8 @@ class SmartPIOptionsFlow(OptionsFlow):
         The additional source of a zone chooses its water data only: its learning
         is paused while it follows the main source.
         """
-        current = self._current_options()
-        self._heating_call_shown = not self._is_additional_source()
+        current = self._draft
+        self._heating_call_shown = not self._source_entry
         water, call = self._chosen_sources(current)
         if user_input is not None:
             pending = dict(current)
@@ -1557,7 +1679,7 @@ class SmartPIOptionsFlow(OptionsFlow):
             self._heating_pending = pending
             if self._heating_signal_keys() or pending[CONF_SMART_PI_WATER_SOURCE] == SOURCE_ENTITIES:
                 return await self.async_step_heating_entities()
-            return self._heating_finish()
+            return await self._heating_finish()
         schema: dict[Any, Any] = {
             vol.Required(CONF_SMART_PI_WATER_SOURCE, default=water): self._source_selector(
                 [SOURCE_NONE, SOURCE_ENTITIES], water, "water_source"
@@ -1605,7 +1727,7 @@ class SmartPIOptionsFlow(OptionsFlow):
                 return await self.async_step_heating_signals()
             for key in BOILER_SIGNAL_KEYS:
                 pending.pop(key, None)
-            return self._heating_finish()
+            return await self._heating_finish()
         schema: dict[Any, Any] = {}
         if water_entities:
             supply = resolve_entity(self.hass, pending.get(CONF_SMART_PI_SUPPLY_ENTITY))
@@ -1636,10 +1758,10 @@ class SmartPIOptionsFlow(OptionsFlow):
                     pending[key] = value
                 else:
                     pending.pop(key, None)
-            return self._heating_finish()
+            return await self._heating_finish()
         # A thermostat that already has its own signals keeps them, an empty one too; one
         # that took the defaults' starts from them.
-        had_own = self._current_options().get(CONF_SMART_PI_BOILER_SIGNALS) == SIGNALS_OWN
+        had_own = self._draft.get(CONF_SMART_PI_BOILER_SIGNALS) == SIGNALS_OWN
         defaults = {} if had_own else self._defaults_options()
         schema = {}
         for key in keys:
@@ -1649,109 +1771,293 @@ class SmartPIOptionsFlow(OptionsFlow):
             )
         return self.async_show_form(step_id="heating_signals", data_schema=vol.Schema(schema))
 
-    def _heating_finish(self):
-        """Save the sources; a change of the water source or of its supply sensor first asks
-        about the learned model (the learned power changes units)."""
+    async def _heating_finish(self):
+        """Keep the sources in the draft; a change of the water source or of its supply sensor
+        is a reason for the reset question at save (the learned power changes units)."""
         pending = self._heating_pending
         if pending.get(CONF_SMART_PI_WATER_SOURCE) != SOURCE_ENTITIES:
             pending.pop(CONF_SMART_PI_SUPPLY_ENTITY, None)
-        before = config_from_options(self._current_options(), None, False).water_inputs
-        after = config_from_options(pending, None, False).water_inputs
-        if before != after:
-            return self.async_show_form(
-                step_id="heating_reset",
-                data_schema=vol.Schema({vol.Required(FIELD_RESET_MODEL, default=True): bool}),
-            )
-        return self.async_create_entry(title="", data=pending)
-
-    async def async_step_heating_reset(self, user_input: dict[str, Any] | None = None):
-        """Reset the learned model with the change of the water data, as recommended.
-
-        Kept, the data appearing from these inputs are not asked about again.
-        """
-        if user_input is None:
-            return self._heating_finish()
-        pending = self._heating_pending
-        if user_input.get(FIELD_RESET_MODEL):
-            pending[CONF_SMART_PI_RESET_TOKEN] = uuid.uuid4().hex
-            pending.pop(CONF_SMART_PI_MODEL_KEPT_FOR_WATER, None)
-        else:
-            pending[CONF_SMART_PI_MODEL_KEPT_FOR_WATER] = config_from_options(pending, None, False).water_inputs
-        return self.async_create_entry(title="", data=pending)
+        self._draft = pending
+        return await self._async_menu()
 
     async def async_step_boiler_signals(self, user_input: dict[str, Any] | None = None):
         """The boiler's signals, shared by the thermostats that read entities (defaults entry)."""
-        current = self._current_options()
         if user_input is not None:
-            data = dict(current)
             for key in BOILER_SIGNAL_KEYS:
                 value = stored_entity(self.hass, user_input.get(key))
                 if value:
-                    data[key] = value
+                    self._draft[key] = value
                 else:
-                    data.pop(key, None)
-            return self.async_create_entry(title="", data=data)
+                    self._draft.pop(key, None)
+            return await self._async_menu()
         schema = {}
         for key in BOILER_SIGNAL_KEYS:
-            value = resolve_entity(self.hass, current.get(key))
+            value = resolve_entity(self.hass, self._draft.get(key))
             schema[vol.Optional(key, description={"suggested_value": value} if value else None)] = selector.EntitySelector(
                 selector.EntitySelectorConfig(domain=_SIGNAL_DOMAINS[key])
             )
         return self.async_show_form(step_id="boiler_signals", data_schema=vol.Schema(schema))
 
-    async def async_step_source_role(self, user_input: dict[str, Any] | None = None):
-        """A thermostat working as a zone's additional source: its activation delays, heating type and valve curve."""
-        defaults = self._current_options()
-        is_valve_target = self._is_valve_target_entry()
+    async def async_step_regulator(self, user_input: dict[str, Any] | None = None):
+        """The shared settings of the "SmartPI defaults" entry."""
         if user_input is not None:
-            data = dict(defaults)
-            data.update(user_input)
-            self._pending_options_data = data
-            if is_valve_target and user_input.get(CONF_SMART_PI_ENABLE_VALVE_LINEARIZATION):
-                return self.async_show_form(step_id="valve_curve", data_schema=build_valve_curve_schema(data))
-            return self.async_create_entry(title="", data=data)
+            self._draft.update(user_input)
+            return await self._async_menu()
+        return self.async_show_form(
+            step_id="regulator", data_schema=build_shared_settings_schema({**_shared_defaults(), **self._draft})
+        )
+
+    # --- save ------------------------------------------------------------
+
+    def _water_inputs(self, options: dict[str, Any]) -> str:
+        return config_from_options(options, None, False).water_inputs
+
+    def _save_reasons(self) -> dict[str, set[str]]:
+        """What changes a learned model, by entry ("" is this entry)."""
+        reasons = {key: set(value) for key, value in self._reset_reasons.items() if value}
+        own: set[str] = reasons.setdefault("", set())
+        if heating_type_of(self._draft) != heating_type_of(self._stored):
+            own.add(REASON_HEATING_TYPE)
+        if self._water_inputs(self._draft) != self._water_inputs(self._stored):
+            own.add(REASON_WATER)
+        return {key: value for key, value in reasons.items() if value}
+
+    def _changed_elsewhere(self) -> bool:
+        """Another window changed this entry's dependencies or the zone since this one read them."""
+        if self._entry is not None:
+            stored = self.hass.config_entries.async_get_entry(self._entry.entry_id)
+            if stored is None or repr(entry_options(stored).get(CONF_SMART_PI_DEPENDENCIES)) != self._stored_dependencies:
+                return True
+        return self._zone_edited and self._zone_changed()
+
+    def _conflict(self) -> str | None:
+        """A list of dependencies that no longer holds together (checked again at save)."""
         own = self._target_registry_entry()
-        main = self._main_naming(own.id if own is not None else None)
-        # What still applies while it follows the main source: its cycle's delays, its
-        # heating type (its water factor and the zone's response) and its valve curve.
-        kept = (
-            CONF_MINIMAL_ACTIVATION_DELAY,
-            CONF_MINIMAL_DEACTIVATION_DELAY,
-            CONF_SMART_PI_HEATING_TYPE,
-            CONF_SMART_PI_ENABLE_VALVE_LINEARIZATION,
-        )
+        if validate_dependencies(self._dependency_items(), own.id if own else None):
+            return ERROR_ZONE_MOVE_CONFLICT
+        registry = er.async_get(self.hass)
+        for unique_id, options in self._writes.items():
+            entity_id = registry.async_get_entity_id(CLIMATE_DOMAIN, VT_DOMAIN, unique_id)
+            reg = registry.async_get(entity_id) if entity_id else None
+            if validate_dependencies(parse_dependencies(options.get(CONF_SMART_PI_DEPENDENCIES)), reg.id if reg else None):
+                return ERROR_ZONE_MOVE_CONFLICT
+        return None
+
+    async def async_step_save(self, user_input: dict[str, Any] | None = None):
+        """Check again, ask the reset question once if a change affects the learned model, write."""
+        del user_input
+        if self._changed_elsewhere():
+            return self.async_abort(reason=ABORT_ZONE_CHANGED)
+        if (conflict := self._conflict()) is not None:
+            # Back to the section, its error shown.
+            if self._zone_edited and self._zone_pending.get(FIELD_MAIN_SOURCE):
+                self._zone_error = conflict
+                return await self.async_step_zone_parameter()
+            self._note = conflict
+            return await self._async_menu()
+        if self._save_reasons() and not self._is_defaults():
+            return await self.async_step_model_reset()
+        return await self._async_write(reset=False)
+
+    async def async_step_model_reset(self, user_input: dict[str, Any] | None = None):
+        """The one reset question of a save, with its reasons."""
+        if user_input is not None:
+            return await self._async_write(reset=bool(user_input.get(FIELD_RESET_MODEL)))
+        texts = await self._texts()
+        prefix = f"component.{DOMAIN}.{self._flow_category}.step.{self._menu_step()}.menu_options"
+        sections = {
+            REASON_HEATING_TYPE: "source_role" if self._source_entry else "settings",
+            REASON_WATER: "heating_inputs",
+            REASON_ZONE: "zone",
+            REASON_NEIGHBOURS: "dependencies",
+        }
+        reasons = set().union(*self._save_reasons().values())
+        labels = [texts.get(f"{prefix}.{sections[reason]}", reason) for reason in REASONS if reason in reasons]
         return self.async_show_form(
-            step_id="source_role",
-            data_schema=vol.Schema(
-                {
-                    key: value
-                    for key, value in build_main_options_schema(
-                        defaults, include_valve_linearization=is_valve_target
-                    ).schema.items()
-                    if getattr(key, "schema", key) in kept
-                }
-            ),
-            description_placeholders={"main": main.title if main is not None else "-"},
+            step_id="model_reset",
+            data_schema=vol.Schema({vol.Required(FIELD_RESET_MODEL, default=True): bool}),
+            description_placeholders={"reasons": ", ".join(labels)},
         )
 
-    async def async_step_valve_curve(self, user_input: dict[str, Any] | None = None):
-        """Handle the options valve curve flow."""
-        defaults = dict(DEFAULT_OPTIONS)
-        defaults.update(self._config_entry.options or self._config_entry.data)
-        data = dict(self._pending_options_data or defaults)
+    async def _async_write(self, reset: bool):
+        """Write this window's changes: the entries to create, the other entries, then this one.
+
+        The entries written by one save are marked, so that each reloads once.
+        """
+        if self._changed_elsewhere():
+            return self.async_abort(reason=ABORT_ZONE_CHANGED)
+        reasons = self._save_reasons()
+        token = uuid.uuid4().hex
+        draft = dict(self._draft)
+        own_reasons = reasons.get("", set())
+        if reset and own_reasons:
+            draft[CONF_SMART_PI_RESET_TOKEN] = token
+        if REASON_WATER in own_reasons:
+            # Kept, the data appearing from these inputs are not asked about again.
+            if reset:
+                draft.pop(CONF_SMART_PI_MODEL_KEPT_FOR_WATER, None)
+            else:
+                draft[CONF_SMART_PI_MODEL_KEPT_FOR_WATER] = self._water_inputs(draft)
+        writes = {unique_id: dict(options) for unique_id, options in self._writes.items()}
+        for unique_id, options in writes.items():
+            if reset and reasons.get(unique_id):
+                options[CONF_SMART_PI_RESET_TOKEN] = token
+        updates = {unique_id: self._entry_of(unique_id) for unique_id in writes}
+        listeners: dict[str, str] = {
+            unique_id: entry.entry_id
+            for unique_id, entry in updates.items()
+            if entry is not None and writes[unique_id] != dict(entry.options)
+        }
+        if self._entry is not None and draft != dict(self._entry.options):
+            listeners[self._target] = self._entry.entry_id
+        created = {unique_id for unique_id, entry in updates.items() if entry is None}
+        mark_save(self.hass, {*listeners, *created}, list(listeners.values()))
+        for unique_id, entry in updates.items():
+            if entry is None:
+                await self.hass.config_entries.flow.async_init(
+                    DOMAIN, context={"source": SOURCE_IMPORT}, data=writes[unique_id]
+                )
+                if self._entry_of(unique_id) is None:
+                    return self.async_abort(reason=ABORT_MAIN_ENTRY_MISSING)
+        for unique_id, entry in updates.items():
+            if entry is not None:
+                self.hass.config_entries.async_update_entry(entry, options=writes[unique_id])
+        return self._async_create(draft)
+
+    def _async_create(self, data: dict[str, Any]):
+        raise NotImplementedError
+
+
+def mark_save(hass: Any, reloading: set[str], entry_ids: list[str]) -> None:
+    """The thermostats one save writes that reload by themselves (their entry's update
+    listener, or the setup of an entry the save creates), and the entries whose update
+    listener the save calls: such a listener does not reload them again through the zone."""
+    if not entry_ids:
+        return
+    hass.data.setdefault(DOMAIN, {})[DATA_SAVE_GROUP] = {
+        "reloading": set(reloading),
+        "pending": set(entry_ids),
+        "at": time.monotonic(),
+    }
+
+
+class SmartPIConfigFlow(SmartPIFlowSections, ConfigFlow, domain=DOMAIN):
+    """Manage SmartPI plugin config entries."""
+
+    VERSION = 1
+    # 2: the settings sorted into shared and "thermostat only" (__init__.async_migrate_entry).
+    MINOR_VERSION = 2
+    _source_entry = False
+    _title: str | None = None
+
+    @property
+    def _flow_category(self) -> str:
+        return "config"
+
+    async def async_step_user(self, user_input: dict[str, Any] | None = None):
+        """Create default plugin settings on first install."""
+        if not self._async_current_entries():
+            await self.async_set_unique_id(DOMAIN)
+            self._abort_if_unique_id_configured()
+            return self.async_create_entry(
+                title="SmartPI defaults",
+                data=_shared_defaults(),
+            )
+
+        return await self.async_step_thermostat(user_input)
+
+    async def async_step_global(self, user_input: dict[str, Any] | None = None):
+        """Handle the global defaults entry."""
+        await self.async_set_unique_id(DOMAIN)
+        self._abort_if_unique_id_configured()
 
         if user_input is not None:
-            data.update(user_input)
-            errors = _validate_valve_curve_config(_schema_defaults(data))
-            if errors:
-                return self.async_show_form(
-                    step_id="valve_curve",
-                    data_schema=build_valve_curve_schema(_schema_defaults(data)),
-                    errors=errors,
-                )
-            return self.async_create_entry(title="", data=data)
+            return self.async_create_entry(title="SmartPI defaults", data=user_input)
 
         return self.async_show_form(
-            step_id="valve_curve",
-            data_schema=build_valve_curve_schema(_schema_defaults(data)),
+            step_id="global",
+            data_schema=build_options_schema(_shared_defaults()),
         )
+
+    async def async_step_thermostat(self, user_input: dict[str, Any] | None = None):
+        """Select the target thermostat; its sections follow in a menu, written at "Save and finish"."""
+        if user_input is not None:
+            entity_id = user_input.get(CONF_TARGET_VTHERM)
+            registry = er.async_get(self.hass)
+            reg_entry = registry.async_get(entity_id)
+            if reg_entry is None or reg_entry.unique_id is None:
+                return self.async_show_form(
+                    step_id="thermostat",
+                    data_schema=build_user_target_schema(),
+                    errors={CONF_TARGET_VTHERM: "invalid_entity"},
+                )
+
+            target_unique_id = reg_entry.unique_id
+            await self.async_set_unique_id(f"{DOMAIN}-{target_unique_id}")
+            self._abort_if_unique_id_configured()
+            # A new entry uses the defaults' shared settings; nothing of its own is set.
+            self._init_sections(
+                target_unique_id, None, {CONF_TARGET_VTHERM: target_unique_id, CONF_SMART_PI_USE_DEFAULTS: True}
+            )
+            self._valve_target = _is_valve_entity(self.hass, entity_id, target_unique_id)
+            state = self.hass.states.get(entity_id)
+            self._title = state.name if state is not None else entity_id
+            return await self.async_step_thermostat_menu()
+
+        return self.async_show_form(
+            step_id="thermostat",
+            data_schema=build_user_target_schema(),
+        )
+
+    def _async_create(self, data: dict[str, Any]):
+        return self.async_create_entry(title=self._title or self._target, data=data)
+
+    async def async_step_import(self, import_data: dict[str, Any]):
+        """Create the entry of a thermostat for SmartPI itself: a member of a zone with two
+        heat sources (the zone form), or a thermostat that ran with "thermostat only"
+        settings of the defaults entry (the migration, __init__.py).
+
+        The entry uses the defaults' shared settings; it holds the "thermostat only"
+        settings its caller gives (and the zone's items), nothing else.
+        """
+        target_unique_id = import_data[CONF_TARGET_VTHERM]
+        await self.async_set_unique_id(f"{DOMAIN}-{target_unique_id}")
+        self._abort_if_unique_id_configured()
+        data: dict[str, Any] = {CONF_TARGET_VTHERM: target_unique_id, CONF_SMART_PI_USE_DEFAULTS: True}
+        data.update({key: value for key, value in import_data.items() if key in IMPORT_KEYS})
+        registry = er.async_get(self.hass)
+        entity_id = registry.async_get_entity_id(CLIMATE_DOMAIN, VT_DOMAIN, target_unique_id)
+        state = self.hass.states.get(entity_id) if entity_id else None
+        return self.async_create_entry(
+            title=state.name if state is not None else (entity_id or target_unique_id), data=data
+        )
+
+    @staticmethod
+    def async_get_options_flow(config_entry):
+        """Return the options flow handler."""
+        return SmartPIOptionsFlow(config_entry)
+
+
+class SmartPIOptionsFlow(SmartPIFlowSections, OptionsFlow):
+    """The options of a SmartPI entry: a menu of sections, written at "Save and finish"."""
+
+    def __init__(self, config_entry) -> None:
+        """Store the config entry being edited; the draft starts from its settings."""
+        self._config_entry = config_entry
+        self._source_entry = False
+        self._init_sections(config_entry.data.get(CONF_TARGET_VTHERM), config_entry, entry_options(config_entry))
+
+    async def async_step_init(self, user_input: dict[str, Any] | None = None):
+        """Open the options: the defaults' menu, a thermostat's menu, or an additional source's.
+
+        A thermostat that works as the additional source of a zone shows where
+        the zone is configured and only the settings it still uses.
+        """
+        del user_input
+        if self._is_defaults():
+            return await self._async_show_menu("init")
+        self._source_entry = self._is_additional_source()
+        return await self._async_menu()
+
+    def _async_create(self, data: dict[str, Any]):
+        return self.async_create_entry(title="", data=data)

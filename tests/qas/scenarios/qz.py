@@ -25,6 +25,10 @@ TEXT_KEYS = (
     "component.vtherm_smartpi.options.step.thermostat_menu.menu_options.settings",
     "component.vtherm_smartpi.options.step.thermostat_menu.menu_options.zone",
     "component.vtherm_smartpi.options.step.thermostat_menu.menu_options.dependencies",
+    "component.vtherm_smartpi.options.step.thermostat_menu.menu_options.save",
+    "component.vtherm_smartpi.options.step.thermostat_menu.description",
+    "component.vtherm_smartpi.options.step.settings.data.smart_pi_use_defaults",
+    "component.vtherm_smartpi.options.step.model_reset.description",
     "component.vtherm_smartpi.options.step.neighbour_details.data.mode",
     "component.vtherm_smartpi.options.step.zone_master.title",
 )

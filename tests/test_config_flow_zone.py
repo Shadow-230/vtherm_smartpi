@@ -5,6 +5,7 @@ from __future__ import annotations
 from unittest.mock import patch
 
 import pytest
+from flow_helpers import save
 from homeassistant.data_entry_flow import FlowResultType
 from homeassistant.helpers import entity_registry as er
 from pytest_homeassistant_custom_component.common import MockConfigEntry
@@ -19,6 +20,7 @@ from custom_components.vtherm_smartpi.const import (
     DOMAIN,
     PROP_FUNCTION_SMART_PI,
 )
+from custom_components.vtherm_smartpi.smartpi.dependencies import parse_dependencies
 
 VT_DOMAIN = "versatile_thermostat"
 SENSOR = "sensor.living_temperature"
@@ -36,7 +38,7 @@ async def _open_source_role(hass, entry):
     result = await hass.config_entries.options.async_init(entry.entry_id)
     if result["type"] == FlowResultType.MENU:
         assert result["step_id"] == "source_menu"
-        assert result["menu_options"] == ["source_role", "heating_inputs"]
+        assert result["menu_options"] == ["source_role", "heating_inputs", "save"]
         result = await hass.config_entries.options.async_configure(result["flow_id"], {"next_step_id": "source_role"})
     return result
 
@@ -141,8 +143,8 @@ async def test_a_zone_is_set_up_from_its_master_with_the_recommended_split(hass)
     assert "margin" in result["description_placeholders"]["hint"]
 
     result = await _configure(hass, result, {"lead_band_percent": 25})
-    assert result["step_id"] == "zone_reset"
-    result = await _configure(hass, result, {"reset_model": True})
+    assert result["step_id"] == "thermostat_menu"
+    result = await save(hass, result, reset=True)
     await hass.async_block_till_done()
 
     assert result["type"] == FlowResultType.CREATE_ENTRY
@@ -155,19 +157,30 @@ async def test_a_zone_is_set_up_from_its_master_with_the_recommended_split(hass)
 
 
 async def test_the_other_source_gets_its_entry_and_shows_its_role(hass) -> None:
-    """A floor without a SmartPI entry gets one; its options then show the zone and only its own settings."""
+    """A floor without a SmartPI entry: the zone asks for its heating type; at save it gets an entry
+    with it; its options then show the zone and only its own settings."""
     radiator, floor, master, entry, _ = _zone(hass, floor_entry=False)
 
     result = await _open_zone(hass, entry)
     result = await _configure(hass, result, {"master": master.entity_id})
+    assert result["step_id"] == "zone_heating_types"
+    assert _fields(result) == {"source_2_heating_type"}
+    result = await _configure(hass, result, {"source_2_heating_type": "floor_water"})
+    assert result["step_id"] == "zone_sources"
+    assert result["description_placeholders"]["source_2_type"] == "floor_water"
     result = await _configure(
         hass, result, {"main_source": radiator.entity_id, "split_rule": "together", "custom_response": False}
     )
     result = await _configure(hass, result, {"split_ratio": 100})
-    result = await _configure(hass, result, {"reset_model": False})
+    # Nothing is created before saving.
+    assert [e.data.get(CONF_TARGET_VTHERM) for e in hass.config_entries.async_entries(DOMAIN)] == ["vt-radiator"]
+    result = await save(hass, result, reset=False)
     await hass.async_block_till_done()
 
     floor_entry = next(e for e in hass.config_entries.async_entries(DOMAIN) if e.data.get(CONF_TARGET_VTHERM) == "vt-floor")
+    assert floor_entry.data[CONF_SMART_PI_HEATING_TYPE] == "floor_water"
+    assert floor_entry.data["smart_pi_use_defaults"] is True
+    assert _source_item(entry)["source_emitter"] == "floor_water"
     assert CONF_SMART_PI_RESET_TOKEN not in entry.options
     result = await _open_source_role(hass, floor_entry)
     assert result["step_id"] == "source_role"
@@ -200,8 +213,8 @@ async def test_choosing_the_other_thermostat_as_main_moves_the_zone_with_its_nei
     )
     assert "responds more slowly" in result["description_placeholders"]["hint"]
     result = await _configure(hass, result, {"source_alone_percent": 50})
-    assert result["step_id"] == "zone_reset"
-    result = await _configure(hass, result, {"reset_model": True})
+    assert result["step_id"] == "thermostat_menu"
+    result = await save(hass, result, reset=True)
     await hass.async_block_till_done()
 
     assert entry.options[CONF_SMART_PI_DEPENDENCIES] == []
@@ -224,7 +237,7 @@ async def test_changing_only_the_rule_keeps_the_learned_model(hass) -> None:
         hass, result, {"main_source": radiator.entity_id, "split_rule": "lead_band", "custom_response": False}
     )
     result = await _configure(hass, result, {"lead_band_percent": 20})
-    result = await _configure(hass, result, {"reset_model": False})
+    result = await save(hass, result, reset=False)
     item_id = _source_item(entry)["id"]
 
     result = await _open_zone(hass, entry)
@@ -238,6 +251,8 @@ async def test_changing_only_the_rule_keeps_the_learned_model(hass) -> None:
     )
     assert _default(result, "lead_band_percent") == 20
     result = await _configure(hass, result, {"lead_band_percent": 30})
+    # Only the rule's parameter changed: nothing learned changes, no question.
+    result = await save(hass, result)
 
     assert result["type"] == FlowResultType.CREATE_ENTRY
     item = _source_item(entry)
@@ -256,7 +271,7 @@ async def test_a_custom_response_is_set_for_the_additional_source_only(hass) -> 
     assert not {"lead_lag_min", "lead_tau_min"} & _fields(result)
     assert (_default(result, "source_lag_min"), _default(result, "source_tau_min")) == (30, 180)
     result = await _configure(hass, result, {"lead_band_percent": 20, "source_lag_min": 45, "source_tau_min": 240})
-    result = await _configure(hass, result, {"reset_model": True})
+    result = await save(hass, result, reset=True)
 
     item = _source_item(entry)
     assert (item["source_emitter"], item["source_lag_min"], item["source_tau_min"]) == ("custom", 45, 240)
@@ -288,6 +303,7 @@ async def test_an_older_custom_main_response_does_not_offer_a_reset_when_only_th
         hass, result, {"main_source": radiator.entity_id, "split_rule": "lead_band", "custom_response": False}
     )
     result = await _configure(hass, result, {"lead_band_percent": 30})
+    result = await save(hass, result)
 
     assert result["type"] == FlowResultType.CREATE_ENTRY
     item = _source_item(entry)
@@ -303,7 +319,7 @@ async def test_a_custom_response_equal_to_the_heating_type_s_does_not_offer_a_re
         hass, result, {"main_source": radiator.entity_id, "split_rule": "lead_band", "custom_response": False}
     )
     result = await _configure(hass, result, {"lead_band_percent": 20})
-    result = await _configure(hass, result, {"reset_model": False})
+    result = await save(hass, result, reset=False)
 
     result = await _open_zone(hass, entry)
     result = await _configure(hass, result, {"next_step_id": "zone_master"})
@@ -312,6 +328,7 @@ async def test_a_custom_response_equal_to_the_heating_type_s_does_not_offer_a_re
         hass, result, {"main_source": radiator.entity_id, "split_rule": "lead_band", "custom_response": True}
     )
     result = await _configure(hass, result, {"lead_band_percent": 20, "source_lag_min": 30, "source_tau_min": 180})
+    result = await save(hass, result)
     assert result["type"] == FlowResultType.CREATE_ENTRY
 
     result = await _open_zone(hass, entry)
@@ -322,7 +339,9 @@ async def test_a_custom_response_equal_to_the_heating_type_s_does_not_offer_a_re
         hass, result, {"main_source": radiator.entity_id, "split_rule": "lead_band", "custom_response": True}
     )
     result = await _configure(hass, result, {"lead_band_percent": 20, "source_lag_min": 45, "source_tau_min": 180})
-    assert result["step_id"] == "zone_reset"
+    assert result["step_id"] == "thermostat_menu"
+    result = await save(hass, result, reset=True)
+    assert result["type"] == FlowResultType.CREATE_ENTRY
 
 
 async def test_removing_the_zone_lets_both_regulate_alone(hass) -> None:
@@ -333,24 +352,29 @@ async def test_removing_the_zone_lets_both_regulate_alone(hass) -> None:
         hass, result, {"main_source": radiator.entity_id, "split_rule": "together", "custom_response": False}
     )
     result = await _configure(hass, result, {"split_ratio": 100})
-    result = await _configure(hass, result, {"reset_model": False})
+    result = await save(hass, result, reset=False)
 
     result = await _open_zone(hass, entry)
     result = await _configure(hass, result, {"next_step_id": "zone_remove"})
-    assert result["step_id"] == "zone_reset"
-    result = await _configure(hass, result, {"reset_model": True})
+    assert result["step_id"] == "thermostat_menu"
+    result = await save(hass, result, reset=True)
 
     assert _source_item(entry) is None
     result = await hass.config_entries.options.async_init(floor_entry.entry_id)
     assert result["type"] == FlowResultType.MENU
 
 
-async def test_without_a_master_the_form_explains_what_to_create(hass) -> None:
+async def test_without_a_master_the_menu_explains_what_to_create(hass) -> None:
     _vtherm(hass, "vt-radiator", "radiator")
     entry = _smartpi_entry(hass, "vt-radiator")
     result = await _open_zone(hass, entry)
-    assert result["type"] == FlowResultType.ABORT
-    assert result["reason"] == "no_master"
+    assert result["type"] == FlowResultType.MENU
+    assert result["step_id"] == "thermostat_menu"
+    assert result["description_placeholders"]["note"].startswith("No Versatile Thermostat over climate")
+    # The note is shown once.
+    result = await _configure(hass, result, {"next_step_id": "dependencies"})
+    result = await _configure(hass, result, {"next_step_id": "thermostat_menu"})
+    assert result["description_placeholders"]["note"] == ""
 
 
 @pytest.mark.parametrize(
@@ -413,7 +437,7 @@ async def test_the_zone_s_source_is_not_listed_with_the_neighbours(hass) -> None
     )
     result = await hass.config_entries.options.async_init(entry.entry_id)
     result = await _configure(hass, result, {"next_step_id": "dependencies"})
-    assert result["menu_options"] == ["neighbour_add"]
+    assert result["menu_options"] == ["neighbour_add", "thermostat_menu"]
     assert result["description_placeholders"]["count"] == "0"
 
 
@@ -436,14 +460,14 @@ async def test_moving_the_main_drops_a_neighbour_that_is_now_the_zone_itself(has
         hass, result, {"main_source": floor.entity_id, "split_rule": "together", "custom_response": False}
     )
     result = await _configure(hass, result, {"split_ratio": 100})
-    result = await _configure(hass, result, {"reset_model": False})
+    result = await save(hass, result, reset=False)
 
     assert result["type"] == FlowResultType.CREATE_ENTRY
     assert [item["kind"] for item in floor_entry.options[CONF_SMART_PI_DEPENDENCIES]] == ["source"]
 
 
 async def test_a_zone_changed_by_another_form_is_not_overwritten(hass) -> None:
-    """Two forms open at once: the second save finds the zone changed and stops."""
+    """Two windows open at once: the second save finds the zone changed and writes nothing."""
     radiator, floor, master, entry, floor_entry = _zone(hass)
     first = await _open_zone(hass, entry)
     first = await _configure(hass, first, {"master": master.entity_id})
@@ -451,7 +475,7 @@ async def test_a_zone_changed_by_another_form_is_not_overwritten(hass) -> None:
         hass, first, {"main_source": radiator.entity_id, "split_rule": "together", "custom_response": False}
     )
     first = await _configure(hass, first, {"split_ratio": 100})
-    assert first["step_id"] == "zone_reset"
+    assert first["step_id"] == "thermostat_menu"
 
     second = await _open_zone(hass, floor_entry)
     second = await _configure(hass, second, {"master": master.entity_id})
@@ -459,10 +483,10 @@ async def test_a_zone_changed_by_another_form_is_not_overwritten(hass) -> None:
         hass, second, {"main_source": floor.entity_id, "split_rule": "together", "custom_response": False}
     )
     second = await _configure(hass, second, {"split_ratio": 100})
-    second = await _configure(hass, second, {"reset_model": False})
+    second = await save(hass, second, reset=False)
     assert second["type"] == FlowResultType.CREATE_ENTRY
 
-    first = await _configure(hass, first, {"reset_model": False})
+    first = await _configure(hass, first, {"next_step_id": "save"})
     assert first["type"] == FlowResultType.ABORT
     assert first["reason"] == "zone_changed"
     assert _source_item(entry) is None
@@ -477,7 +501,7 @@ async def test_a_new_heating_type_alone_does_not_offer_a_reset_when_only_the_rul
         hass, result, {"main_source": radiator.entity_id, "split_rule": "lead_band", "custom_response": False}
     )
     result = await _configure(hass, result, {"lead_band_percent": 20})
-    result = await _configure(hass, result, {"reset_model": False})
+    result = await save(hass, result, reset=False)
     hass.config_entries.async_update_entry(
         floor_entry, options={**floor_entry.options, CONF_SMART_PI_HEATING_TYPE: "floor_electric"}
     )
@@ -489,6 +513,7 @@ async def test_a_new_heating_type_alone_does_not_offer_a_reset_when_only_the_rul
         hass, result, {"main_source": radiator.entity_id, "split_rule": "lead_band", "custom_response": False}
     )
     result = await _configure(hass, result, {"lead_band_percent": 30})
+    result = await save(hass, result)
     assert result["type"] == FlowResultType.CREATE_ENTRY
     assert _source_item(entry)["source_emitter"] == "floor_electric"
 
@@ -502,7 +527,7 @@ async def test_the_zone_s_source_or_master_cannot_be_its_neighbour(hass, which) 
         hass, result, {"main_source": radiator.entity_id, "split_rule": "together", "custom_response": False}
     )
     result = await _configure(hass, result, {"split_ratio": 100})
-    await _configure(hass, result, {"reset_model": False})
+    await save(hass, result, reset=False)
 
     result = await hass.config_entries.options.async_init(entry.entry_id)
     result = await _configure(hass, result, {"next_step_id": "dependencies"})
@@ -545,12 +570,12 @@ async def test_removing_the_zone_offers_and_stores_the_reset(hass) -> None:
         hass, result, {"main_source": radiator.entity_id, "split_rule": "together", "custom_response": False}
     )
     result = await _configure(hass, result, {"split_ratio": 100})
-    await _configure(hass, result, {"reset_model": False})
+    await save(hass, result, reset=False)
     assert CONF_SMART_PI_RESET_TOKEN not in entry.options
 
     result = await _open_zone(hass, entry)
     result = await _configure(hass, result, {"next_step_id": "zone_remove"})
-    result = await _configure(hass, result, {"reset_model": True})
+    result = await save(hass, result, reset=True)
     assert entry.options[CONF_SMART_PI_RESET_TOKEN]
 
 
@@ -576,3 +601,173 @@ async def test_a_valve_source_keeps_its_valve_curve(hass) -> None:
          "smart_pi_enable_valve_linearization": True},
     )
     assert result["step_id"] == "valve_curve"
+
+
+async def test_neighbours_that_cannot_be_merged_are_refused_on_the_parameter_step(hass) -> None:
+    """Moving the zone merges the two entries' neighbours: the same item id twice is refused there."""
+    _radiator, floor, master, entry, floor_entry = _zone(hass)
+    hall = _vtherm(hass, "vt-hall", "hall")
+    kitchen = _vtherm(hass, "vt-kitchen", "kitchen")
+    for each, neighbour in ((entry, hall), (floor_entry, kitchen)):
+        hass.config_entries.async_update_entry(
+            each,
+            options={
+                **each.options,
+                CONF_SMART_PI_DEPENDENCIES: [
+                    {"id": "n1", "kind": "neighbour", "entity": neighbour.id, "mode": "always", "door_sensors": [],
+                     "neighbour_window_action": "nothing"}
+                ],
+            },
+        )
+    result = await _open_zone(hass, entry)
+    result = await _configure(hass, result, {"master": master.entity_id})
+    result = await _configure(hass, result, {"main_source": floor.entity_id, "split_rule": "together", "custom_response": False})
+    result = await _configure(hass, result, {"split_ratio": 100})
+
+    assert result["type"] == FlowResultType.FORM
+    assert result["step_id"] == "zone_parameter"
+    assert result["errors"] == {"base": "zone_move_conflict"}
+
+
+async def test_a_zone_is_set_up_while_creating_an_entry(hass) -> None:
+    """A new entry for the radiator: the zone section asks for its heating type (not set yet), and
+    everything is written at save: the new entry with the zone, nothing else."""
+    from homeassistant.config_entries import SOURCE_USER
+
+    radiator = _vtherm(hass, "vt-radiator", "radiator")
+    floor = _vtherm(hass, "vt-floor", "floor")
+    master = _master(hass, [radiator.entity_id, floor.entity_id])
+    floor_entry = _smartpi_entry(hass, "vt-floor", "floor_water", title="Floor SmartPI")
+    MockConfigEntry(domain=DOMAIN, title="SmartPI defaults", unique_id=DOMAIN, data={}, minor_version=2).add_to_hass(hass)
+    # Already migrated: the new entry's setup would migrate it otherwise.
+    hass.config_entries.async_update_entry(floor_entry, minor_version=2)
+    stored_floor = dict(floor_entry.options)
+
+    result = await hass.config_entries.flow.async_init(DOMAIN, context={"source": SOURCE_USER})
+    result = await hass.config_entries.flow.async_configure(result["flow_id"], {CONF_TARGET_VTHERM: radiator.entity_id})
+    result = await hass.config_entries.flow.async_configure(result["flow_id"], {"next_step_id": "zone"})
+    result = await hass.config_entries.flow.async_configure(result["flow_id"], {"master": master.entity_id})
+    assert result["step_id"] == "zone_heating_types"
+    assert _fields(result) == {"source_1_heating_type"}
+    result = await hass.config_entries.flow.async_configure(result["flow_id"], {"source_1_heating_type": "radiator"})
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], {"main_source": radiator.entity_id, "split_rule": "lead_band", "custom_response": False}
+    )
+    result = await hass.config_entries.flow.async_configure(result["flow_id"], {"lead_band_percent": 20})
+    assert result["type"] == FlowResultType.MENU
+    # The heating type set by the zone shows "Water and boiler".
+    assert "heating_inputs" in result["menu_options"]
+    result = await save(hass, result, reset=False)
+
+    assert result["type"] == FlowResultType.CREATE_ENTRY
+    data = result["data"]
+    assert data[CONF_SMART_PI_HEATING_TYPE] == "radiator"
+    (item,) = data[CONF_SMART_PI_DEPENDENCIES]
+    assert (item["kind"], item["entity"], item["zone_master"]) == ("source", floor.id, master.id)
+    assert CONF_SMART_PI_RESET_TOKEN not in data
+    assert dict(floor_entry.options) == stored_floor
+
+
+async def test_a_zone_saved_again_unchanged_is_no_unsaved_change(hass) -> None:
+    """The same zone again: the menu shows no change, the other member's entry is not written."""
+    radiator, _floor, master, entry, floor_entry = _zone(hass)
+    for _ in range(2):
+        result = await _open_zone(hass, entry)
+        if result["type"] == FlowResultType.MENU:
+            result = await _configure(hass, result, {"next_step_id": "zone_master"})
+        result = await _configure(hass, result, {"master": master.entity_id})
+        result = await _configure(
+            hass, result, {"main_source": radiator.entity_id, "split_rule": "lead_band", "custom_response": False}
+        )
+        result = await _configure(hass, result, {"lead_band_percent": 20})
+        if _source_item(entry) is None:
+            result = await save(hass, result, reset=False)
+    floor_options = dict(floor_entry.options)
+
+    assert result["description_placeholders"]["changes"] == "—"
+    result = await save(hass, result)
+    assert result["type"] == FlowResultType.CREATE_ENTRY
+    assert dict(floor_entry.options) == floor_options
+
+
+def _neighbour_item(item_id: str, entity: er.RegistryEntry) -> dict:
+    return {"id": item_id, "kind": "neighbour", "entity": entity.id, "mode": "always", "door_sensors": [],
+            "neighbour_window_action": "nothing"}
+
+
+async def _move_zone_to_the_floor(hass, entry, master, floor):
+    result = await _open_zone(hass, entry)
+    result = await _configure(hass, result, {"master": master.entity_id})
+    result = await _configure(
+        hass, result, {"main_source": floor.entity_id, "split_rule": "source_first", "custom_response": False}
+    )
+    result = await _configure(hass, result, {"source_alone_percent": 50})
+    assert result["step_id"] == "thermostat_menu"
+    return result
+
+
+async def _bring_the_zone_back(hass, result, master, radiator):
+    result = await _configure(hass, result, {"next_step_id": "zone"})
+    if result["type"] == FlowResultType.MENU:
+        result = await _configure(hass, result, {"next_step_id": "zone_master"})
+    result = await _configure(hass, result, {"master": master.entity_id})
+    result = await _configure(
+        hass, result, {"main_source": radiator.entity_id, "split_rule": "lead_band", "custom_response": False}
+    )
+    return await _configure(hass, result, {"lead_band_percent": 20})
+
+
+@pytest.mark.parametrize("floor_neighbour", [False, True], ids=["floor_alone", "floor_with_a_neighbour"])
+async def test_a_zone_moved_and_brought_back_in_one_window_stays_in_this_entry(hass, floor_neighbour) -> None:
+    """Moved to the floor, then back to the radiator before saving: only the radiator's entry
+    holds the zone, its neighbour comes back, the floor's entry is left as it was."""
+    radiator, floor, master, entry, floor_entry = _zone(hass)
+    hall = _vtherm(hass, "vt-hall", "hall")
+    hass.config_entries.async_update_entry(
+        entry, options={**entry.options, CONF_SMART_PI_DEPENDENCIES: [_neighbour_item("n1", hall)]}
+    )
+    if floor_neighbour:
+        den = _vtherm(hass, "vt-den", "den")
+        hass.config_entries.async_update_entry(
+            floor_entry, options={**floor_entry.options, CONF_SMART_PI_DEPENDENCIES: [_neighbour_item("f1", den)]}
+        )
+    stored_floor = dict(floor_entry.options)
+
+    result = await _move_zone_to_the_floor(hass, entry, master, floor)
+    result = await _bring_the_zone_back(hass, result, master, radiator)
+    result = await save(hass, result, reset=True)
+    await hass.async_block_till_done()
+
+    assert result["type"] == FlowResultType.CREATE_ENTRY
+    items = entry.options[CONF_SMART_PI_DEPENDENCIES]
+    assert [item["kind"] for item in items] == ["neighbour", "source"]
+    assert items[1]["entity"] == floor.id
+    assert dict(floor_entry.options) == stored_floor
+
+
+async def test_a_zone_that_cannot_come_back_leaves_the_move_as_it_was(hass) -> None:
+    """Moved to the floor with the hall as neighbour, the hall added again here, then the zone
+    brought back: the hall would be here twice, so the form says so and the window keeps the
+    zone with the floor, nothing stored yet."""
+    radiator, floor, master, entry, floor_entry = _zone(hass)
+    hall = _vtherm(hass, "vt-hall", "hall")
+    hass.config_entries.async_update_entry(
+        entry, options={**entry.options, CONF_SMART_PI_DEPENDENCIES: [_neighbour_item("n1", hall)]}
+    )
+    stored_floor = dict(floor_entry.options)
+    result = await _move_zone_to_the_floor(hass, entry, master, floor)
+    result = await _configure(hass, result, {"next_step_id": "dependencies"})
+    result = await _configure(hass, result, {"next_step_id": "neighbour_add"})
+    result = await _configure(hass, result, {"entity": hall.entity_id})
+    result = await _configure(hass, result, {"mode": "always", "door_sensors": [], "neighbour_window_action": "nothing"})
+    if result["step_id"] == "dependencies":
+        result = await _configure(hass, result, {"next_step_id": "thermostat_menu"})
+
+    result = await _bring_the_zone_back(hass, result, master, radiator)
+
+    assert result["errors"] == {"base": "zone_move_conflict"}
+    flow = hass.config_entries.options._progress[result["flow_id"]]
+    assert [(item.kind, item.entity) for item in flow._dependency_items()] == [("neighbour", hall.id)]
+    moved = parse_dependencies(flow._writes[floor.unique_id][CONF_SMART_PI_DEPENDENCIES])
+    assert sorted(item.kind for item in moved) == ["neighbour", "source"]
+    assert dict(floor_entry.options) == stored_floor

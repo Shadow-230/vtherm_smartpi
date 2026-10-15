@@ -499,6 +499,21 @@ Moduł obsługi odczytuje wejścia z instalacji grzewczej przez plik wtyczki `he
 dane o wodzie i wezwanie kotła ze źródła wybranego w opcjach termostatu (encje, dostawca albo
 kocioł centralny Versatile Thermostat).
 
+Moduł obsługi odczytuje ustawienia termostatu klucz po kluczu, przez plik wtyczki `settings.py`,
+gdy algorytm startuje. Najpierw wpis Versatile Thermostat, bez ustawień należących do jednego
+termostatu (czasy TPI z Versatile Thermostat nie są używane). Potem ustawienia wspólne
+(`SHARED_SETTINGS` w `const.py`: strefa nieczułości, histereza, współczynnik tau zwolnienia, filtr
+nastawy, FF3, osłabione P, pełna diagnostyka) z wpisu „SmartPI defaults” albo z własnego wpisu
+termostatu, gdy jego przełącznik „Use the SmartPI defaults” jest wyłączony. Potem własny wpis
+termostatu: jego ustawienia „tylko ten termostat” (`THERMOSTAT_SETTINGS`: rodzaj ogrzewania,
+minimalne czasy załączenia i wyłączenia, restart cyklu PWM, krzywa zaworu), jego sąsiedzi, strefa
+i źródło danych o wodzie. Nieustawione ustawienie „tylko ten termostat” nie jest używane. Wartości
+startowe z kodu (`DEFAULT_OPTIONS`) służą tylko do wypełnienia formularzy; ustawienie wspólne,
+którego brakuje we wpisie zmienionym ręcznie, dostaje wartość z formularza i jest raz zapisane w
+dzienniku jako błąd konfiguracji. Zapisane opcje zastępują w całości pierwsze dane wpisu, więc
+ustawienie usunięte w opcjach zostaje usunięte. Zapis wpisu wartości domyślnych przeładowuje każdy
+termostat, który z nich korzysta.
+
 ### 5.2 Moduły `smartpi/` faktycznie używane
 
 | Moduł                  | Główna rola                                                 |

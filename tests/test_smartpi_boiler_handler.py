@@ -41,7 +41,10 @@ def no_registry(monkeypatch):
 
 
 def _handler(runtime, heating_type="radiator"):
-    runtime.entry_infos[CONF_SMART_PI_HEATING_TYPE] = heating_type
+    if heating_type is None:
+        runtime.smartpi_options.pop(CONF_SMART_PI_HEATING_TYPE, None)
+    else:
+        runtime.smartpi_options[CONF_SMART_PI_HEATING_TYPE] = heating_type
     handler = SmartPIHandler(runtime)
     handler.init_algorithm()
     handler._async_save = AsyncMock()
@@ -51,7 +54,7 @@ def _handler(runtime, heating_type="radiator"):
 def _provider_call(runtime, fields) -> _Provider:
     provider = _Provider({runtime.entity_id: fields})
     runtime.hass.data.setdefault(PROVIDERS_KEY, {})["test"] = provider
-    runtime.entry_infos[CONF_SMART_PI_BOILER_CALL_SOURCE] = PROVIDER
+    runtime.smartpi_options[CONF_SMART_PI_BOILER_CALL_SOURCE] = PROVIDER
     return provider
 
 
@@ -93,13 +96,13 @@ def test_a_provider_s_call_not_given_is_not_known_even_with_vt_s_boiler(fake_han
     """No fallback: the source is chosen explicitly."""
     _provider_call(fake_handler_runtime, fields)
     _vt_boiler(monkeypatch, fake_handler_runtime, "off")
-    fake_handler_runtime.entry_infos[CONF_SMART_PI_BOILER_CALL_SOURCE] = PROVIDER
+    fake_handler_runtime.smartpi_options[CONF_SMART_PI_BOILER_CALL_SOURCE] = PROVIDER
     assert _handler(fake_handler_runtime)._read_boiler()[0] is None
 
 
 def test_the_call_from_entities(fake_handler_runtime):
     fake_handler_runtime.hass.states = _States({CALLED: "off", REASON: "activation_delay", FAULT: "off"})
-    fake_handler_runtime.entry_infos.update(
+    fake_handler_runtime.smartpi_options.update(
         {
             CONF_SMART_PI_BOILER_CALL_SOURCE: "entities",
             CONF_SMART_PI_BOILER_SIGNALS: "own",
@@ -118,7 +121,7 @@ def test_the_call_from_the_defaults_signals(fake_handler_runtime):
     fake_handler_runtime.hass.config_entries._entries.append(
         SimpleNamespace(unique_id=DOMAIN, data={CONF_SMART_PI_BOILER_CALLED_ENTITY: "binary_sensor.shared_call"}, options={})
     )
-    fake_handler_runtime.entry_infos[CONF_SMART_PI_BOILER_CALL_SOURCE] = "entities"
+    fake_handler_runtime.smartpi_options[CONF_SMART_PI_BOILER_CALL_SOURCE] = "entities"
     assert _handler(fake_handler_runtime)._read_boiler()[0] == BoilerReading(True, None, "entities")
 
 
@@ -134,7 +137,7 @@ def test_an_entry_without_a_choice_reads_vt_s_central_boiler_where_it_serves_the
 
 
 def test_vt_s_central_boiler_counts_only_for_a_thermostat_it_serves(fake_handler_runtime, monkeypatch):
-    fake_handler_runtime.entry_infos[CONF_SMART_PI_BOILER_CALL_SOURCE] = "vtherm_central_boiler"
+    fake_handler_runtime.smartpi_options[CONF_SMART_PI_BOILER_CALL_SOURCE] = "vtherm_central_boiler"
     _vt_boiler(monkeypatch, fake_handler_runtime, "off", used=False)
     reading, inputs = _handler(fake_handler_runtime)._read_boiler()
     assert reading is None
@@ -149,7 +152,7 @@ def test_vt_s_central_boiler_counts_only_for_a_thermostat_it_serves(fake_handler
 
 def test_no_call_source_reads_nothing(fake_handler_runtime, monkeypatch):
     _vt_boiler(monkeypatch, fake_handler_runtime, "off")
-    fake_handler_runtime.entry_infos[CONF_SMART_PI_BOILER_CALL_SOURCE] = "none"
+    fake_handler_runtime.smartpi_options[CONF_SMART_PI_BOILER_CALL_SOURCE] = "none"
     assert _handler(fake_handler_runtime)._read_boiler() == (None, None)
 
 
@@ -166,7 +169,7 @@ async def test_control_hands_the_call_to_the_algorithm(fake_handler_runtime, mon
 
 async def test_a_chosen_source_without_data_still_shows_in_the_diagnostics(fake_handler_runtime, no_registry):
     fake_handler_runtime.hass.states = _States({})
-    fake_handler_runtime.entry_infos.update(
+    fake_handler_runtime.smartpi_options.update(
         {CONF_SMART_PI_BOILER_CALL_SOURCE: "entities", CONF_SMART_PI_BOILER_SIGNALS: "own", CONF_SMART_PI_BOILER_CALLED_ENTITY: CALLED}
     )
     handler = _handler(fake_handler_runtime)
@@ -177,9 +180,13 @@ async def test_a_chosen_source_without_data_still_shows_in_the_diagnostics(fake_
     assert block["inputs"]["called"] == {"source": "entity", "entity": CALLED, "data": False}
 
 
-async def test_an_electric_heating_type_does_not_read_the_boiler(fake_handler_runtime, monkeypatch, no_registry):
+@pytest.mark.parametrize("heating_type", ["electric_fast", None])
+async def test_an_electric_or_no_heating_type_does_not_read_the_boiler(
+    fake_handler_runtime, monkeypatch, no_registry, heating_type
+):
+    """Not set is not used: no boiler's call, as in the release."""
     _vt_boiler(monkeypatch, fake_handler_runtime, "off")
-    handler = _handler(fake_handler_runtime, heating_type="electric_fast")
+    handler = _handler(fake_handler_runtime, heating_type=heating_type)
     await _control(handler)
     assert fake_handler_runtime.prop_algorithm.boiler.reading is None
     assert fake_handler_runtime.prop_algorithm.boiler_diagnostics() is None

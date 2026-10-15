@@ -16,7 +16,10 @@ What the in-process tests do with patches, for scenarios on a real Home Assistan
   of its ``circuits`` (climate entity → simulated heater): ``set_provider`` registers or
   unregisters it, forces a reason for its supply water or for a boiler not called, and
   ``provider_status`` tells how often SmartPI asked it, by thermostat, and which providers are
-  registered.
+  registered;
+- ``entry_setups``: how many times a SmartPI entry was set up (loaded) since the start, from Home
+  Assistant's config entry changes — for QA7, which checks that a save reloads the entry once and
+  a closed window not at all.
 
 Set up from YAML (``smartpi_qas_helpers:``, with ``provider: {name, circuits}`` for the provider).
 Each other service names the VTherm climate entity.
@@ -30,7 +33,9 @@ import pathlib
 from typing import Any
 
 import voluptuous as vol
+from homeassistant.config_entries import SIGNAL_CONFIG_ENTRY_CHANGED, ConfigEntryChange, ConfigEntryState
 from homeassistant.core import Event, HomeAssistant, ServiceCall, ServiceResponse, SupportsResponse, callback
+from homeassistant.helpers.dispatcher import async_dispatcher_connect
 from homeassistant.exceptions import ServiceValidationError
 from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers.typing import ConfigType
@@ -289,6 +294,32 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     )
     hass.services.async_register(
         DOMAIN, "provider_status", provider_status, vol.Schema({}), supports_response=SupportsResponse.ONLY
+    )
+    setups: dict[str, int] = {}
+    loaded: set[str] = set()
+
+    @callback
+    def _entry_changed(change: ConfigEntryChange, config_entry: Any) -> None:
+        if config_entry.domain != SMARTPI or change is not ConfigEntryChange.UPDATED:
+            return
+        if config_entry.state is ConfigEntryState.LOADED:
+            if config_entry.entry_id not in loaded:
+                loaded.add(config_entry.entry_id)
+                setups[config_entry.entry_id] = setups.get(config_entry.entry_id, 0) + 1
+        else:
+            loaded.discard(config_entry.entry_id)
+
+    async_dispatcher_connect(hass, SIGNAL_CONFIG_ENTRY_CHANGED, _entry_changed)
+
+    async def entry_setups(call: ServiceCall) -> ServiceResponse:
+        return {"count": setups.get(call.data["entry_id"], 0)}
+
+    hass.services.async_register(
+        DOMAIN,
+        "entry_setups",
+        entry_setups,
+        vol.Schema({vol.Required("entry_id"): cv.string}),
+        supports_response=SupportsResponse.ONLY,
     )
     hass.services.async_register(
         DOMAIN,

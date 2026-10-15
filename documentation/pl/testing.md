@@ -5,8 +5,12 @@ z którego korzysta większość z nich, każdy scenariusz symulacji i to, co mu
 testy, pogrupowane według funkcji, oraz testy QAS w prawdziwym Home Assistant. Same funkcje
 opisują dokumenty [Dokumentacja techniczna](technical_doc.md),
 [Zależności stref i drugie źródło ciepła](zone_dependencies.md) oraz
-[Wejścia wody i kotła](water_input.md). Własne testy autora pozostają bez zmian i są uruchamiane razem
-z tymi.
+[Wejścia wody i kotła](water_input.md). Własne testy autora są uruchamiane razem z tymi. Dwa z nich
+podążają za działaniem, które fork zmienia: `test_config_flow.py` (formularze) i
+`test_smartpi_valve_runtime_sync.py`, którego termostat trzyma teraz swoje ustawienia SmartPI we
+własnym wpisie SmartPI, tam, skąd SmartPI je czyta, a nie we wpisie Versatile Thermostat
+(`smartpi_options` testowego zastępnika `fakes/fake_thermostat_runtime.py`). Sekcja 7 podaje pokrycie
+kodu testami.
 
 ## Spis treści
 
@@ -16,6 +20,7 @@ z tymi.
 4. [Testy według funkcji](#4-testy-według-funkcji)
 5. [Ograniczenia](#5-ograniczenia)
 6. [QAS w prawdziwym Home Assistant](#6-qas-w-prawdziwym-home-assistant)
+7. [Pokrycie kodu](#7-pokrycie-kodu)
 
 ## 1. Uruchamianie testów
 
@@ -201,10 +206,11 @@ Wyniki są w [Wejścia wody i kotła, §4.4](water_input.md#44-wyniki-symulacja)
 | Plik | Co sprawdza |
 |---|---|
 | `test_smartpi_effective_model.py` | jak znane wejścia (ciepło wymieniane ze strefami sąsiednimi, ciepło z drugiego źródła) są łączone w `b_eff` i `T_ref`, czyli straty i temperaturę odniesienia, których używa sterowanie; bez nich nic się nie zmienia |
+| `test_smartpi_effective_model_edges.py` | przypadki brzegowe znalezione przez pokrycie kodu (sekcja 7): dopływ ciepła równy zeru albo niebędący liczbą jest pomijany |
 | `test_smartpi_learning_window_known_inputs.py` | okna uczenia odejmują ciepło znanych wejść |
-| `test_smartpi_dependencies_algo.py` | algorytm używa `b_eff` i `T_ref` wszędzie w sterowaniu, zachowuje surowe wartości do uczenia, zatrzymuje uczenie, gdy ustawiona jest bramka uczenia (warunek taki jak otwarte drzwi do sąsiada), oraz zapisuje i wczytuje swój stan |
+| `test_smartpi_dependencies_algo.py` | algorytm używa `b_eff` i `T_ref` wszędzie w sterowaniu, zachowuje surowe wartości do uczenia, zatrzymuje uczenie, gdy ustawiona jest bramka uczenia (warunek taki jak otwarte drzwi do sąsiada), oraz zapisuje i wczytuje swój stan; nastawa okna sąsiada bez temperatury docelowej, polecenie źródła poza rolą źródła, wspólny model opublikowany po fazie nauki (a i b zostają) |
 | `test_smartpi_dependencies.py`, `test_smartpi_dependency_inputs.py` | skonfigurowane elementy, sposób ich sprawdzania, odczyty używane w jednym obliczeniu |
-| `test_config_flow.py`, `test_config_flow_dependencies.py` | menu opcji wpisu termostatu (z pozycją Woda i kocioł dla wodnego rodzaju ogrzewania) i wpisu globalnego oraz lista zależności |
+| `test_config_flow.py`, `test_config_flow_dependencies.py` | menu opcji wpisu termostatu (z pozycją Woda i kocioł dla wodnego rodzaju ogrzewania, Save and finish na końcu) i wpisu globalnego; tworzenie wpisu przez menu; lista zależności (każdy krok wraca do menu, usunięcie bez wyboru wraca do menu z notatką, pozycja powrotu) |
 
 ### 4.3 Strefy sąsiednie
 
@@ -213,7 +219,8 @@ Wyniki są w [Wejścia wody i kotła, §4.4](water_input.md#44-wyniki-symulacja)
 | `test_smartpi_coupling_estimator.py` | uczenie `k` dla sąsiada za drzwiami, dla kilku drzwi naraz i dla zawsze otwartego sąsiada |
 | `test_smartpi_dependency_model.py` | bramki uczenia, reakcje na okno sąsiada, presety przy chłodzeniu, zawsze otwarty sąsiad, który wchodzi do modelu bez skoku |
 | `test_smartpi_dependencies_handler.py` | odczyty z Home Assistant |
-| `test_config_flow_neighbours.py` | formularze sąsiadów: podpowiedzi, błędy, ostrzeżenia, edycja, krok resetu |
+| `test_config_flow_neighbours.py` | formularze sąsiadów: podpowiedzi, błędy, ostrzeżenia, edycja, sąsiad, którego już nie ma, odrzucony na formularzu, każdy krok wraca do menu (nic nie jest zapisane przed Save and finish), pytanie o reset przy zapisie |
+| `test_smartpi_coupling_estimator_edges.py`, `test_smartpi_dependencies_edges.py` | przypadki brzegowe znalezione przez pokrycie kodu (sekcja 7): dopasowania z ujemnym współczynnikiem albo ponad jego granicą, drzwi, których wymiany się znoszą, źródło, które nie pracowało w oknach drzwi, historia o niezgodnych wartościach, zapisane wiersze o innym kształcie, pusty raport cyklu, zapominanie usuniętych pozycji; zapisane pozycje, które nie są słownikami, jeden czujnik drzwi zapisany jako tekst, pasmo wyprzedzenia poza zakresem |
 
 ### 4.4 Strefa z dwoma źródłami ciepła
 
@@ -224,19 +231,20 @@ Wyniki są w [Wejścia wody i kotła, §4.4](water_input.md#44-wyniki-symulacja)
 | `test_smartpi_split.py` | reguły podziału i pętla przydziału |
 | `test_smartpi_source_link.py` | łącze między dwoma termostatami: wysterowania, cykle, główne źródło, które przestaje odpowiadać, limit mocy |
 | `test_smartpi_dependency_model_source.py` | bloki uczenia, zegar uczenia i jego limit czasu, hamowanie, szybszy powrót do nastawy po nocy, restart, chłodzenie |
-| `test_smartpi_dependencies_handler.py` | rodzaje ogrzewania odczytane z obu wpisów, reset zamówiony z formularza, zmieniony termostat nadrzędny (jego urządzenia porównane po unikalnym ID, także przy przeładowaniu wpisu, gdy termostat nie ma jeszcze ID encji) |
-| `test_config_flow_zone.py` | formularz strefy: termostat nadrzędny i jego sprawdzenia, zalecenie, przeniesienie głównego źródła, wpis drugiego termostatu (jego opcje otwierają menu, gdy jest grzany wodą), własne opóźnienie i bezwładność, usunięcie, krok resetu |
+| `test_smartpi_dependencies_handler.py` | rodzaje ogrzewania odczytane z obu wpisów, reset zamówiony z formularza, zmieniony termostat nadrzędny (jego urządzenia porównane po unikalnym ID, także przy przeładowaniu wpisu, gdy termostat nie ma jeszcze ID encji); wyłączone drugie źródło wyłącza swoje urządzenie, zakres termostatu, który nie jest zakresem, źródło, którego nie da się odnaleźć, strefa, której termostat nadrzędny usunięto |
+| `test_config_flow_zone.py` | formularz strefy: termostat nadrzędny i jego sprawdzenia (brak: powrót do menu, które mówi dlaczego), źródło bez rodzaju ogrzewania pytane o niego, zalecenie, przeniesienie głównego źródła (sąsiedzi połączeni; odrzucone w kroku parametru, gdy się nie da), wpis drugiego termostatu tworzony przy zapisie (jego opcje otwierają własne menu), własne opóźnienie i bezwładność, usunięcie, pytanie o reset przy zapisie, strefa ustawiona przy tworzeniu wpisu, dwa okna otwarte naraz; strefa przeniesiona na drugi termostat i przywrócona w jednym oknie (trzyma ją tylko ten wpis; odmowa bez żadnej zmiany, gdy jej sąsiedzi by się kłócili) |
+| `test_smartpi_zone_fit_edges.py`, `test_smartpi_dependency_model_edges.py`, `test_smartpi_source_candidates_edges.py`, `test_smartpi_split_edges.py` | przypadki brzegowe znalezione przez pokrycie kodu (sekcja 7): źródło, które nigdy nie pracowało, zaszumiony czujnik, próbki niebędące liczbami, zapisane stany nie do odczytania; to samo źródło ustawione ponownie, współczynnik nauczony przy chłodzeniu po restarcie, brak temperatury zewnętrznej, brak zapotrzebowania głównego źródła, brak temperatury docelowej, współczynnik opublikowany w czasie szybszego nagrzewania, zapisane dopasowania i odpowiedzi nie do odczytania; pętla bez zapotrzebowania głównego źródła na razie |
 
 ### 4.5 Woda
 
 | Plik | Co sprawdza |
 |---|---|
 | `test_smartpi_water_input.py` | współczynnik wody, jego średnie, ciepła woda, krótkie i trwałe przerwy, zapis i wczytanie stanu (z wejściami, do których należy), zapominanie danych |
-| `test_smartpi_water_algo.py` | wysterowanie = moc / współczynnik, uczenie = wysterowanie × współczynnik, limit mocy, wstrzymania w czasie grzania ciepłej wody i przy zimnej wodzie |
+| `test_smartpi_water_algo.py` | wysterowanie = moc / współczynnik, uczenie = wysterowanie × współczynnik, limit mocy, wstrzymania w czasie grzania ciepłej wody i przy zimnej wodzie; próg włączenia zaworu przy danych o wodzie |
 | `test_smartpi_heating_inputs.py` | źródła, odczytywane osobno: encje (liczby, °F i K, unavailable, unknown albo tekst, brakująca encja, połączenia sygnałów grzania, ciepłej wody i awarii, encja powodu, encja odnaleziona po identyfikatorze z rejestru mimo zmiany nazwy); rejestr dostawców (rejestracja, wyrejestrowanie, dwóch dostawców, nietypowe nazwy), ostrożny odczyt dostawcy (niezarejestrowany, `None`, zła wersja, wyjątek, odpowiedź, która nie jest słownikiem, słownik, którego odczyt zgłasza błąd, brak metody, złe typy, za duże liczby, powody, których SmartPI nie zna, pola zapotrzebowania) i jednorazowe zgłoszenie, gdy długo go nie ma; kocioł centralny VTherm z jego bieżących encji (wezwany, trzy wyliczane powody, moce w W i kW, brakujące encje, termostat, którego kocioł nie liczy); odczyt opcji: sygnały z wpisu globalnego albo własne, wpisy bez tych kluczy, nieznane źródła |
-| `test_smartpi_water_handler.py` | moduł obsługi odczytuje wybrane źródło (testowego dostawcę albo encje z własnymi sygnałami termostatu lub z sygnałami z wpisu globalnego), publikuje `water_factor`, proponuje reset, gdy dane się pojawiają albo znikają, ale nie dla wejść, dla których w opcjach zachowano model; inne wejścia wybrane w opcjach kasują stan wody starych wejść (stan trwałej przerwy, długoterminową średnią) i otwarte zgłoszenie naprawy, te same wejścia zachowują swój stan po restarcie, a wpis sprzed wprowadzenia źródeł zachowuje dzisiejsze zasady przerw, gdy nie ma danych; wybrany dostawca, którego nie ma przez 10 minut, jest zgłaszany raz ostrzeżeniem |
-| `test_config_flow_heating_inputs.py` | formularze: menu wpisu globalnego i sygnały kotła (zapisane po identyfikatorze z rejestru, puste pole usunięte); Woda i kocioł: listy budowane z zarejestrowanych dostawców, kocioł centralny VTherm do wyboru (i domyślny) tylko tam, gdzie obsługuje termostat, dostawca, który nie jest już zarejestrowany, pokazany jako niedostępny, czujnik zasilania, sygnały z wpisu globalnego albo własne (wstępnie wypełnione z wpisu globalnego; własny sygnał zostawiony pusty zostaje pusty), krok resetu tylko przy zmianie źródła wody albo jego czujnika (reset albo zachowany model), wpisy bez tych kluczy; rodzaj elektryczny bez tej pozycji; dodatkowe źródło strefy, które wybiera tylko swoją wodę; nowy wpis tworzony przez formularz strefy, bez kopii sygnałów z wpisu globalnego |
-| `test_config_flow_heating_type.py` | rodzaj ogrzewania w ustawieniach; krok zgłoszenia naprawy (powiadomienia w „Naprawach” Home Assistant) |
+| `test_smartpi_water_handler.py` | moduł obsługi odczytuje wybrane źródło (testowego dostawcę albo encje z własnymi sygnałami termostatu lub z sygnałami z wpisu globalnego), publikuje `water_factor`, proponuje reset, gdy dane się pojawiają albo znikają, ale nie dla wejść, dla których w opcjach zachowano model; inne wejścia wybrane w opcjach kasują stan wody starych wejść (stan trwałej przerwy, długoterminową średnią) i otwarte zgłoszenie naprawy, te same wejścia zachowują swój stan po restarcie, a wpis sprzed wprowadzenia źródeł zachowuje dzisiejsze zasady przerw, gdy nie ma danych; wybrany dostawca, którego nie ma przez 10 minut, jest zgłaszany raz ostrzeżeniem; rodzaj elektryczny albo brak rodzaju niczego nie odczytuje; zastępnik Home Assistant bez rejestrów czyta zapisane encje takie, jakie są |
+| `test_config_flow_heating_inputs.py` | formularze: menu wpisu globalnego i sygnały kotła (zapisane po identyfikatorze z rejestru, puste pole usunięte); Woda i kocioł: listy budowane z zarejestrowanych dostawców, kocioł centralny VTherm do wyboru (i domyślny) tylko tam, gdzie obsługuje termostat, dostawca, który nie jest już zarejestrowany, pokazany jako niedostępny, czujnik zasilania, sygnały z wpisu globalnego albo własne (wstępnie wypełnione z wpisu globalnego; własny sygnał zostawiony pusty zostaje pusty), pytanie o reset przy zapisie tylko przy zmianie źródła wody albo jego czujnika (reset albo zachowany model), wpisy bez tych kluczy; każdy krok wraca do menu; rodzaj elektryczny bez tej pozycji; dodatkowe źródło strefy, które wybiera tylko swoją wodę; nowy wpis tworzony przez formularz strefy, bez kopii sygnałów z wpisu globalnego |
+| `test_config_flow_heating_type.py` | rodzaj ogrzewania jako pierwszy w ustawieniach termostatu, „Not set” (nieustawiony, zapisany jako brak klucza), brak go w formularzu wartości domyślnych; krok zgłoszenia naprawy (powiadomienia w „Naprawach” Home Assistant) |
 
 ### 4.6 Kocioł, który nie jest wezwany do grzania
 
@@ -244,13 +252,24 @@ Wyniki są w [Wejścia wody i kotła, §4.4](water_input.md#44-wyniki-symulacja)
 |---|---|
 | `test_smartpi_boiler_call.py` | tryby: kocioł, który odpowiada w ciągu 15 min, niczego nie zmienia; przy wołaniu o ciepło bez odpowiedzi najpierw emiter stygnie, potem wstrzymanie, potem emiter się nagrzewa po starcie kotła; urządzenia włącz/wyłącz i ich cykl; utracony odczyt; powody podawane przez dostawców; diagnostyka z wybranym źródłem i jego wejściami, także bez odczytu |
 | `test_smartpi_boiler_algo.py` | uczenie nie widzi ciepła w czasie wstrzymania i czeka przed tym okresem i po nim; opóźnienie nie jest uczone ze startu kotła; korekta części wyprzedzającej jest zamrożona; kalibracja jest anulowana |
-| `test_smartpi_boiler_handler.py` | moduł obsługi odczytuje wybrane źródło wezwania: dostawcę (jego powody i zapotrzebowanie; żadnego innego źródła, gdy dostawca nic nie mówi), encje (własne sygnały termostatu albo sygnały z wpisu globalnego), kocioł centralny VTherm (domyślny tam, gdzie obsługuje termostat, jego powód i zapotrzebowanie), brak; blok `boiler` widoczny dla wybranego źródła bez danych; rodzaj elektryczny niczego nie odczytuje |
+| `test_smartpi_boiler_handler.py` | moduł obsługi odczytuje wybrane źródło wezwania: dostawcę (jego powody i zapotrzebowanie; żadnego innego źródła, gdy dostawca nic nie mówi), encje (własne sygnały termostatu albo sygnały z wpisu globalnego), kocioł centralny VTherm (domyślny tam, gdzie obsługuje termostat, jego powód i zapotrzebowanie), brak; blok `boiler` widoczny dla wybranego źródła bez danych; rodzaj elektryczny albo brak rodzaju niczego nie odczytuje |
 
 ### 4.7 Czujnik diagnostyczny
 
 | Plik | Co sprawdza |
 |---|---|
-| `test_sensor_own_entry.py` | wpis globalny pokazuje czujnik diagnostyczny termostatu bez własnego wpisu; gdy termostat dostaje własny wpis, ten wpis przejmuje czujnik: Home Assistant nie odrzuca żadnego zdublowanego unikalnego ID przy utworzeniu wpisu, jego przeładowaniu ani zapisie opcji, a czujnik zostaje aktywny po przeładowaniu wpisu globalnego |
+| `test_sensor_own_entry.py` | wpis globalny pokazuje czujnik diagnostyczny termostatu bez własnego wpisu; gdy termostat dostaje własny wpis, ten wpis przejmuje czujnik: Home Assistant nie odrzuca żadnego zdublowanego unikalnego ID przy utworzeniu wpisu, jego przeładowaniu ani zapisie opcji, a czujnik zostaje aktywny po przeładowaniu wpisu globalnego; własny wpis, który korzysta z wartości domyślnych, zapisuje pełną diagnostykę tak, jak mówią wartości domyślne, a ich zmiana tworzy jego czujnik od nowa; czujnik usunięty po tym, jak inny przejął jego termostat, zostawia tamten aktywny |
+
+### 4.8 Ustawienia, zapis opcji i migracja
+
+| Plik | Co sprawdza |
+|---|---|
+| `test_smartpi_settings.py` | ustawienia czytane klucz po kluczu: bez własnego wpisu termostat bierze ustawienia wspólne z wartości domyślnych i żadnego ustawienia „tylko ten termostat” (ani z wartości domyślnych, ani czasów TPI z VTherm); wpis korzystający z wartości domyślnych dodaje własne ustawienia „tylko ten termostat”; wpis z własnymi wartościami wygrywa; wpis z wersji 0.4.0 zachowuje pełną kopię, bez rodzaju ogrzewania; brak ustawienia wspólnego we wpisie jest raz zapisany w dzienniku i dostaje wartość z wartości domyślnych albo z formularza; zapisane opcje zastępują w całości pierwsze dane; moduł obsługi: nieustawione znaczy nieużywane (brak danych o wodzie, brak czasów, brak restartu PWM, brak krzywej zaworu), ustawione znaczy używane, włączona krzywa zaworu bez punktów jest zgłaszana i wyłączona, pełna diagnostyka z wartości domyślnych; zapis wartości domyślnych przeładowuje termostaty, które z nich korzystają |
+| `test_config_flow_settings.py` | ustawienia termostatu: najpierw rodzaj ogrzewania, potem ustawienia „tylko ten termostat” i „Use the SmartPI defaults”; „Not set” zapisany jako brak klucza; po włączeniu wpis nie ma żadnego ustawienia wspólnego; po wyłączeniu własne wartości zaczynają się od wartości domyślnych (`settings_own`); krzywa zaworu po jej przełączniku i jako pozycja menu; pozycja regulatora we wpisie wartości domyślnych tylko z ustawieniami wspólnymi; nowy wpis tworzony przez menu (nic własnego; pytanie o reset, gdy ma rodzaj ogrzewania); termostat, który już ma wpis, encja bez unikalnego ID |
+| `test_config_flow_save.py` | działanie opcji: nic nie jest zapisane przed Save and finish; zamknięcie okna niczego nie zapisuje i nie tworzy innego wpisu; menu wymienia niezapisane sekcje etykietami w języku interfejsu; cofnięta zmiana nie jest zmianą; menu podąża za szkicem (Woda i kocioł, krzywa zaworu); jedno pytanie o reset ze wszystkimi powodami, żadne bez powodu; zależności zmienione w innym oknie zatrzymują zapis; jedno przeładowanie na wpis, gdy strefa przenosi się do wpisu drugiego termostatu, a stary znacznik zapisu nie jest używany |
+| `test_config_migration.py` | wersja podrzędna 1 → 2 (główna zostaje 1, więc 0.4.0 nadal wczytuje wpisy): wpis termostatu zachowuje wartości i nie korzysta z wartości domyślnych; wpis wartości domyślnych dostaje każde ustawienie wspólne i traci pozostałe; czekają na przeniesienie tylko ustawione ustawienia „tylko ten termostat”; po starcie każdy termostat na SmartPI bez wpisu dostaje wpis z nimi, a powiadomienie w „Naprawach” je wymienia; gdy nic nie jest ustawione, nic nie powstaje; usunięcie klucza tymczasowego niczego nie przeładowuje; nowsza wersja główna jest odrzucana; wpis już zmigrowany zostaje bez zmian; encja climate innej integracji i import, który nie tworzy wpisu, nie są wymienione w powiadomieniu; usunięty wpis domyślny niczego nie przenosi |
+| `test_config_flow_paths.py` | formularze w przypadkach, do których dochodzą tylko niektóre instalacje: encja bez unikalnego ID odrzucona, sąsiad, którego wpis wskazuje z powrotem tę strefę, drzwi będące też czujnikiem okna, podział zalecany dla urządzeń o zbliżonej szybkości, wpis, którego termostat usunięto, zmiana zrobiona w innym oknie (albo w opcjach VTherm) przy otwartym oknie (zapis zamyka okno bez zapisu), wpis członka strefy, którego nie da się utworzyć |
+| `test_services_routing.py` | cztery usługi docierają do termostatów, które wywołanie wskazuje (w celu albo w danych, jeden albo lista; metoda na termostacie albo na jego obsłudze), do każdego raz, i pomijają inne (inny algorytm, encja, której nie ma, termostat bez tej metody, o czym jest ostrzeżenie); są rejestrowane raz i usuwane |
 
 ## 5. Ograniczenia
 
@@ -290,7 +309,7 @@ go nie uruchamia: program uruchamiający potrzebuje `lib/` z ławki.
 | Ścieżka | Co to jest |
 |---|---|
 | `custom_components/smartpi_room_sim/` | symulator pomieszczeń jako integracja Home Assistant: pomieszczenia, grzejniki, zawory, kocioł, drzwi, okna i otoczenie na zewnątrz. Jego fizyka (`physics.py`) to ten sam plik, którego używa symulator w procesie testów: wczytuje go `tests/sim/plant.py` |
-| `custom_components/smartpi_qas_helpers/` | narzędzia pomocnicze tylko do testów, które sięgają do działającego SmartPI: wysyłają zdarzenie AutoCalib, uciszają główne źródło strefy, wczytują nauczony stan, podają listę wysłanych zdarzeń; oraz dostawca danych o ogrzewaniu zgodny z kontraktem SmartPI, zasilany przez symulator, którego scenariusz może wyrejestrować albo kazać mu podać powód (kocioł nie jest wezwany, woda nieprzypisana do obiegu) |
+| `custom_components/smartpi_qas_helpers/` | narzędzia pomocnicze tylko do testów, które sięgają do działającego SmartPI: wysyłają zdarzenie AutoCalib, uciszają główne źródło strefy, wczytują nauczony stan, podają listę wysłanych zdarzeń, liczą, ile razy wpis SmartPI został uruchomiony (`entry_setups`, dla QA7); oraz dostawca danych o ogrzewaniu zgodny z kontraktem SmartPI, zasilany przez symulator, którego scenariusz może wyrejestrować albo kazać mu podać powód (kocioł nie jest wezwany, woda nieprzypisana do obiegu) |
 | `roles.py` | dziewięć ról w jednym miejscu: pomieszczenia, termostaty, wpisy SmartPI i bazowe opcje (ze źródłami wody i kotła) |
 | `config/<role>.yaml` | `configuration.yaml` każdej roli, zapisany przez `config/build.py` na podstawie `roles.py` |
 | `setup/setup_role.py` | przygotowuje instancję jako daną rolę, przez API, etapami (`setup/stages.py`), a potem ją restartuje |
@@ -421,24 +440,25 @@ potrzebują danych o wodzie.
 | ID | Co sprawdza | Rola | Czas | W tle | Odpowiednik w procesie testów | Minimum | Zestaw |
 |---|---|---|---|---|---|---|---|
 | QA1 | Po restarcie na końcu przygotowania każdy wpis SmartPI i VTherm jest wczytany, ani SmartPI, ani VTherm nie zapisuje w logu ostrzeżenia ani błędu, każdy termostat SmartPI ma swoją diagnostykę, nie jest zarejestrowany żaden dostawca danych o ogrzewaniu poza dostawcą z narzędzi pomocniczych tam, gdzie rola go ma, i żaden wpis nie wybiera źródła wody ani źródła wezwania kotła. | `base`, `electric` | 15 min | nie | test_factory.py | tak | bez danych o wodzie |
-| QA2 | Zapisanie ustawień wpisu termostatu bez zmian przechodzi przez menu opcji bez kroku resetu, zachowuje zapisane opcje i przeładowuje wpis raz, bez pętli. | `base` | 15 min | nie | test_config_flow_dependencies.py | tak | bez danych o wodzie |
+| QA2 | Zapisanie ustawień wpisu termostatu bez zmian przechodzi przez menu opcji i „Save and finish” bez pytania o reset, zachowuje zapisane opcje i przeładowuje wpis raz, bez pętli. | `base` | 15 min | nie | test_config_flow_dependencies.py | tak | bez danych o wodzie |
 | QA3 | Cztery usługi SmartPI działają na VTherm 10.5.1, a pauza w uczeniu trwa także po restarcie. | `base` | 30 min | nie | test_services.py | nie | bez danych o wodzie |
 | QA4 | Zdarzenia AutoCalib niosą encję climate termostatu w entity_id, a jego nazwę w name, i ani rejestrator, ani dziennik nie zapisuje w logu błędu o nieprawidłowym identyfikatorze encji. | `base` | 60 min | nie | test_smartpi_autocalib_events.py | tak | bez danych o wodzie |
 | QA5 | Dwa restarty zachowują nauczony stan (model, jego liczniki i zastosowany token resetu), a token resetu nie jest stosowany ponownie. | `base` | 20 min | nie | test_algo_persistence.py | tak | bez danych o wodzie |
 | QA6 | Wodny rodzaj ogrzewania bez źródła danych o wodzie pokazuje blok water ze źródłem none, współczynnikiem 1 i wejściami bez źródła, a bez źródła wezwania nie ma bloku boiler; rodzaj elektryczny nie pokazuje żadnego z nich; przy wywołaniach sterowania nic nie trafia do logu. | `base`, `electric` | 20 min | nie | test_smartpi_water_handler.py, test_smartpi_boiler_handler.py | tak | bez danych o wodzie |
+| QA7 | Zmiana zrobiona w opcjach i zamknięte okno niczego nie zapisują ani nie przeładowują; menu wymienia zmianę w języku instancji (po angielsku tam, gdzie SmartPI nie ma własnego tekstu); ta sama zmiana zapisana trafia do opcji i przeładowuje wpis raz. | `base` | 15 min | nie | test_config_flow_save.py | tak | bez danych o wodzie |
 | QB1 | Przez 48 h bliźniacze pomieszczenie uczy się i reguluje; instancja zachowuje a, b i swój średni błąd z okresu od 24 do 48 h, a compare.py qb1 uznaje wynik za dobry, gdy a i b instancji qas są w granicach ±10 % wartości z 0.4.0, a jej średni błąd jest wyższy najwyżej o 0.03 °C. | `base`, `ref-0.4.0` | 48 h | tak | test_smartpi_regression_no_dependencies.py, test_smartpi_sim_baseline.py | nie | bez danych o wodzie |
 | QB1s | Przez 45 minut bliźniacze pomieszczenie reguluje, a w logu nie ma żadnego błędu; instancja zachowuje to, co odczytuje compare.py qb1s (obie instancje regulują, fazy mają nazwy). Krótki wariant QB1. | `base`, `ref-0.4.0` | 45 min | nie | test_smartpi_sim_baseline.py | tak | bez danych o wodzie |
 | QB2a | Na 0.4.0, przed aktualizacją: stan SmartPI to nauczony stan z pliku testowego (fixture), zapisany przez samą wersję 0.4.0 z pauzą w uczeniu, a jego model jest zachowany dla QB2. | `ref-0.4.0` | 10 min | nie | test_algo_persistence.py | tak | bez danych o wodzie |
 | QB2 | Po aktualizacji z 0.4.0 do qas stan zapisany przez 0.4.0 jest wczytany bez zmian, w logu nie ma ostrzeżenia o jego formacie, nic nie jest resetowane, a menu opcji starego wpisu działa. | `ref-0.4.0` | 30 min | nie | test_algo_persistence.py | tak | bez danych o wodzie |
 | QB3a | Na qas, przed powrotem do 0.4.0: do wpisu jest dodany sąsiad (czujnik strychu), włączona zostaje pauza w uczeniu, a model jest zachowany dla QB3; zostaje tak celowo. | `ref-0.4.0` | 10 min | nie | — | nie | bez danych o wodzie |
-| QB3 | Po powrocie na 0.4.0, ze skonfigurowanym sąsiadem, wpis wczytuje się bez błędów, stan również; zapisanie opcji w 0.4.0 usuwa klucze forka, co jest znanym zachowaniem. | `ref-0.4.0` | 30 min | nie | — | nie | bez danych o wodzie |
+| QB3 | Po powrocie na 0.4.0, ze skonfigurowanym sąsiadem, wpisy zmigrowane do wersji 1.2 wczytują się bez błędów (ich główna wersja to nadal 1), stan również; zapisanie opcji w 0.4.0 usuwa klucze forka, co jest znanym zachowaniem. | `ref-0.4.0` | 30 min | nie | — | nie | bez danych o wodzie |
 | QB2l | Na 0.4.0 po QB1, przed aktualizacją: model, którego wersja 0.4.0 nauczyła się sama, jest zachowany dla QB2 z pauzą w uczeniu, bez wczytywania gotowego stanu. | `ref-0.4.0` | 5 min | nie | test_algo_persistence.py | nie | bez danych o wodzie |
 | QC1 | Dla termostatu obsługiwanego przez kocioł centralny VTherm blok boiler pokazuje źródło vtherm_central_boiler, jego pole called podąża za czujnikiem binarnym kotła centralnego, a przy wyłączonym kotle powód i zapotrzebowanie pochodzą z bieżących encji VTherm (nic nie woła o ciepło: no_demand, próg mocy 2.5 kW). | `central-boiler` | 30 min | nie | test_smartpi_boiler_handler.py | tak | bez danych o wodzie |
 | QC2 | Mała strefa, która sama woła o ciepło poniżej progów, przechodzi w emitter_cooling po czasie tolerancji, w held po czasie ustalania się swojego emitera (powód z VTherm: below_threshold), bez uczenia a, w emitter_warming, gdy duża strefa uruchomi kocioł, i wraca do zwykłego uczenia jeden czas ustalania się później. | `central-boiler` | 2.5 h | tak | test_smartpi_boiler_call.py, test_smartpi_boiler_algo.py | nie | bez danych o wodzie |
 | QC2s | Mała strefa, która sama woła o ciepło poniżej progów, przechodzi w emitter_cooling po czasie tolerancji i w held po czasie ustalania się swojego emitera (powód z VTherm: below_threshold), bez uczenia a, a potem w emitter_warming, gdy duża strefa uruchomi kocioł. Krótki wariant QC2, QC4. | `central-boiler` | 95 min | nie | test_smartpi_boiler_call.py, test_smartpi_boiler_algo.py | tak | bez danych o wodzie |
 | QC3 | Gdy czujnika binarnego kotła centralnego nie ma (jest wyłączony), SmartPI nie odczytuje żadnego wezwania kotła (jego źródło jest pokazane bez danych) i uczy się jak wcześniej, bez błędów w logu; potem czujnik wraca. | `central-boiler` | 20 min | nie | test_smartpi_boiler_handler.py | tak | bez danych o wodzie |
 | QC4 | Codziennie od 2:00 do 8:00 duża strefa jest wyłączona, więc mała strefa woła o ciepło, a kocioł nie pracuje; po 48 h jej nauczone a mieści się w zakresie 0.85–1.2 prawdziwego a jej grzejnika. | `central-boiler` | 48 h | tak | B1 (test_smartpi_sim_boiler_call.py) | nie | bez danych o wodzie |
-| QD1 | Formularze sąsiadów pokazują każdy błąd i każde ostrzeżenie, podpowiadają czujnik drzwi z obszarów obu stref, edytują i usuwają z własnym krokiem resetu oraz zatrzymują się z neighbour_missing, dependencies_unchanged i zone_changed. | `neighbours` | 45 min | nie | test_config_flow_neighbours.py | tak | bez danych o wodzie |
+| QD1 | Formularze sąsiadów pokazują każdy błąd i każde ostrzeżenie, podpowiadają czujnik drzwi z obszarów obu stref, edytują i usuwają z pytaniem o reset przy zapisie, odrzucają na formularzu sąsiada, którego już nie ma, wracają do menu, gdy nic nie wybrano do usunięcia, i zatrzymują zapis z zone_changed. | `neighbours` | 45 min | nie | test_config_flow_neighbours.py | tak | bez danych o wodzie |
 | QD2 | Reset wybrany w formularzu sąsiada resetuje model kuchni raz, a następny restart nie resetuje go ponownie. | `neighbours` | 20 min | nie | test_smartpi_dependencies_handler.py | tak | bez danych o wodzie |
 | QD3 | Sąsiad, który jest niedostępny albo w trybie none, nie bierze udziału: jego połączenie jest nieaktywne, a model kuchni nie ma od niego znanego wejścia. | `neighbours` | 30 min | nie | N1, N4 | tak | bez danych o wodzie |
 | QD4 | Przy otwartych drzwiach otwarte okno korytarza sprawia, że kuchnia reaguje tak, jak mówi jej ustawienie (nic, wyłączenie, ochrona przed mrozem, eco), i w tym czasie nie uczy się żadnego k; kuchnia wraca do normalnej pracy, gdy okno i drzwi się zamkną. | `neighbours` | 60 min | nie | N6 | tak | bez danych o wodzie |
@@ -446,7 +466,7 @@ potrzebują danych o wodzie.
 | QD5s | Drzwi otwarte dwa razy na 8 minut wstrzymują uczenie kuchni (door_open, potem door_settling), a gdy są otwarte, czas martwy nie jest uczony. Krótki wariant QD5. | `neighbours` | 40 min | nie | N2 | tak | bez danych o wodzie |
 | QD6 | Przy zawsze otwartej jadalni, której temperatura przez 72 h sama zmienia się skokami, kuchnia uczy się jej k w granicach ±20 % prawdziwej wymiany ciepła albo oznacza ją jako indistinguishable (nie do odróżnienia). | `neighbours` | 72 h | tak | N3 | nie | bez danych o wodzie |
 | QD6s | Gdy temperatura zawsze otwartej jadalni skacze, kuchnia nadal ma ją podłączoną, nie wstrzymuje uczenia i nie zapisuje błędu w logu. Krótki wariant QD6. | `neighbours` | 30 min | nie | N3 | tak | bez danych o wodzie |
-| QE1 | Formularz strefy odrzuca każdy zły termostat nadrzędny, tworzy brakujący wpis urządzenia i restartuje przy tym tylko ten termostat, przenosi strefę skonfigurowaną od strony dodatkowego źródła do głównego, zatrzymuje się z zone_changed i usuwa strefę. | `zone` | 60 min | nie | test_config_flow_zone.py | tak | bez danych o wodzie |
+| QE1 | Formularz strefy odrzuca każdy zły termostat nadrzędny, przy zapisie tworzy brakujący wpis urządzenia i restartuje przy tym tylko ten termostat, przenosi strefę skonfigurowaną od strony dodatkowego źródła do głównego, zatrzymuje zapis z zone_changed i usuwa strefę. | `zone` | 60 min | nie | test_config_flow_zone.py | tak | bez danych o wodzie |
 | QE2 | W działającej strefie dodatkowe źródło niczego się nie uczy i stosuje wysterowanie głównego źródła, a zmiana jego rodzaju ogrzewania restartuje główne źródło. | `zone` | 60 min | nie | test_smartpi_sim_second_source.py | tak | bez danych o wodzie |
 | QE3 | Gdy główne źródło milknie, po 15 minutach dodatkowe źródło samo reguluje strefę, a temperatura w pomieszczeniu zostaje powyżej 19.3 °C; gdy główne źródło wraca, dodatkowe znów za nim podąża. | `zone` | 60 min | nie | Z6 | tak | bez danych o wodzie |
 | QE4 | Gdy urządzenia termostatu nadrzędnego zmienią się w VTherm, SmartPI przy starcie zapisuje ostrzeżenie w logu, a strefa dalej działa. | `zone` | 15 min | nie | test_smartpi_dependencies_handler.py | tak | bez danych o wodzie |
@@ -483,15 +503,258 @@ i żaden czujnik diagnostyczny nie jest odrzucany jako duplikat.
 |---|---|---|
 | `test_qas_room_sim.py` | fizykę symulatora w porównaniu z modelem pierwszego rzędu (prostym modelem z jedną bezwładnością) i z siecią pomieszczeń symulatora w procesie testów, jego drzwi, okna, kocioł (wyłączony, awaria, ciepła woda), urządzenia i reset; jego encje (także czujniki zasilania i sygnały kotła) i usługi w Home Assistant; dostawcę danych o ogrzewaniu z narzędzi pomocniczych, odczytywanego przez własny czytnik SmartPI tak, jak mówi kontrakt, jego odpowiedzi na stan kotła i jego usługi | CI |
 | `test_qas_pack.py` | pytest nie zbiera żadnego pliku pakietu; pliki ról są aktualne i poprawne, a żadna rola nie wskazuje instancji; pakiet kompiluje się i importuje bez ławki; każdy scenariusz z planu jest zarejestrowany z oczekiwanym wynikiem w jednym zdaniu i jest w tym katalogu; stan bazowy programu uruchamiającego (także źródła i encje roli `water`) i rola wymagana do uruchomienia; `compare.py` z dwoma plikami wyników, które dostaje; przygotowany nauczony stan daje się wczytać | CI |
-| `test_qas_setup_flows.py` | przygotowanie każdej roli przez prawdziwe formularze Versatile Thermostat 10.5.1 i SmartPI, bez błędu w logu, a powtórzone niczego nie zmienia; role strefy z przeładowaniem każdego wpisu SmartPI, bez ostrzeżenia, że termostat nadrzędny strefy się zmienił; własny wpis termostatu przejmujący jego czujnik diagnostyczny od wpisu globalnego (wpis utworzony, przeładowany, zapisane opcje, formularz strefy, przeładowany wpis globalny) bez zdublowanego unikalnego ID; źródła roli `water` i sygnały kotła we wpisie globalnym zgodne z rolą; ścieżki formularzy z QD1, QE1, QE2, QE4 i QW9 | lokalnie, z `SMARTPI_QAS_LOCAL=1` |
+| `test_qas_setup_flows.py` | przygotowanie każdej roli przez prawdziwe formularze Versatile Thermostat 10.5.1 i SmartPI, bez błędu w logu, a powtórzone niczego nie zmienia; role strefy z przeładowaniem każdego wpisu SmartPI, bez ostrzeżenia, że termostat nadrzędny strefy się zmienił; własny wpis termostatu przejmujący jego czujnik diagnostyczny od wpisu globalnego (wpis utworzony, przeładowany, zapisane opcje, formularz strefy, przeładowany wpis globalny) bez zdublowanego unikalnego ID; źródła roli `water` i sygnały kotła we wpisie globalnym zgodne z rolą; każde okno przez jego menu i „Save and finish”; ścieżki formularzy z QD1, QE1, QE2, QE4 i QW9 | lokalnie, z `SMARTPI_QAS_LOCAL=1` |
 
 ### 6.7 Znane kwestie
 
-- **Powrót do 0.4.0.** Zapisanie opcji w 0.4.0 usuwa klucze forka (sąsiedzi, strefa, rodzaj
-  ogrzewania). Pokazuje to QB3.
+- **Powrót do 0.4.0.** Wpisy zmigrowane do wersji 1.2 zachowują główną wersję 1, więc 0.4.0 je
+  wczytuje. 0.4.0 pomija „Use the SmartPI defaults”: wpis termostatu z włączonym przełącznikiem nie
+  ma ustawień wspólnych, więc 0.4.0 prowadzi ten termostat z wartościami ze swojego kodu. Zapisanie
+  opcji w 0.4.0 usuwa klucze forka (sąsiedzi, strefa, rodzaj ogrzewania). Pokazuje to QB3.
 - **Dostawca danych o ogrzewaniu w zestawie QAS „z danymi o wodzie”** to testowy zastępnik
   z narzędzi pomocniczych, zasilany przez symulator: pokazuje, że SmartPI odczytuje każdego
   dostawcę zgodnego ze swoim kontraktem, a nie to, że konkretna integracja podaje właściwe wartości.
 - **Nauczony stan**, który wczytują QB2a, QD2, QW3 i QW4 (`smartpi_qas_helpers/fixtures/learned_room.json`),
   pochodzi z symulatora w procesie testów (a = 0.035, b = 0.0012, po zakończeniu fazy uczenia).
   SmartPI 0.4.0 wczytuje go bez zmian.
+
+## 7. Pokrycie kodu
+
+Jaką część kodu pluginu wykonują testy, zmierzone narzędziem coverage.py na pełnym lokalnym
+zestawie (długi zestaw z sekcji 1 razem ze sprawdzeniami QAS, które działają bez ławki, sekcja
+6.6): linie oraz gałęzie (każda droga, którą może pójść `if` albo pętla).
+
+    COVERAGE_FILE=<scratch>/.coverage SMARTPI_SIM_LOCAL=1 SMARTPI_QAS_LOCAL=1 \
+      PYTHONPATH=<versatile_thermostat copy>:$PWD python -m pytest tests/ -q -p no:cacheprovider -n 4 \
+      --cov=custom_components/vtherm_smartpi --cov-branch --cov-report=json:<scratch>/cov.json
+
+Punkt odniesienia to `dev` w 112e9e5, zmierzony 2026-10-14, przed wejściami z instalacji
+grzewczej. „Łącznie” to wskaźnik samego coverage.py, linie i gałęzie razem. Wszystkie 1397 testów
+przechodzi.
+
+### 7.1 Cały plugin
+
+Każdy plik zachowuje albo zwiększa swoje pokrycie.
+
+| Plik | Linie (punkt odniesienia → teraz) | Gałęzie (punkt odniesienia → teraz) | Łącznie (punkt odniesienia → teraz) |
+|---|---:|---:|---:|
+| `__init__.py` | 77.5 % → 274/282 (97.2 %) | 54.2 % → 118/128 (92.2 %) | 71.0 % → 95.6 % |
+| `algo.py` | 92.4 % → 1840/1988 (92.6 %) | 81.8 % → 401/484 (82.9 %) | 90.4 % → 90.7 % |
+| `commons.py` | 100.0 % → 4/4 (100.0 %) | — → — | 100.0 % → 100.0 % |
+| `config_flow.py` | 95.6 % → 1037/1060 (97.8 %) | 89.8 % → 365/378 (96.6 %) | 94.1 % → 97.5 % |
+| `const.py` | 100.0 % → 75/75 (100.0 %) | — → — | 100.0 % → 100.0 % |
+| `cycle_utils.py` | 100.0 % → 5/5 (100.0 %) | — → — | 100.0 % → 100.0 % |
+| `factory.py` | 100.0 % → 10/10 (100.0 %) | — → — | 100.0 % → 100.0 % |
+| `handler.py` | 92.0 % → 629/673 (93.5 %) | 84.6 % → 170/198 (85.9 %) | 90.3 % → 91.7 % |
+| `heating_inputs.py` | nowy → 353/353 (100.0 %) | nowy → 106/106 (100.0 %) | nowy → 100.0 % |
+| `hvac_mode.py` | 70.8 % → 46/65 (70.8 %) | 21.4 % → 3/14 (21.4 %) | 62.0 % → 62.0 % |
+| `repairs.py` | 100.0 % → 22/22 (100.0 %) | 100.0 % → 4/4 (100.0 %) | 100.0 % → 100.0 % |
+| `sensor.py` | 96.0 % → 184/190 (96.8 %) | 83.3 % → 57/64 (89.1 %) | 92.7 % → 94.9 % |
+| `settings.py` | nowy → 49/49 (100.0 %) | nowy → 10/10 (100.0 %) | nowy → 100.0 % |
+| `smartpi/__init__.py` | 100.0 % → 7/7 (100.0 %) | — → — | 100.0 % → 100.0 % |
+| `smartpi/ab_aggregator.py` | 96.3 % → 26/27 (96.3 %) | 90.0 % → 9/10 (90.0 %) | 94.6 % → 94.6 % |
+| `smartpi/ab_drift.py` | 87.5 % → 119/136 (87.5 %) | 69.4 % → 25/36 (69.4 %) | 83.7 % → 83.7 % |
+| `smartpi/ab_estimator.py` | 90.9 % → 378/416 (90.9 %) | 82.4 % → 89/108 (82.4 %) | 89.1 % → 89.1 % |
+| `smartpi/autocalib.py` | 88.8 % → 253/285 (88.8 %) | 71.8 % → 56/78 (71.8 %) | 85.1 % → 85.1 % |
+| `smartpi/boiler_call.py` | 100.0 % → 69/69 (100.0 %) | 100.0 % → 18/18 (100.0 %) | 100.0 % → 100.0 % |
+| `smartpi/calibration.py` | 88.6 % → 147/166 (88.6 %) | 76.3 % → 29/38 (76.3 %) | 86.3 % → 86.3 % |
+| `smartpi/command_ownership.py` | 98.8 % → 164/166 (98.8 %) | 93.8 % → 30/32 (93.8 %) | 98.0 % → 98.0 % |
+| `smartpi/const.py` | 100.0 % → 320/320 (100.0 %) | 100.0 % → 4/4 (100.0 %) | 100.0 % → 100.0 % |
+| `smartpi/controller.py` | 94.7 % → 232/245 (94.7 %) | 80.3 % → 61/76 (80.3 %) | 91.3 % → 91.3 % |
+| `smartpi/coupling_estimator.py` | 95.9 % → 407/415 (98.1 %) | 87.6 % → 161/170 (94.7 %) | 93.5 % → 97.1 % |
+| `smartpi/deadband.py` | 95.1 % → 154/162 (95.1 %) | 88.9 % → 32/36 (88.9 %) | 93.9 % → 93.9 % |
+| `smartpi/deadband_output.py` | 100.0 % → 16/16 (100.0 %) | 100.0 % → 4/4 (100.0 %) | 100.0 % → 100.0 % |
+| `smartpi/deadtime_estimator.py` | 91.9 % → 203/221 (91.9 %) | 81.1 % → 60/74 (81.1 %) | 89.2 % → 89.2 % |
+| `smartpi/dependencies.py` | 98.4 % → 193/193 (100.0 %) | 95.7 % → 70/70 (100.0 %) | 97.7 % → 100.0 % |
+| `smartpi/dependency_inputs.py` | 100.0 % → 78/78 (100.0 %) | 100.0 % → 12/12 (100.0 %) | 100.0 % → 100.0 % |
+| `smartpi/dependency_model.py` | 98.1 % → 576/576 (100.0 %) | 95.6 % → 228/228 (100.0 %) | 97.4 % → 100.0 % |
+| `smartpi/device_link.py` | 98.3 % → 59/60 (98.3 %) | 96.4 % → 27/28 (96.4 %) | 97.7 % → 97.7 % |
+| `smartpi/diagnostic_history.py` | 100.0 % → 11/11 (100.0 %) | — → — | 100.0 % → 100.0 % |
+| `smartpi/diagnostics.py` | 92.1 % → 105/114 (92.1 %) | 78.6 % → 33/42 (78.6 %) | 88.5 % → 88.5 % |
+| `smartpi/effective_model.py` | 97.9 % → 94/96 (97.9 %) | 90.0 % → 28/30 (93.3 %) | 96.0 % → 96.8 % |
+| `smartpi/feedforward.py` | 100.0 % → 38/38 (100.0 %) | 100.0 % → 4/4 (100.0 %) | 100.0 % → 100.0 % |
+| `smartpi/ff3.py` | 90.2 % → 110/122 (90.2 %) | 80.0 % → 48/60 (80.0 %) | 86.8 % → 86.8 % |
+| `smartpi/ff3_eligibility.py` | 96.8 % → 92/95 (96.8 %) | 97.5 % → 39/40 (97.5 %) | 97.0 % → 97.0 % |
+| `smartpi/ff3_predictor.py` | 93.9 % → 62/66 (93.9 %) | 75.0 % → 12/16 (75.0 %) | 90.2 % → 90.2 % |
+| `smartpi/ff_ab_confidence.py` | 100.0 % → 32/32 (100.0 %) | 100.0 % → 12/12 (100.0 %) | 100.0 % → 100.0 % |
+| `smartpi/ff_trim.py` | 93.2 % → 836/897 (93.2 %) | 81.2 % → 242/298 (81.2 %) | 90.2 % → 90.2 % |
+| `smartpi/ff_trim_periodic.py` | 93.2 % → 177/190 (93.2 %) | 87.5 % → 56/64 (87.5 %) | 91.7 % → 91.7 % |
+| `smartpi/gains.py` | 96.9 % → 126/130 (96.9 %) | 91.7 % → 22/24 (91.7 %) | 96.1 % → 96.1 % |
+| `smartpi/governance.py` | 97.3 % → 71/73 (97.3 %) | 92.3 % → 24/26 (92.3 %) | 96.0 % → 96.0 % |
+| `smartpi/guards.py` | 97.4 % → 76/78 (97.4 %) | 94.4 % → 17/18 (94.4 %) | 96.9 % → 96.9 % |
+| `smartpi/integral_guard.py` | 94.3 % → 99/105 (94.3 %) | 94.1 % → 32/34 (94.1 %) | 94.2 % → 94.2 % |
+| `smartpi/learning_window.py` | 92.4 % → 304/329 (92.4 %) | 91.8 % → 101/110 (91.8 %) | 92.3 % → 92.3 % |
+| `smartpi/setpoint.py` | 94.3 % → 526/558 (94.3 %) | 85.6 % → 137/160 (85.6 %) | 92.3 % → 92.3 % |
+| `smartpi/source_candidates.py` | 95.7 % → 47/47 (100.0 %) | 100.0 % → 18/18 (100.0 %) | 96.9 % → 100.0 % |
+| `smartpi/source_link.py` | 100.0 % → 94/94 (100.0 %) | 100.0 % → 30/30 (100.0 %) | 100.0 % → 100.0 % |
+| `smartpi/source_model.py` | 99.1 % → 109/109 (100.0 %) | 100.0 % → 32/32 (100.0 %) | 99.3 % → 100.0 % |
+| `smartpi/source_settings.py` | 100.0 % → 35/35 (100.0 %) | 100.0 % → 4/4 (100.0 %) | 100.0 % → 100.0 % |
+| `smartpi/split.py` | 98.9 % → 95/95 (100.0 %) | 95.5 % → 22/22 (100.0 %) | 98.3 % → 100.0 % |
+| `smartpi/thermal_twin_1r1c.py` | 82.4 % → 324/393 (82.4 %) | 66.4 % → 85/128 (66.4 %) | 78.5 % → 78.5 % |
+| `smartpi/timestamp_utils.py` | 78.1 % → 25/32 (78.1 %) | 71.4 % → 10/14 (71.4 %) | 76.1 % → 76.1 % |
+| `smartpi/tint_filter.py` | 95.7 % → 90/94 (95.7 %) | 87.5 % → 21/24 (87.5 %) | 94.1 % → 94.1 % |
+| `smartpi/trajectory.py` | 93.9 % → 93/99 (93.9 %) | 82.4 % → 28/34 (82.4 %) | 91.0 % → 91.0 % |
+| `smartpi/valve_curve.py` | 95.7 % → 66/69 (95.7 %) | 90.0 % → 18/20 (90.0 %) | 94.4 % → 94.4 % |
+| `smartpi/water_input.py` | 100.0 % → 166/166 (100.0 %) | 97.6 % → 44/44 (100.0 %) | 99.5 % → 100.0 % |
+| `smartpi/zone_fit.py` | 92.3 % → 202/208 (97.1 %) | 82.1 % → 72/78 (92.3 %) | 89.5 % → 95.8 % |
+| **Razem** | 93.5 % → 12034/12709 (94.7 %) | 84.6 % → 3340/3794 (88.0 %) | 91.5 % → 93.2 % |
+
+### 7.2 Własne linie forka
+
+Linie, które fork dodał albo zmienił (`git diff -U0 6a131df HEAD -- custom_components/vtherm_smartpi`,
+linie `+`; 6a131df to kod autora, od którego fork wyszedł). Gałąź liczy się do forka, gdy jej
+linia się liczy. Cele: 95 % linii i 90 % gałęzi. Teraz 99.2 % linii i 98.0 % gałęzi (97.7 % i
+93.1 % w punkcie odniesienia).
+
+| Plik | Linie | Gałęzie | Niepokryte |
+|---|---:|---:|---|
+| `algo.py` | 315/315 (100.0 %) | 99/100 (99.0 %) | 1052→1063 |
+| `config_flow.py` | 951/964 (98.7 %) | 343/352 (97.4 %) | 469, 470, 594, 630, 1190, 1837, 1843, 1853, 1854, 1855, 1856, 1857, 1928, 1099→1098 |
+| `handler.py` | 350/356 (98.3 %) | 104/108 (96.3 %) | 365, 366, 396, 397, 1187, 1188, 297→wyjście, 457→459, 465→468, 485→491 |
+| `smartpi/coupling_estimator.py` | 407/415 (98.1 %) | 161/170 (94.7 %) | 105, 167, 227, 231, 238, 253, 528, 670, 180→198 |
+| `smartpi/effective_model.py` | 94/96 (97.9 %) | 28/30 (93.3 %) | 34, 169 |
+| `smartpi/zone_fit.py` | 202/208 (97.1 %) | 72/78 (92.3 %) | 94, 104, 108, 167, 202, 255 |
+| **Razem** | 4469/4504 (99.2 %) | 1487/1518 (98.0 %) | |
+
+Pozostałe pliki forka mają 100 %: `__init__.py`, `const.py`, `heating_inputs.py`, `repairs.py`, `sensor.py`, `settings.py`, `smartpi/boiler_call.py`, `smartpi/calibration.py`, `smartpi/const.py`, `smartpi/dependencies.py`, `smartpi/dependency_inputs.py`, `smartpi/dependency_model.py`, `smartpi/diagnostics.py`, `smartpi/learning_window.py`, `smartpi/source_candidates.py`, `smartpi/source_link.py`, `smartpi/source_model.py`, `smartpi/source_settings.py`, `smartpi/split.py`, `smartpi/water_input.py`.
+
+**Co zostaje niepokryte.** Nic z tego nie wymaga prawdziwego Home Assistant: każde to
+zabezpieczenie, do którego nie dochodzą żadne prawdziwe dane.
+
+- `algo.py` 1052→1063: cykl, który kończy się bez swojego nominalnego czasu, nie zapisuje mocy do
+  uczenia sąsiadów; harmonogram VTherm zawsze podaje ten czas.
+- `config_flow.py` 469–470: pozycja strefy, której odpowiedzi emitera nie da się odczytać;
+  formularz strefy zapisuje tylko czytelne (ma ją tylko wpis zmieniony ręcznie).
+- `config_flow.py` 594: termostat bez unikalnego ID; każde wywołanie podaje unikalne ID encji z
+  rejestru.
+- `config_flow.py` 630: nazwa głównego źródła bez wpisu SmartPI; okno dowiaduje się o głównym
+  źródle tylko z zapisanego wpisu, którego tytuł znajduje najpierw.
+- `config_flow.py` 1099→1098: problem z inną pozycją listy niż nowa; każdy formularz utrzymuje
+  zapisaną listę poprawną, więc zawieść może tylko nowa pozycja.
+- `config_flow.py` 1190: encja climate, której wpis konfiguracji zniknął; Home Assistant usuwa
+  encje razem z ich wpisem.
+- `config_flow.py` 1837–1857: listy sprawdzane ponownie przy zapisie; każda sekcja sprawdza to, co
+  zmienia, a zmiana zrobiona w innym oknie zatrzymuje zapis wcześniej (`zone_changed`), więc dociera
+  tu tylko lista zmieniona ręcznie.
+- `config_flow.py` 1928: podstawa obu przepływów, którą każdy z nich zastępuje.
+- `handler.py` 365–366, 396–397, 1187–1188: wyjątek z rejestru encji albo problemów Home
+  Assistant, przechwycony, żeby regulacja trwała dalej; Home Assistant ich tam nie zgłasza.
+- `handler.py` 297→wyjście: zapisany stan wczytany, gdy termostat nie ma algorytmu; VTherm buduje
+  algorytm, zanim przywróci stan.
+- `handler.py` 457→459, 465→468, 485→491: termostat pracujący jako drugie źródło z innym
+  algorytmem niż SmartPI; moduł obsługi służy tylko termostatom na SmartPI.
+- `smartpi/coupling_estimator.py` 105: próbki bez rozrzutu w czasie; ich czasy tylko rosną.
+- `smartpi/coupling_estimator.py` 167, 238, 253, 670, 180→198: numeryczne zabezpieczenia
+  rozwiązywania układu równań; wywołujący najpierw sprawdzają, że macierz jest dobrze
+  uwarunkowana, odwrotność macierzy właśnie rozwiązanej nie może zawieść, a obliczenie zbiega się
+  długo przed swoim limitem.
+- `smartpi/coupling_estimator.py` 227, 231: wspólny model liczy się tylko przy co najmniej 24
+  wierszach i gdy jego kolumny da się rozróżnić.
+- `smartpi/coupling_estimator.py` 528: zero czasu między dwiema próbkami; kolejne czasy tylko
+  rosną.
+- `smartpi/effective_model.py` 34: czas przed pierwszym punktem trajektorii; trajektoria zaczyna
+  się od 0, a wcześniejsze czasy wracają przedtem.
+- `smartpi/effective_model.py` 169: strata poniżej swojej dolnej granicy; nauczone `b` jest
+  trzymane na tej granicy.
+- `smartpi/zone_fit.py` 94, 104, 108, 255: numeryczne zabezpieczenia macierzy, które obliczenie
+  już rozwiązało.
+- `smartpi/zone_fit.py` 167: próbka z wartościami dla innych kandydatów niż te modelu; jedyny
+  wywołujący podaje jedną wartość na kandydata.
+- `smartpi/zone_fit.py` 202: moc, która nie jest skończoną liczbą; dane wejściowe są sprawdzane na
+  wejściu.
+
+Pokrycie pokazało też kod, którego nic nie używało; został usunięty: właściwość `response`
+drugiego źródła i dwie metody formularzy.
+
+### 7.3 Funkcje, warianty i przypadki użycia
+
+Jeden wiersz na wariant albo przypadek użycia: gdzie jest testowany w procesie (`plik::test`), w
+symulacji (sekcja 3) i na ławce (sekcja 6), oraz jego stan. „Pokryty”: przetestowany tam, gdzie to
+ważne; ostatnia kolumna mówi, co zostaje nieprzetestowane i dlaczego.
+
+**Znane wejścia** (podstawa rozszerzeń)
+
+| Wariant / przypadek użycia | Test w procesie | Symulacja | QAS | Stan | Działanie |
+|---|---|---|---|---|---|
+| Złożenie: `b_eff`, `T_ref`, ograniczenie przesunięcia | `test_smartpi_effective_model.py::test_one_exchange_shifts_the_reference_towards_the_other_temperature`, `::test_reference_lies_between_outdoor_and_neighbour`, `::test_known_heat_is_bounded_when_losses_are_small` | N2, N3 | QD5 | pokryty | — |
+| Punkt podstawienia (każdy składnik regulacji używa `b_eff`, `T_ref`) | `test_smartpi_dependencies_algo.py::test_substitution_reaches_every_control_component` | N3, N7 | QD6 | pokryty | — |
+| Korekta uczenia (surowe wartości do uczenia, znane ciepło odjęte) | `test_smartpi_dependencies_algo.py::test_known_exchange_corrects_the_learning`, `test_smartpi_learning_window_known_inputs.py` | N2 | QD5 | pokryty | — |
+| Blokady (`door_open`, `door_settling`, `neighbour_window`; czasy martwe wstrzymane) | `test_smartpi_dependency_model.py::test_open_door_gates_learning_then_the_door_settles`, `test_smartpi_dependencies_algo.py::test_learning_gate_pauses_learning_and_dead_times` | N6 | QD4, QD5s | pokryty | — |
+| Grzanie i chłodzenie | `test_smartpi_dependency_model.py::test_preset_outside_the_thermostat_range_falls_back_to_turning_off`, `test_smartpi_dependency_model_source.py::test_in_cooling_the_source_has_its_own_coefficient_and_a_negative_effect` | N5, Z7 | — | pokryty | chłodzenia nie ma na ławce (w domu testów tylko grzanie) |
+| Stopniowe wejście nowo poznanego współczynnika | `test_smartpi_dependency_model_source.py::test_a_newly_known_coefficient_enters_gradually`, `test_smartpi_dependencies_algo.py::test_the_fitted_loss_in_the_gains_fades_in_with_its_exchange` | N3 | — | pokryty | — |
+| Bez zależności nic się nie zmienia | `test_smartpi_regression_no_dependencies.py::test_inactive_dependencies_change_nothing`, `test_smartpi_effective_model.py::test_without_inputs_the_raw_values_pass_through_unchanged` | §3.6 punkt odniesienia | QB1 | pokryty | — |
+
+**Strefy sąsiednie**
+
+| Wariant / przypadek użycia | Test w procesie | Symulacja | QAS | Stan | Działanie |
+|---|---|---|---|---|---|
+| Tryb `door` | `test_smartpi_coupling_estimator.py::test_door_neighbour_k_is_learned` | N2 | QD5 | pokryty | — |
+| Tryb `always` | `test_smartpi_coupling_estimator.py::test_always_neighbour_is_fitted_with_b_when_separable` | N3, N7 | QD6 | pokryty | — |
+| Tryb `none` | `test_smartpi_dependency_model.py::test_without_readings_there_are_no_inputs` | N1 | QD3 | pokryty | — |
+| Czujniki drzwi: jeden, kilka, wspólny, nieznany albo niedostępny (zamknięte) | `test_smartpi_coupling_estimator.py::test_two_door_neighbours_open_together_are_separated`, `test_smartpi_dependencies.py`, `test_smartpi_dependency_inputs.py` | N2 | QD5s | pokryty | — |
+| Reakcje na okno `nothing`, `turn_off`, `frost`, `eco`, bez presetu | `test_smartpi_dependency_model.py::test_window_reaction_follows_the_chosen_action`, `::test_missing_preset_falls_back_to_turning_off`, `::test_most_protective_reaction_wins` | N6 | QD4 | pokryty | — |
+| Uczenie `k`: drzwi, zawsze, nie do odróżnienia | `test_smartpi_coupling_estimator.py::test_door_neighbours_that_cannot_be_told_apart_share_one_coefficient`, `::test_always_neighbour_that_cannot_be_separated_is_not_published` | N3 zgrubny | QD6 | pokryty | — |
+| Sąsiad niedostępny, w trybie bezpieczeństwa, bez temperatury | `test_smartpi_dependencies_handler.py::test_unknown_registry_id_has_no_influence`, `::test_neighbour_appearing_later_becomes_available`, `test_smartpi_dependency_inputs.py` | N4 | QD3 | pokryty | — |
+| Sąsiad VTherm albo czujnik | `test_config_flow_neighbours.py::test_sensor_neighbour_has_no_window_reaction`, `test_smartpi_dependency_model.py::test_sensor_neighbour_has_no_window` | N2, N3 | QD1 | pokryty | — |
+| Formularze: każdy błąd, ostrzeżenie, podpowiedź, sąsiad, którego nie ma, pytanie o reset | `test_config_flow_neighbours.py` (wszystkie) | — | QD1 | pokryty | — |
+| Restart: nauczone wymiany zachowane, nieczytelny stan odrzucony | `test_smartpi_dependency_model.py::test_state_survives_a_restart`, `::test_unreadable_saved_state_is_dropped` | — | QD2 | pokryty | — |
+
+**Strefa z dwoma źródłami ciepła**
+
+| Wariant / przypadek użycia | Test w procesie | Symulacja | QAS | Stan | Działanie |
+|---|---|---|---|---|---|
+| Reguły `lead_band`, `source_first`, `together` i ich parametry | `test_smartpi_split.py::test_rule_curves`, `::test_invalid_rules_are_rejected` | Z1, Z2 | QE5 | pokryty | — |
+| Rodzaje emiterów i zalecenie | `test_smartpi_split.py::test_recommendation_by_emitter`, `test_smartpi_source_model.py::test_emitter_types_give_starting_values` | Z4 | — | pokryty | — |
+| Własna odpowiedź | `test_config_flow_zone.py::test_a_custom_response_is_set_for_the_additional_source_only`, `test_smartpi_dependencies_handler.py::test_the_zone_reads_both_heating_types_from_the_entries` | — | — | pokryty | — |
+| Wspólne dopasowanie: opublikowane, po czasie, oba tryby HVAC | `test_smartpi_zone_fit.py` (wszystkie), `test_smartpi_dependency_model_source.py::test_a_fit_late_beyond_its_timeout_lets_smartpi_learn_on_its_own` | Z1, Z7 | QE5 | pokryty | — |
+| Bloki uczenia i zegar uczenia | `test_smartpi_dependency_model_source.py::test_while_smartpi_learns_the_source_works_in_blocks`, `::test_the_learning_clock_counts_the_source_at_work_per_hvac_mode` | Z1 | QE5 | pokryty | — |
+| Pętla podziału | `test_smartpi_split.py::test_the_loop_settles_on_the_rule_without_pulling`, `test_smartpi_dependency_model_source.py::test_after_learning_the_allocation_loop_drives_the_source` | Z1 | QE5 | pokryty | — |
+| Hamulec przewidujący | `test_smartpi_dependency_model_source.py::test_the_brake_eases_the_source_off_before_the_setpoint` i testy hamulca | Z1 noce | — | pokryty | — |
+| Wzmocnienie przy powrocie do nastawy | `test_smartpi_dependency_model_source.py::test_the_boost_ends_before_the_lead_s_heat_on_the_way_overshoots` | Z1 noce | — | pokryty | — |
+| Ścieżka wykonawcza: przełącznik, zawór, woda | `test_smartpi_sim_second_source.py::test_a_valve_source_follows_its_lead_even_when_vtherm_recalculates_it`, `::test_an_executive_source_applies_the_lead_s_power_with_its_own_water` | §3.2 zawór jako źródło, podłoga na wodzie | QE2, QE7, QW6 | pokryty | — |
+| Główne źródło, które zamilkło | `test_smartpi_source_link.py::test_a_lead_that_publishes_nothing_for_a_while_is_silent` | Z6 | QE3 | pokryty | — |
+| Usunięte główne źródło, usunięta strefa | `test_config_flow_zone.py::test_removing_the_zone_lets_both_regulate_alone` | — | QE1 | pokryty | — |
+| Odciążanie (zrzut mocy) każdego źródła | `test_smartpi_source_link.py::test_the_source_s_power_cap_is_kept_while_it_is_attached` | §3.2 zrzut mocy | QE6 | pokryty | — |
+| Zmienione urządzenia termostatu nadrzędnego | `test_smartpi_dependencies_handler.py::test_a_master_with_another_device_is_reported_at_a_reload` i testy termostatu nadrzędnego | — | QE4 | pokryty | — |
+| Formularze: każdy błąd, wpis tworzony przy zapisie, przeniesiona strefa, `zone_changed`, usunięcie, członek bez rodzaju ogrzewania, strefa ustawiona przy tworzeniu wpisu, strefa przeniesiona i przywrócona w jednym oknie | `test_config_flow_zone.py` (wszystkie) | — | QE1 | pokryty | — |
+| Restart | `test_smartpi_dependency_model_source.py::test_the_fit_its_response_and_the_learning_clock_survive_a_restart` | §3.2 restart | QE5 | pokryty | — |
+
+**Wejścia z instalacji grzewczej**
+
+| Wariant / przypadek użycia | Test w procesie | Symulacja | QAS | Stan | Działanie |
+|---|---|---|---|---|---|
+| Woda z encji: dane, niedostępna, zły typ, brak encji | `test_smartpi_heating_inputs.py::test_the_supply_sensor`, `::test_a_missing_supply_entity_gives_no_data` | W1 | QW1, QW9 | pokryty | — |
+| Woda od dostawcy: dane, `None`, zła wersja, wyjątek, złe typy, brak dostawcy | `test_smartpi_heating_inputs.py::test_a_provider_is_read_defensively`, `::test_badly_typed_water_fields_are_no_data`, `test_smartpi_water_handler.py::test_any_failure_means_no_data` | W1, §3.4 brak danych | QW1, QW7, QW10 | pokryty | — |
+| Wezwanie kotła: encje, dostawca, kocioł centralny VTherm, brak | `test_smartpi_boiler_handler.py` (wszystkie), `test_smartpi_heating_inputs.py::test_vt_s_central_boiler_called` | B1, B2 | QC1, QW5 | pokryty | — |
+| Sygnały kotła `defaults` / `own` | `test_smartpi_heating_inputs.py::test_the_boiler_signals_come_from_the_defaults_unless_the_thermostat_sets_its_own`, `test_config_flow_heating_inputs.py::test_the_thermostat_s_own_signals_are_prefilled_from_the_defaults` | — | QW1 | pokryty | — |
+| Wyprowadzone powody i zapotrzebowanie VTherm | `test_smartpi_heating_inputs.py::test_vt_s_reasons_follow_its_own_rule`, `::test_vt_s_powers_are_compared_in_one_unit` | — | QC2 | pokryty | — |
+| Stany współczynnika wody `live`, `none`, `average`, `lasting`, `dhw`, `unused` | `test_smartpi_water_input.py` (wszystkie) | W1, §3.4 | QW1–QW4 | pokryty | — |
+| Wstrzymania `no_heat`, `low_heat` | `test_smartpi_water_algo.py::test_hot_water_holds_the_command_and_the_integral`, `::test_cold_water_from_an_idle_boiler_still_calls_for_heat` | §3.4 ciepła woda | QW2 | pokryty | — |
+| Naprawa: pojawienie się, zniknięcie, rozwiązana, rozstrzygnięta w opcjach | `test_smartpi_water_handler.py::test_water_appearing_offers_the_model_reset_once_learned`, `::test_water_going_for_good_offers_the_model_reset`, `test_config_flow_heating_type.py::test_the_repair_resets_the_model_only_when_checked` | §3.4 brak danych, czujnik niedostępny | QW3, QW4, QW9 | pokryty | — |
+| Brak rodzaju ogrzewania, rodzaje elektryczne | `test_smartpi_water_handler.py::test_an_electric_or_no_type_neither_reads_nor_publishes`, `test_smartpi_boiler_handler.py::test_an_electric_or_no_heating_type_does_not_read_the_boiler` | — | QA6, QW8 | pokryty | — |
+
+**Wezwanie kotła**
+
+| Wariant / przypadek użycia | Test w procesie | Symulacja | QAS | Stan | Działanie |
+|---|---|---|---|---|---|
+| Tryby: czas karencji, `emitter_cooling`, `held`, `emitter_warming` | `test_smartpi_boiler_call.py::test_a_call_left_unanswered_holds_the_zone_until_the_boiler_starts_and_the_emitter_warms` | B1 | QC2, QC4 | pokryty | — |
+| Przełącznik i zawór | `test_smartpi_boiler_call.py::test_a_switched_device_off_within_its_cycle_is_no_hold`, `test_smartpi_boiler_algo.py::test_a_switched_device_gets_its_cycle_added_to_the_grace` | B1 | QC2 | pokryty | — |
+| Zatrzymanie w czasie nagrzewania | `test_smartpi_boiler_call.py::test_stopping_again_while_the_emitter_warms_cools_it_at_once` | — | — | pokryty | — |
+| Przełączenie uczenia w czasie wstrzymania | `test_smartpi_boiler_algo.py::test_pausing_learning_while_held_restarts_the_dead_time_estimator_from_its_input` | — | — | pokryty | — |
+| Kalibracja w czasie wstrzymania | `test_smartpi_boiler_algo.py::test_a_calibration_is_cancelled_while_the_boiler_is_not_called` | — | — | pokryty | — |
+| Dodatkowe źródło | `test_smartpi_boiler_algo.py::test_working_as_another_thermostat_s_source_clears_the_boiler_s_mode` | B2 | QW6 | pokryty | — |
+| Każde źródło i powód | `test_smartpi_boiler_handler.py::test_a_provider_says_why_it_does_not_call_the_boiler`, `test_smartpi_heating_inputs.py::test_a_provider_says_why_it_does_not_call_the_boiler` | B2 | QC2, QW5 | pokryty | — |
+
+**Wtyczka wokół nich**
+
+| Wariant / przypadek użycia | Test w procesie | Symulacja | QAS | Stan | Działanie |
+|---|---|---|---|---|---|
+| Opcje: menu, sekcje, jeden zapis, zamknięcie odrzuca, pytanie o reset raz, zmiana zrobiona w międzyczasie w innym oknie | `test_config_flow_save.py` (wszystkie), `test_config_flow_paths.py` (wszystkie), `test_config_flow.py`, `test_config_flow_dependencies.py` | — | QA2, QA7 | pokryty | — |
+| Ustawienia: wspólne i „tylko ten termostat”, „Use the SmartPI defaults”, czytane klucz po kluczu | `test_config_flow_settings.py` (wszystkie), `test_smartpi_settings.py` (wszystkie) | — | QA6, QB2 | pokryty | — |
+| Migracja do wersji 1.2 i powrót do 0.4.0 | `test_config_migration.py` (wszystkie) | — | QB2, QB3 | pokryty | — |
+| Usługi: wszystkie cztery, jak wywołanie wskazuje termostaty | `test_services_routing.py` (wszystkie), `test_services.py`, `test_handler_attributes.py::test_set_learning_service_publishes_and_persists` | — | QA3 | pokryty | — |
+| Zapisany stan: klucze forka, dane z 0.4.0, token resetu | `test_smartpi_dependencies_algo.py::test_dependency_state_persists_only_when_present`, `test_smartpi_dependencies_handler.py::test_the_reset_token_survives_a_restart`, `test_algo_persistence.py` | — | QA5, QB2 | pokryty | — |
+| Bloki diagnostyki i ich brak | `test_smartpi_dependencies_algo.py::test_diagnostics_show_dependencies_only_when_configured`, `test_smartpi_boiler_call.py::test_the_diagnostics_show_the_chosen_source_and_its_inputs_without_a_reading`, `test_smartpi_water_algo.py::test_diagnostics_and_persistence_of_a_water_type` | — | QA6, QC1 | pokryty | — |
+| Czujnik diagnostyczny: własny wpis, wartości domyślne, pełna diagnostyka | `test_sensor_own_entry.py` (wszystkie), `test_sensor.py` | — | QZ1 | pokryty | — |
+| Zdarzenia AutoCalib | `test_smartpi_autocalib_events.py` (wszystkie) | — | QA4 | pokryty | — |
+| Rodzaje ogrzewania, wodne i elektryczne | `test_config_flow_heating_type.py`, `test_smartpi_water_input.py::test_electric_and_unset_types_ignore_the_water` | — | QA6 | pokryty | — |

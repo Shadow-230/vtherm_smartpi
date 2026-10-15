@@ -5,8 +5,6 @@
       "global": {
         "title": "SmartPI defaults",
         "data": {
-          "minimal_activation_delay": "Minimal activation delay",
-          "minimal_deactivation_delay": "Minimal deactivation delay",
           "smart_pi_deadband": "Deadband",
           "smart_pi_hysteresis_on": "Hysteresis on",
           "smart_pi_hysteresis_off": "Hysteresis off",
@@ -14,93 +12,48 @@
           "smart_pi_use_setpoint_filter": "Use setpoint filter",
           "smart_pi_use_ff3": "Use FF3",
           "smart_pi_deadband_allow_p": "Allow damped P near deadband edge",
-          "smart_pi_allow_pwm_cycle_force": "Allow PWM cycle restart on band transitions",
-          "smart_pi_debug": "Record full diagnostics (debug)",
-          "smart_pi_enable_valve_linearization": "Enable valve curve linearization",
-          "smart_pi_heating_type": "Heating type"
+          "smart_pi_debug": "Record full diagnostics (debug)"
         }
       },
       "thermostat": {
         "title": "SmartPI per-thermostat",
+        "description": "Choose the thermostat. Its settings follow in a menu; nothing is written before **Save and finish**.",
         "data": {
           "target_vtherm_unique_id": "Target thermostat"
         }
       },
-      "thermostat_settings": {
-        "title": "SmartPI per-thermostat",
-        "data": {
-          "minimal_activation_delay": "Minimal activation delay",
-          "minimal_deactivation_delay": "Minimal deactivation delay",
-          "smart_pi_deadband": "Deadband",
-          "smart_pi_hysteresis_on": "Hysteresis on",
-          "smart_pi_hysteresis_off": "Hysteresis off",
-          "smart_pi_release_tau_factor": "Release tau factor",
-          "smart_pi_use_setpoint_filter": "Use setpoint filter",
-          "smart_pi_use_ff3": "Use FF3",
-          "smart_pi_deadband_allow_p": "Allow damped P near deadband edge",
-          "smart_pi_allow_pwm_cycle_force": "Allow PWM cycle restart on band transitions",
-          "smart_pi_debug": "Record full diagnostics (debug)",
-          "smart_pi_enable_valve_linearization": "Enable valve curve linearization",
-          "smart_pi_heating_type": "Heating type"
-        }
-      },
-      "thermostat_valve_curve": {
-        "title": "Valve curve",
-        "data": {
-          "smart_pi_min_valve": "Minimum valve opening",
-          "smart_pi_knee_demand": "Demand at knee",
-          "smart_pi_knee_valve": "Valve opening at knee",
-          "smart_pi_max_valve": "Maximum valve opening"
-        }
-      }
-    },
-    "error": {
-      "invalid_valve_curve": "The valve curve must satisfy minimum opening < knee opening < maximum opening."
-    },
-    "abort": {
-      "single_instance_allowed": "Only one SmartPI plugin configuration is allowed."
-    }
-  },
-  "options": {
-    "step": {
-      "init": {
-        "title": "SmartPI defaults",
-        "data": {
-          "minimal_activation_delay": "Minimal activation delay",
-          "minimal_deactivation_delay": "Minimal deactivation delay",
-          "smart_pi_deadband": "Deadband",
-          "smart_pi_hysteresis_on": "Hysteresis on",
-          "smart_pi_hysteresis_off": "Hysteresis off",
-          "smart_pi_release_tau_factor": "Release tau factor",
-          "smart_pi_use_setpoint_filter": "Use setpoint filter",
-          "smart_pi_use_ff3": "Use FF3",
-          "smart_pi_deadband_allow_p": "Allow damped P near deadband edge",
-          "smart_pi_allow_pwm_cycle_force": "Allow PWM cycle restart on band transitions",
-          "smart_pi_debug": "Record full diagnostics (debug)",
-          "smart_pi_enable_valve_linearization": "Enable valve curve linearization",
-          "smart_pi_heating_type": "Heating type"
-        },
-        "description": "Settings for the thermostats without their own SmartPI entry, and the boiler's signals shared by all thermostats.",
-        "menu_options": {
-          "settings": "Regulator settings",
-          "boiler_signals": "Boiler signals"
-        }
-      },
       "thermostat_menu": {
-        "title": "SmartPI thermostat options",
+        "title": "New SmartPI thermostat entry",
+        "description": "{note}Unsaved changes: {changes}\n\nClosing this window discards unsaved changes. **Save and finish** writes them.",
         "menu_options": {
-          "settings": "Regulator settings",
+          "settings": "Heating type and regulation",
+          "heating_inputs": "Water and boiler",
           "zone": "Zone with two heat sources",
-          "dependencies": "Zone dependencies",
+          "dependencies": "Neighbouring zones",
           "valve_curve": "Valve curve",
-          "heating_inputs": "Water and boiler"
+          "save": "Save and finish"
         }
       },
       "settings": {
-        "title": "Regulator settings",
+        "title": "Heating type and regulation",
+        "description": "The settings that belong to this thermostat. The heating type comes first: a water type uses the water data and the boiler's call (\"Water and boiler\"); not set, SmartPI reads neither. With \"Use the SmartPI defaults\" on, the shared regulator settings come from the \"SmartPI defaults\" entry; off, the next step sets this thermostat's own values.",
         "data": {
+          "smart_pi_heating_type": "Heating type",
           "minimal_activation_delay": "Minimal activation delay",
           "minimal_deactivation_delay": "Minimal deactivation delay",
+          "smart_pi_allow_pwm_cycle_force": "Allow PWM cycle restart on band transitions",
+          "smart_pi_enable_valve_linearization": "Enable valve curve linearization",
+          "smart_pi_use_defaults": "Use the SmartPI defaults"
+        },
+        "data_description": {
+          "minimal_activation_delay": "SmartPI's own: Versatile Thermostat's TPI delay is not used. 0: no delay.",
+          "smart_pi_use_defaults": "Off: this thermostat keeps its own values of the shared settings (they start as a copy of the defaults)."
+        }
+      },
+      "settings_own": {
+        "title": "This thermostat's regulator settings",
+        "description": "This thermostat's own values of the settings shared in \"SmartPI defaults\". A change in the defaults does not reach them.",
+        "data": {
           "smart_pi_deadband": "Deadband",
           "smart_pi_hysteresis_on": "Hysteresis on",
           "smart_pi_hysteresis_off": "Hysteresis off",
@@ -108,57 +61,8 @@
           "smart_pi_use_setpoint_filter": "Use setpoint filter",
           "smart_pi_use_ff3": "Use FF3",
           "smart_pi_deadband_allow_p": "Allow damped P near deadband edge",
-          "smart_pi_allow_pwm_cycle_force": "Allow PWM cycle restart on band transitions",
-          "smart_pi_debug": "Record full diagnostics (debug)",
-          "smart_pi_enable_valve_linearization": "Enable valve curve linearization",
-          "smart_pi_heating_type": "Heating type"
+          "smart_pi_debug": "Record full diagnostics (debug)"
         }
-      },
-      "dependencies": {
-        "title": "Zone dependencies",
-        "description": "{count} configured:\n{items}",
-        "menu_options": {
-          "neighbour_add": "Add a neighbouring zone",
-          "dependency_edit": "Edit a neighbouring zone",
-          "dependency_remove": "Remove dependencies"
-        }
-      },
-      "dependency_remove": {
-        "title": "Remove dependencies",
-        "data": {
-          "remove": "Remove"
-        }
-      },
-      "dependency_edit": {
-        "title": "Edit a neighbouring zone",
-        "data": {
-          "dependency": "Neighbour"
-        }
-      },
-      "neighbour_add": {
-        "title": "Add a neighbouring zone",
-        "description": "Choose the Versatile Thermostat or the temperature sensor of the neighbouring zone.",
-        "data": {
-          "entity": "Neighbour"
-        }
-      },
-      "neighbour_details": {
-        "title": "Neighbouring zone",
-        "description": "Connection with {neighbour}.{suggestions}",
-        "data": {
-          "mode": "Connection",
-          "door_sensors": "Door sensors",
-          "neighbour_window_action": "When the neighbour's window is open"
-        },
-        "data_description": {
-          "mode": "Always: the zones share their air. When a door is open: the exchange follows the door sensors. None: keep the neighbour on the list but ignore it.",
-          "door_sensors": "Doors between the two zones; the connection is open while any of them is open. Window sensors stay in the window detection of Versatile Thermostat.",
-          "neighbour_window_action": "Applied while the connection is open and the neighbour thermostat reports an open window."
-        }
-      },
-      "neighbour_confirm": {
-        "title": "Check the neighbour",
-        "description": "{warnings}\n\nSave anyway?"
       },
       "valve_curve": {
         "title": "Valve curve",
@@ -167,87 +71,6 @@
           "smart_pi_knee_demand": "Demand at knee",
           "smart_pi_knee_valve": "Valve opening at knee",
           "smart_pi_max_valve": "Maximum valve opening"
-        }
-      },
-      "zone": {
-        "title": "Zone with two heat sources",
-        "description": "This thermostat is the main source of a zone.\n\nMaster thermostat: {master}\nAdditional source: {source}\nSplit rule: {rule}",
-        "menu_options": {
-          "zone_master": "Change the zone",
-          "zone_remove": "Remove the zone"
-        }
-      },
-      "zone_master": {
-        "title": "Zone with two heat sources: master thermostat",
-        "description": "A zone heated by two thermostats with SmartPI (for example a radiator and an underfloor loop) is set up from its master thermostat: a Versatile Thermostat over climate whose two devices are these thermostats. The master holds the setpoint, presets, schedule, mode and windows of the zone and passes them to both.\n\nThe master must have self-regulation off and exactly two devices, both Versatile Thermostats with SmartPI, measuring the zone with the same temperature sensor, and neither may already belong to another zone. Recommended on the master: a long safety delay (its safety mode switches both devices off) and a small regulation threshold step.",
-        "data": {
-          "master": "Master thermostat"
-        }
-      },
-      "zone_sources": {
-        "title": "Zone with two heat sources: sources and split",
-        "description": "Master thermostat: {master}\n\nSource 1: {source_1} ({source_1_type})\nSource 2: {source_2} ({source_2_type})\n\nThe main source's SmartPI regulates the zone; the other source follows the split rule from one common model of the zone. Heating types come from each thermostat's own entry.\n\n{recommendation}",
-        "data": {
-          "main_source": "Main source",
-          "split_rule": "Split rule",
-          "custom_response": "Set the additional source's delay and lag"
-        },
-        "data_description": {
-          "main_source": "The source that corrects quickly; usually the faster one.",
-          "custom_response": "Otherwise its heating type gives the starting values, which the zone then learns. The main source's delay is learned by the zone."
-        }
-      },
-      "zone_parameter": {
-        "title": "Zone with two heat sources: rule parameter",
-        "description": "Main source: {main}\nAdditional source: {source}\n\n{hint}",
-        "data": {
-          "split_ratio": "Additional source's command (% of the main source's)",
-          "source_alone_percent": "Additional source alone up to (%)",
-          "lead_band_percent": "Main source's band (%)",
-          "source_lag_min": "Additional source: delay",
-          "source_tau_min": "Additional source: lag"
-        }
-      },
-      "zone_reset": {
-        "title": "Reset the zone's learned model",
-        "description": "This change affects what the zone has learned: a source added, removed or swapped, the main source changed, or the additional source's custom response changed. Resetting clears SmartPI's whole learned model of the main source (its a, b, dead times and the zone's fit) so that it learns again from the start; it is recommended.",
-        "data": {
-          "reset_model": "Reset the zone's learned model"
-        }
-      },
-      "source_role": {
-        "title": "Additional source of a zone",
-        "description": "This thermostat works as the additional source of the zone set up in {main}: it applies the commands of that zone's main source, and its own regulation and learning are paused. The zone's settings are in that entry. Here are the settings that still apply: its cycle's delays, its heating type and, for a valve, its curve. Its other regulator settings keep their values and apply only when it regulates on its own because the main source has gone silent.",
-        "data": {
-          "minimal_activation_delay": "Minimal activation delay",
-          "minimal_deactivation_delay": "Minimal deactivation delay",
-          "smart_pi_heating_type": "Heating type",
-          "smart_pi_enable_valve_linearization": "Enable valve curve linearization"
-        }
-      },
-      "source_menu": {
-        "title": "Additional source of a zone",
-        "menu_options": {
-          "source_role": "Settings that still apply",
-          "heating_inputs": "Water and boiler"
-        }
-      },
-      "boiler_signals": {
-        "title": "Boiler signals",
-        "description": "Entities that tell SmartPI what the boiler does. Every thermostat that reads its water data or the boiler's call from entities uses them, unless it sets its own. All are optional: leave a field empty if you have no such entity.",
-        "data": {
-          "smart_pi_heat_available_entity": "Boiler can heat",
-          "smart_pi_dhw_entity": "Hot water has priority",
-          "smart_pi_fault_entity": "Boiler fault",
-          "smart_pi_boiler_called_entity": "Boiler is called for heat",
-          "smart_pi_boiler_reason_entity": "Why the boiler is not called"
-        },
-        "data_description": {
-          "smart_pi_heat_available_entity": "On while the boiler can heat the circuits now.",
-          "smart_pi_dhw_entity": "On while the boiler heats the domestic hot water instead of the circuits.",
-          "smart_pi_fault_entity": "On while the boiler reports a fault.",
-          "smart_pi_boiler_called_entity": "On while the boiler is told to heat.",
-          "smart_pi_boiler_reason_entity": "A text sensor with one of: below_threshold, no_demand, activation_delay, boiler_fault."
         }
       },
       "heating_inputs": {
@@ -292,18 +115,107 @@
           "smart_pi_boiler_reason_entity": "A text sensor with one of: below_threshold, no_demand, activation_delay, boiler_fault."
         }
       },
-      "heating_reset": {
-        "title": "Reset the learned model",
-        "description": "The water data source or the supply sensor changed. SmartPI's learned heating power then has other units: with water data it is measured at a reference water temperature. Resetting clears SmartPI's whole learned model of this thermostat so that it learns again from the start; it is recommended. If you keep the model, SmartPI does not ask again when these water data start.",
+      "zone": {
+        "title": "Zone with two heat sources",
+        "description": "This thermostat is the main source of a zone.\n\nMaster thermostat: {master}\nAdditional source: {source}\nSplit rule: {rule}",
+        "menu_options": {
+          "zone_master": "Change the zone",
+          "zone_remove": "Remove the zone",
+          "thermostat_menu": "Back to the menu"
+        }
+      },
+      "zone_master": {
+        "title": "Zone with two heat sources: master thermostat",
+        "description": "A zone heated by two thermostats with SmartPI (for example a radiator and an underfloor loop) is set up from its master thermostat: a Versatile Thermostat over climate whose two devices are these thermostats. The master holds the setpoint, presets, schedule, mode and windows of the zone and passes them to both.\n\nThe master must have self-regulation off and exactly two devices, both Versatile Thermostats with SmartPI, measuring the zone with the same temperature sensor, and neither may already belong to another zone. Recommended on the master: a long safety delay (its safety mode switches both devices off) and a small regulation threshold step.",
         "data": {
-          "reset_model": "Reset the learned model"
+          "master": "Master thermostat"
+        }
+      },
+      "zone_heating_types": {
+        "title": "Zone with two heat sources: heating types",
+        "description": "Source 1: {source_1}\nSource 2: {source_2}\n\nThe zone needs the heating type of both sources, and a source here sets none in its own entry. The type is written to that source's entry when you save.",
+        "data": {
+          "source_1_heating_type": "Heating type of source 1",
+          "source_2_heating_type": "Heating type of source 2"
+        }
+      },
+      "zone_sources": {
+        "title": "Zone with two heat sources: sources and split",
+        "description": "Master thermostat: {master}\n\nSource 1: {source_1} ({source_1_type})\nSource 2: {source_2} ({source_2_type})\n\nThe main source's SmartPI regulates the zone; the other source follows the split rule from one common model of the zone. Heating types come from each thermostat's own entry (or the previous step).\n\n{recommendation}",
+        "data": {
+          "main_source": "Main source",
+          "split_rule": "Split rule",
+          "custom_response": "Set the additional source's delay and lag"
+        },
+        "data_description": {
+          "main_source": "The source that corrects quickly; usually the faster one.",
+          "custom_response": "Otherwise its heating type gives the starting values, which the zone then learns. The main source's delay is learned by the zone."
+        }
+      },
+      "zone_parameter": {
+        "title": "Zone with two heat sources: rule parameter",
+        "description": "Main source: {main}\nAdditional source: {source}\n\n{hint}",
+        "data": {
+          "split_ratio": "Additional source's command (% of the main source's)",
+          "source_alone_percent": "Additional source alone up to (%)",
+          "lead_band_percent": "Main source's band (%)",
+          "source_lag_min": "Additional source: delay",
+          "source_tau_min": "Additional source: lag"
+        }
+      },
+      "dependencies": {
+        "title": "Neighbouring zones",
+        "description": "{count} configured:\n{items}",
+        "menu_options": {
+          "neighbour_add": "Add a neighbouring zone",
+          "dependency_edit": "Edit a neighbouring zone",
+          "dependency_remove": "Remove neighbouring zones",
+          "thermostat_menu": "Back to the menu"
+        }
+      },
+      "neighbour_add": {
+        "title": "Add a neighbouring zone",
+        "description": "Choose the Versatile Thermostat or the temperature sensor of the neighbouring zone.",
+        "data": {
+          "entity": "Neighbour"
+        }
+      },
+      "neighbour_details": {
+        "title": "Neighbouring zone",
+        "description": "Connection with {neighbour}.{suggestions}",
+        "data": {
+          "mode": "Connection",
+          "door_sensors": "Door sensors",
+          "neighbour_window_action": "When the neighbour's window is open"
+        },
+        "data_description": {
+          "mode": "Always: the zones share their air. When a door is open: the exchange follows the door sensors. None: keep the neighbour on the list but ignore it.",
+          "door_sensors": "Doors between the two zones; the connection is open while any of them is open. Window sensors stay in the window detection of Versatile Thermostat.",
+          "neighbour_window_action": "Applied while the connection is open and the neighbour thermostat reports an open window."
+        }
+      },
+      "neighbour_confirm": {
+        "title": "Check the neighbour",
+        "description": "{warnings}\n\nKeep this neighbour anyway?"
+      },
+      "dependency_edit": {
+        "title": "Edit a neighbouring zone",
+        "data": {
+          "dependency": "Neighbour"
+        }
+      },
+      "dependency_remove": {
+        "title": "Remove neighbouring zones",
+        "description": "Nothing chosen: back to the menu.",
+        "data": {
+          "remove": "Remove"
         }
       },
       "model_reset": {
-        "title": "Reset the zone's learned model",
-        "description": "This change affects what the zone has learned: a neighbour added or removed, or its connection changed. Resetting clears SmartPI's whole learned model of this thermostat so that it learns again from the start; it is recommended.",
+        "title": "Reset the learned model",
+        "description": "These changes affect what SmartPI has learned: {reasons}. Resetting clears SmartPI's whole learned model of the thermostats concerned (for a zone, the main source's) so that they learn again from the start; it is recommended. If you keep the model after a change of the water data, SmartPI does not ask again when these data start.",
         "data": {
-          "reset_model": "Reset the zone's learned model"
+          "reset_model": "Reset the learned model"
         }
       }
     },
@@ -321,14 +233,305 @@
       "members_not_one_sensor": "Both devices must measure the zone with the same temperature sensor.",
       "member_in_another_zone": "One of the devices already belongs to another zone with two heat sources.",
       "source_is_neighbour": "This thermostat is the zone's additional source; it heats the same zone and cannot be its neighbour.",
-      "master_is_neighbour": "This thermostat is the zone's master; it measures the same zone and cannot be its neighbour."
+      "master_is_neighbour": "This thermostat is the zone's master; it measures the same zone and cannot be its neighbour.",
+      "neighbour_missing": "The neighbour entity no longer exists; remove it from the list.",
+      "zone_move_conflict": "The neighbours of the two thermostats cannot be merged (the same door sensor or neighbour twice). Remove the conflicting neighbour first.",
+      "invalid_entity": "Choose a thermostat with a unique ID."
     },
     "abort": {
-      "dependencies_unchanged": "No dependency was selected, nothing changed.",
-      "neighbour_missing": "The neighbour entity no longer exists; remove it from the list.",
+      "single_instance_allowed": "Only one SmartPI plugin configuration is allowed.",
+      "already_configured": "This thermostat already has a SmartPI entry.",
+      "dependencies_unchanged": "No neighbouring zone was chosen: nothing changed.",
       "no_master": "No Versatile Thermostat over climate has this thermostat among its devices. Create the zone's master thermostat first, with this thermostat and the zone's second thermostat as its devices.",
-      "main_entry_missing": "The SmartPI entry of the main source could not be created.",
-      "zone_changed": "The zone changed while this form was open (in another form, or the master's devices). Open the form again.",
+      "main_entry_missing": "The SmartPI entry of the zone's other thermostat could not be created. Nothing else was written for this thermostat.",
+      "zone_changed": "The zone or the neighbouring zones changed while this window was open (in another window, or the master's devices). Nothing was written. Open the window again.",
+      "zone_move_conflict": "The neighbours of the two thermostats cannot be merged (the same door sensor or neighbour twice). Remove the conflicting neighbour first."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "SmartPI defaults",
+        "description": "The settings shared by the thermostats that use the defaults, and the boiler's signals shared by all thermostats.\n\n{note}Unsaved changes: {changes}\n\nClosing this window discards unsaved changes. **Save and finish** writes them.",
+        "menu_options": {
+          "regulator": "Regulator settings",
+          "boiler_signals": "Boiler signals",
+          "save": "Save and finish"
+        }
+      },
+      "regulator": {
+        "title": "Regulator settings",
+        "description": "The settings shared by every thermostat that uses the SmartPI defaults: those without an entry of their own, and those whose entry has \"Use the SmartPI defaults\" on.",
+        "data": {
+          "smart_pi_deadband": "Deadband",
+          "smart_pi_hysteresis_on": "Hysteresis on",
+          "smart_pi_hysteresis_off": "Hysteresis off",
+          "smart_pi_release_tau_factor": "Release tau factor",
+          "smart_pi_use_setpoint_filter": "Use setpoint filter",
+          "smart_pi_use_ff3": "Use FF3",
+          "smart_pi_deadband_allow_p": "Allow damped P near deadband edge",
+          "smart_pi_debug": "Record full diagnostics (debug)"
+        }
+      },
+      "boiler_signals": {
+        "title": "Boiler signals",
+        "description": "Entities that tell SmartPI what the boiler does. Every thermostat that reads its water data or the boiler's call from entities uses them, unless it sets its own. All are optional: leave a field empty if you have no such entity.",
+        "data": {
+          "smart_pi_heat_available_entity": "Boiler can heat",
+          "smart_pi_dhw_entity": "Hot water has priority",
+          "smart_pi_fault_entity": "Boiler fault",
+          "smart_pi_boiler_called_entity": "Boiler is called for heat",
+          "smart_pi_boiler_reason_entity": "Why the boiler is not called"
+        },
+        "data_description": {
+          "smart_pi_heat_available_entity": "On while the boiler can heat the circuits now.",
+          "smart_pi_dhw_entity": "On while the boiler heats the domestic hot water instead of the circuits.",
+          "smart_pi_fault_entity": "On while the boiler reports a fault.",
+          "smart_pi_boiler_called_entity": "On while the boiler is told to heat.",
+          "smart_pi_boiler_reason_entity": "A text sensor with one of: below_threshold, no_demand, activation_delay, boiler_fault."
+        }
+      },
+      "source_menu": {
+        "title": "Additional source of a zone",
+        "description": "This thermostat works as the additional source of the zone set up in {main}.\n\n{note}Unsaved changes: {changes}\n\nClosing this window discards unsaved changes. **Save and finish** writes them.",
+        "menu_options": {
+          "source_role": "Settings that still apply",
+          "heating_inputs": "Water and boiler",
+          "valve_curve": "Valve curve",
+          "save": "Save and finish"
+        }
+      },
+      "source_role": {
+        "title": "Additional source of a zone",
+        "description": "This thermostat works as the additional source of the zone set up in {main}: it applies the commands of that zone's main source, and its own regulation and learning are paused. The zone's settings are in that entry. Here are the settings that still apply: its heating type, its cycle's delays and, for a valve, its curve. Its other regulator settings keep their values and apply only when it regulates on its own because the main source has gone silent.",
+        "data": {
+          "smart_pi_heating_type": "Heating type",
+          "minimal_activation_delay": "Minimal activation delay",
+          "minimal_deactivation_delay": "Minimal deactivation delay",
+          "smart_pi_enable_valve_linearization": "Enable valve curve linearization"
+        }
+      },
+      "thermostat_menu": {
+        "title": "SmartPI thermostat options",
+        "description": "{note}Unsaved changes: {changes}\n\nClosing this window discards unsaved changes. **Save and finish** writes them.",
+        "menu_options": {
+          "settings": "Heating type and regulation",
+          "heating_inputs": "Water and boiler",
+          "zone": "Zone with two heat sources",
+          "dependencies": "Neighbouring zones",
+          "valve_curve": "Valve curve",
+          "save": "Save and finish"
+        }
+      },
+      "settings": {
+        "title": "Heating type and regulation",
+        "description": "The settings that belong to this thermostat. The heating type comes first: a water type uses the water data and the boiler's call (\"Water and boiler\"); not set, SmartPI reads neither. With \"Use the SmartPI defaults\" on, the shared regulator settings come from the \"SmartPI defaults\" entry; off, the next step sets this thermostat's own values.",
+        "data": {
+          "smart_pi_heating_type": "Heating type",
+          "minimal_activation_delay": "Minimal activation delay",
+          "minimal_deactivation_delay": "Minimal deactivation delay",
+          "smart_pi_allow_pwm_cycle_force": "Allow PWM cycle restart on band transitions",
+          "smart_pi_enable_valve_linearization": "Enable valve curve linearization",
+          "smart_pi_use_defaults": "Use the SmartPI defaults"
+        },
+        "data_description": {
+          "minimal_activation_delay": "SmartPI's own: Versatile Thermostat's TPI delay is not used. 0: no delay.",
+          "smart_pi_use_defaults": "Off: this thermostat keeps its own values of the shared settings (they start as a copy of the defaults)."
+        }
+      },
+      "settings_own": {
+        "title": "This thermostat's regulator settings",
+        "description": "This thermostat's own values of the settings shared in \"SmartPI defaults\". A change in the defaults does not reach them.",
+        "data": {
+          "smart_pi_deadband": "Deadband",
+          "smart_pi_hysteresis_on": "Hysteresis on",
+          "smart_pi_hysteresis_off": "Hysteresis off",
+          "smart_pi_release_tau_factor": "Release tau factor",
+          "smart_pi_use_setpoint_filter": "Use setpoint filter",
+          "smart_pi_use_ff3": "Use FF3",
+          "smart_pi_deadband_allow_p": "Allow damped P near deadband edge",
+          "smart_pi_debug": "Record full diagnostics (debug)"
+        }
+      },
+      "valve_curve": {
+        "title": "Valve curve",
+        "data": {
+          "smart_pi_min_valve": "Minimum valve opening",
+          "smart_pi_knee_demand": "Demand at knee",
+          "smart_pi_knee_valve": "Valve opening at knee",
+          "smart_pi_max_valve": "Maximum valve opening"
+        }
+      },
+      "heating_inputs": {
+        "title": "Water and boiler",
+        "description": "Where SmartPI reads the water that reaches this thermostat's emitters, and whether the boiler is called for heat. Use entities of any integration (for example a temperature sensor on the supply pipe), or an integration that implements SmartPI's contract (a provider): it is listed here once installed. See SmartPI's documentation, \"Water and boiler inputs\" (documentation/en/water_input.md).",
+        "data": {
+          "smart_pi_water_source": "Water data",
+          "smart_pi_boiler_call_source": "Boiler's call"
+        },
+        "data_description": {
+          "smart_pi_water_source": "With the supply water temperature SmartPI knows how much heat a command brings. None: SmartPI works without it.",
+          "smart_pi_boiler_call_source": "Whether the boiler heats while this zone calls for heat: SmartPI does not learn from heat that does not come. None: SmartPI takes every command for heat."
+        }
+      },
+      "heating_entities": {
+        "title": "Water and boiler entities",
+        "description": "Boiler signals in SmartPI defaults:\n{defaults}",
+        "data": {
+          "smart_pi_supply_entity": "Supply water temperature",
+          "smart_pi_boiler_signals": "Boiler signals"
+        },
+        "data_description": {
+          "smart_pi_supply_entity": "The temperature of the water that reaches this thermostat's circuit (after its mixing valve, if it has one).",
+          "smart_pi_boiler_signals": "Take the boiler's signals from SmartPI defaults, or set this thermostat's own."
+        }
+      },
+      "heating_signals": {
+        "title": "This thermostat's boiler signals",
+        "description": "All are optional: leave a field empty if you have no such entity.",
+        "data": {
+          "smart_pi_heat_available_entity": "Boiler can heat",
+          "smart_pi_dhw_entity": "Hot water has priority",
+          "smart_pi_fault_entity": "Boiler fault",
+          "smart_pi_boiler_called_entity": "Boiler is called for heat",
+          "smart_pi_boiler_reason_entity": "Why the boiler is not called"
+        },
+        "data_description": {
+          "smart_pi_heat_available_entity": "On while the boiler can heat the circuits now.",
+          "smart_pi_dhw_entity": "On while the boiler heats the domestic hot water instead of the circuits.",
+          "smart_pi_fault_entity": "On while the boiler reports a fault.",
+          "smart_pi_boiler_called_entity": "On while the boiler is told to heat.",
+          "smart_pi_boiler_reason_entity": "A text sensor with one of: below_threshold, no_demand, activation_delay, boiler_fault."
+        }
+      },
+      "zone": {
+        "title": "Zone with two heat sources",
+        "description": "This thermostat is the main source of a zone.\n\nMaster thermostat: {master}\nAdditional source: {source}\nSplit rule: {rule}",
+        "menu_options": {
+          "zone_master": "Change the zone",
+          "zone_remove": "Remove the zone",
+          "thermostat_menu": "Back to the menu"
+        }
+      },
+      "zone_master": {
+        "title": "Zone with two heat sources: master thermostat",
+        "description": "A zone heated by two thermostats with SmartPI (for example a radiator and an underfloor loop) is set up from its master thermostat: a Versatile Thermostat over climate whose two devices are these thermostats. The master holds the setpoint, presets, schedule, mode and windows of the zone and passes them to both.\n\nThe master must have self-regulation off and exactly two devices, both Versatile Thermostats with SmartPI, measuring the zone with the same temperature sensor, and neither may already belong to another zone. Recommended on the master: a long safety delay (its safety mode switches both devices off) and a small regulation threshold step.",
+        "data": {
+          "master": "Master thermostat"
+        }
+      },
+      "zone_heating_types": {
+        "title": "Zone with two heat sources: heating types",
+        "description": "Source 1: {source_1}\nSource 2: {source_2}\n\nThe zone needs the heating type of both sources, and a source here sets none in its own entry. The type is written to that source's entry when you save.",
+        "data": {
+          "source_1_heating_type": "Heating type of source 1",
+          "source_2_heating_type": "Heating type of source 2"
+        }
+      },
+      "zone_sources": {
+        "title": "Zone with two heat sources: sources and split",
+        "description": "Master thermostat: {master}\n\nSource 1: {source_1} ({source_1_type})\nSource 2: {source_2} ({source_2_type})\n\nThe main source's SmartPI regulates the zone; the other source follows the split rule from one common model of the zone. Heating types come from each thermostat's own entry (or the previous step).\n\n{recommendation}",
+        "data": {
+          "main_source": "Main source",
+          "split_rule": "Split rule",
+          "custom_response": "Set the additional source's delay and lag"
+        },
+        "data_description": {
+          "main_source": "The source that corrects quickly; usually the faster one.",
+          "custom_response": "Otherwise its heating type gives the starting values, which the zone then learns. The main source's delay is learned by the zone."
+        }
+      },
+      "zone_parameter": {
+        "title": "Zone with two heat sources: rule parameter",
+        "description": "Main source: {main}\nAdditional source: {source}\n\n{hint}",
+        "data": {
+          "split_ratio": "Additional source's command (% of the main source's)",
+          "source_alone_percent": "Additional source alone up to (%)",
+          "lead_band_percent": "Main source's band (%)",
+          "source_lag_min": "Additional source: delay",
+          "source_tau_min": "Additional source: lag"
+        }
+      },
+      "dependencies": {
+        "title": "Neighbouring zones",
+        "description": "{count} configured:\n{items}",
+        "menu_options": {
+          "neighbour_add": "Add a neighbouring zone",
+          "dependency_edit": "Edit a neighbouring zone",
+          "dependency_remove": "Remove neighbouring zones",
+          "thermostat_menu": "Back to the menu"
+        }
+      },
+      "neighbour_add": {
+        "title": "Add a neighbouring zone",
+        "description": "Choose the Versatile Thermostat or the temperature sensor of the neighbouring zone.",
+        "data": {
+          "entity": "Neighbour"
+        }
+      },
+      "neighbour_details": {
+        "title": "Neighbouring zone",
+        "description": "Connection with {neighbour}.{suggestions}",
+        "data": {
+          "mode": "Connection",
+          "door_sensors": "Door sensors",
+          "neighbour_window_action": "When the neighbour's window is open"
+        },
+        "data_description": {
+          "mode": "Always: the zones share their air. When a door is open: the exchange follows the door sensors. None: keep the neighbour on the list but ignore it.",
+          "door_sensors": "Doors between the two zones; the connection is open while any of them is open. Window sensors stay in the window detection of Versatile Thermostat.",
+          "neighbour_window_action": "Applied while the connection is open and the neighbour thermostat reports an open window."
+        }
+      },
+      "neighbour_confirm": {
+        "title": "Check the neighbour",
+        "description": "{warnings}\n\nKeep this neighbour anyway?"
+      },
+      "dependency_edit": {
+        "title": "Edit a neighbouring zone",
+        "data": {
+          "dependency": "Neighbour"
+        }
+      },
+      "dependency_remove": {
+        "title": "Remove neighbouring zones",
+        "description": "Nothing chosen: back to the menu.",
+        "data": {
+          "remove": "Remove"
+        }
+      },
+      "model_reset": {
+        "title": "Reset the learned model",
+        "description": "These changes affect what SmartPI has learned: {reasons}. Resetting clears SmartPI's whole learned model of the thermostats concerned (for a zone, the main source's) so that they learn again from the start; it is recommended. If you keep the model after a change of the water data, SmartPI does not ask again when these data start.",
+        "data": {
+          "reset_model": "Reset the learned model"
+        }
+      }
+    },
+    "error": {
+      "invalid_valve_curve": "The valve curve must satisfy minimum opening < knee opening < maximum opening.",
+      "entity_without_unique_id": "This entity has no unique ID, so it cannot be referenced reliably.",
+      "self_reference": "A thermostat cannot be its own neighbour.",
+      "duplicate_neighbour": "This neighbour is already on the list.",
+      "door_mode_without_sensor": "The door connection needs at least one door sensor.",
+      "shared_door_sensor": "This door sensor already belongs to another neighbour of this zone.",
+      "window_sensor_rejected": "Window sensors stay in the window detection of Versatile Thermostat; choose door sensors.",
+      "master_auto_regulation": "Turn self-regulation off on the master thermostat: SmartPI regulates the zone in its devices.",
+      "master_not_two_devices": "The master thermostat must have exactly two devices.",
+      "member_without_smartpi": "Both devices of the master must be Versatile Thermostats using SmartPI.",
+      "members_not_one_sensor": "Both devices must measure the zone with the same temperature sensor.",
+      "member_in_another_zone": "One of the devices already belongs to another zone with two heat sources.",
+      "source_is_neighbour": "This thermostat is the zone's additional source; it heats the same zone and cannot be its neighbour.",
+      "master_is_neighbour": "This thermostat is the zone's master; it measures the same zone and cannot be its neighbour.",
+      "neighbour_missing": "The neighbour entity no longer exists; remove it from the list.",
+      "zone_move_conflict": "The neighbours of the two thermostats cannot be merged (the same door sensor or neighbour twice). Remove the conflicting neighbour first.",
+      "invalid_entity": "Choose a thermostat with a unique ID."
+    },
+    "abort": {
+      "dependencies_unchanged": "No neighbouring zone was chosen: nothing changed.",
+      "no_master": "No Versatile Thermostat over climate has this thermostat among its devices. Create the zone's master thermostat first, with this thermostat and the zone's second thermostat as its devices.",
+      "main_entry_missing": "The SmartPI entry of the zone's other thermostat could not be created. Nothing else was written for this thermostat.",
+      "zone_changed": "The zone or the neighbouring zones changed while this window was open (in another window, or the master's devices). Nothing was written. Open the window again.",
       "zone_move_conflict": "The neighbours of the two thermostats cannot be merged (the same door sensor or neighbour twice). Remove the conflicting neighbour first."
     }
   },
@@ -366,6 +569,7 @@
     },
     "heating_type": {
       "options": {
+        "not_set": "Not set (no water data, no boiler's call)",
         "radiator": "Water radiator",
         "floor_water": "Water underfloor heating",
         "floor_electric": "Electric heating mat",
@@ -427,6 +631,10 @@
           }
         }
       }
+    },
+    "thermostat_entries_created": {
+      "title": "SmartPI created an entry of its own for some thermostats",
+      "description": "The \"SmartPI defaults\" entry no longer holds the settings that belong to one thermostat (heating type, activation delays, valve curve, PWM cycle restart). These thermostats ran with such settings from the defaults, so each one now has its own SmartPI entry with them: {entries}. They use the shared settings of the defaults as before. Check each entry's options if a thermostat needs other values."
     }
   }
 }

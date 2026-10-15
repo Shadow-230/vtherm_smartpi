@@ -72,56 +72,77 @@ Ta sekcja opisuje, co użytkownik ustawia dla strefy i jej sąsiadów w opcjach 
 
 ### 2.1 Opcje i formularze
 
+Opcje wpisu termostatu działają tak jak w Versatile Thermostat. Każdą sekcję otwiera się z menu i
+każda do niego wraca. Zmiany zostają w otwartym oknie („szkic”), dopóki ostatnia pozycja, **Save and
+finish** (zapisz i zakończ), ich nie zapisze. Zamknięcie okna je odrzuca. Menu mówi, które sekcje
+mają niezapisane zmiany. Nowy wpis termostatu tworzy się w tym samym menu: nic nie powstaje przed
+**Save and finish**.
+
 ```mermaid
 flowchart TD
     O["Opcje wpisu termostatu"] --> R{"Ten termostat jest dodatkowym źródłem strefy?"}
-    R -- tak --> SR["Jego rola, wpis głównego źródła, minimalne czasy załączenia i wyłączenia, rodzaj ogrzewania, krzywa zaworu"]
+    R -- tak --> SM{"Menu dodatkowego źródła"}
+    SM --> SR["Ustawienia, które nadal działają: rodzaj ogrzewania, minimalne czasy, krzywa zaworu"]
+    SM --> SW["Woda i kocioł, dla wodnego rodzaju ogrzewania"]
+    SM --> SS["Save and finish"]
     R -- nie --> M{Menu}
-    M --> ST["Ustawienia regulatora"]
+    M --> ST["Rodzaj ogrzewania i regulacja"]
+    M --> WB["Woda i kocioł, dla wodnego rodzaju ogrzewania"]
     M --> ZN["Strefa z dwoma źródłami ciepła"]
-    M --> DL["Zależności: sąsiedzi"]
+    M --> DL["Strefy sąsiednie"]
     M --> VC["Krzywa zaworu, gdy linearyzacja jest włączona"]
+    M --> SV["Save and finish"]
     ZN --> ZE{"Strefa już istnieje?"}
     ZE -- tak --> ZM["Zmień ją lub usuń"]
-    ZE -- nie --> MA["Termostat nadrzędny"]
+    ZE -- nie --> MX{"Jest termostat nadrzędny?"}
+    MX -- nie --> M
+    MX -- tak --> MA["Termostat nadrzędny"]
     ZM --> MA
-    ZM --> RS
+    ZM -- usuń --> M
     MA --> MV{"Poprawny?"}
     MV -- nie --> MA
-    MV -- tak --> SO["Źródło 1, Źródło 2: główne źródło, reguła podziału, własna odpowiedź"]
+    MV -- tak --> HT{"Oba źródła mają rodzaj ogrzewania?"}
+    HT -- nie --> HQ["Rodzaj ogrzewania źródła, które go nie ma"]
+    HT -- tak --> SO["Źródło 1, Źródło 2: główne źródło, reguła podziału, własna odpowiedź"]
+    HQ --> SO
     SO --> PA["Parametr reguły, przy własnej odpowiedzi także opóźnienie i bezwładność dodatkowego źródła"]
-    PA --> AF{"Wpływa na to, czego strefa się nauczyła?"}
-    AF -- tak --> RS["Zresetować nauczony model strefy?"]
-    AF -- nie --> SV["Zapis we wpisie głównego źródła"]
-    RS --> SV
+    PA --> PV{"Sąsiadów da się połączyć?"}
+    PV -- nie --> PA
+    PV -- tak --> M
     DL --> NA["Dodaj strefę sąsiednią: encja"]
     DL --> NE["Edytuj strefę sąsiednią"]
-    DL --> NR["Usuń sąsiadów"]
+    DL --> NR["Usuń strefy sąsiednie"]
     NA --> ND["Szczegóły: tryb, czujniki drzwi, reakcja na okno"]
     NE --> ND
     ND --> V{"Poprawne?"}
     V -- nie --> ND
     V -- tak --> W{"Ostrzeżenia?"}
     W -- tak --> NC["Potwierdź ostrzeżenia"]
-    W -- nie --> NF{"Nowe połączenie?"}
-    NC --> NF
-    NF -- tak --> NRS["Zresetować nauczony model strefy?"]
-    NF -- nie --> NSV["Zapis"]
-    NRS --> NSV
-    NR --> NRS
+    W -- nie --> M
+    NC --> M
+    NR --> M
+    SV --> CK{"W międzyczasie zmienione w innym oknie?"}
+    CK -- tak --> AB["Przerwanie: nic nie jest zapisane"]
+    CK -- nie --> AF{"Zmiana wpływa na to, czego się nauczono?"}
+    AF -- tak --> RS["Zresetować nauczony model?"]
+    AF -- nie --> WR["Zapis wpisów, każdy przeładowuje się raz"]
+    RS --> WR
 ```
 
 **Strefa z dwoma źródłami ciepła.**
 
 - **Termostat nadrzędny.** Formularz pokazuje listę termostatów Versatile Thermostat typu over
   climate, które mają ten termostat wśród swoich urządzeń. (VTherm typu over climate steruje
-  innymi termostatami, czyli swoimi urządzeniami.) Jeśli takiego nie ma, formularz wyjaśnia, co
-  utworzyć. Termostat nadrzędny musi mieć wyłączoną samoregulację, bo SmartPI reguluje w jego
+  innymi termostatami, czyli swoimi urządzeniami.) Jeśli takiego nie ma, sekcja wraca do menu,
+  które wyjaśnia, co utworzyć. Termostat nadrzędny musi mieć wyłączoną samoregulację, bo SmartPI reguluje w jego
   urządzeniach. Musi mieć dokładnie dwa urządzenia. Oba muszą być termostatami Versatile
   Thermostat, które używają SmartPI i mierzą strefę tym samym czujnikiem temperatury. Żadne z
   nich nie może już należeć do innej strefy.
+- **Rodzaje ogrzewania.** Strefa potrzebuje rodzaju ogrzewania obu urządzeń. O rodzaj urządzenia,
+  którego własny wpis go nie ma, formularz pyta w kroku przed źródłami. Rodzaj jest zapisywany we
+  wpisie tego urządzenia przy **Save and finish** (jeśli urządzenie nie ma wpisu, wpis powstaje).
 - **Źródła.** Źródło 1 i Źródło 2 to urządzenia termostatu nadrzędnego. Formularz pokazuje każde
-  z nich z rodzajem ogrzewania z jego własnego wpisu i o ten rodzaj nie pyta. W tym samym kroku
+  z nich z rodzajem ogrzewania z jego własnego wpisu. W tym samym kroku
   użytkownik wybiera **główne źródło**: to, którego SmartPI reguluje i szybko koryguje. Domyślnie
   jest to szybsze urządzenie. Użytkownik wybiera też regułę podziału (sposób dzielenia pracy
   między źródła), a formularz proponuje regułę zalecaną dla tych dwóch rodzajów ogrzewania
@@ -137,28 +158,32 @@ flowchart TD
 - **Gdzie jest zapisana.** Strefa jest zapisana we wpisie głównego źródła jako jego pozycja
   `source`, który wskazuje też termostat nadrzędny (`zone_master`). Sąsiedzi i drzwi strefy są w
   tym samym wpisie. Wpis drugiego termostatu nie przechowuje nic o strefie. Ten termostat
-  odczytuje swoją rolę z wpisu głównego źródła. Termostat bez wpisu SmartPI dostaje nowy wpis,
-  utworzony z domyślnych ustawień globalnych. Jego utworzenie restartuje tylko ten termostat.
+  odczytuje swoją rolę z wpisu głównego źródła. Termostat bez wpisu SmartPI dostaje nowy wpis przy
+  **Save and finish**. Wpis korzysta z ustawień wspólnych z wartości domyślnych i ma rodzaj
+  ogrzewania termostatu. Jego utworzenie restartuje tylko ten termostat.
 - **Główne źródło inne niż termostat, którego opcje są otwarte.** Zdarza się to, gdy strefę
   ustawia się z termostatu, który zostaje dodatkowym źródłem, albo gdy zmienia się główne
   źródło. Formularz przenosi wtedy strefę, razem z sąsiadami z tego wpisu, do wpisu głównego
   źródła i opróżnia listę w tym wpisie. Dawne główne źródło działa wtedy jako dodatkowe. Sąsiad,
   który jest teraz częścią strefy, zostaje usunięty z listy. Jeśli przeniesiony sąsiad koliduje z
   jednym z własnych sąsiadów nowego głównego źródła (ten sam sąsiad albo ten sam czujnik drzwi),
-  wygrywa przeniesiony. Jeśli lista nadal nie przechodzi sprawdzenia, przeniesienie zostaje
-  przerwane. Przeniesieni sąsiedzi uczą się swojej wymiany od nowa w nowym głównym źródle.
-- **Jeden formularz naraz.** Przy zapisie formularz jeszcze raz sprawdza, czy termostat
-  nadrzędny i wpisy obu termostatów są nadal takie, jak w chwili, gdy je odczytał. Jeśli nie,
-  przerywa i prosi użytkownika o ponowne otwarcie. Dzięki temu dwa formularze otwarte w tym
-  samym czasie nie mogą sprawić, że oba termostaty wskażą siebie nawzajem.
+  wygrywa przeniesiony. Jeśli lista nadal nie przechodzi sprawdzenia, krok parametru pokazuje błąd
+  `zone_move_conflict`. Przeniesieni sąsiedzi uczą się swojej wymiany od nowa w nowym głównym
+  źródle. Oba wpisy są zapisywane przy **Save and finish**.
+- **Jedno okno naraz.** Przy **Save and finish** formularz jeszcze raz sprawdza, czy termostat
+  nadrzędny i wpisy obu termostatów są nadal takie, jak w chwili, gdy je odczytał, i czy lista
+  zależności tego wpisu nie zmieniła się w innym oknie. Jeśli nie, przerywa (`zone_changed`), niczego
+  nie zapisuje i prosi o ponowne otwarcie okna. Dzięki temu dwa okna otwarte w tym samym czasie nie
+  mogą sprawić, że oba termostaty wskażą siebie nawzajem.
 - **Sąsiedzi strefy.** Dodatkowego źródła strefy i jej termostatu nadrzędnego nie można dodać
   jako sąsiadów strefy, bo ogrzewają lub mierzą tę samą strefę.
-- **Przerwania.** Formularz zatrzymuje się z komunikatem w tych przypadkach: strefa zmieniła się,
-  gdy formularz był otwarty (`zone_changed`); nie da się połączyć sąsiadów z dwóch wpisów
-  (`zone_move_conflict`); nie da się utworzyć wpisu głównego źródła (`main_entry_missing`).
-- **Opcje dodatkowego źródła** pokazują, który wpis przechowuje strefę. Pokazują też ustawienia,
-  które nadal działają, gdy podąża ono za głównym źródłem: jego minimalne czasy załączenia
-  i wyłączenia, rodzaj ogrzewania i, dla zaworu, jego krzywą. Pozostałe ustawienia regulatora
+- **Kiedy okno się zatrzymuje.** Tylko **Save and finish** może zamknąć okno bez zapisu: gdy strefa
+  zmieniła się, kiedy okno było otwarte (`zone_changed`), albo gdy nie da się utworzyć wpisu drugiego
+  termostatu strefy (`main_entry_missing`). W sekcji problem jest błędem na jej formularzu albo sekcja wraca do
+  menu z notatką.
+- **Opcje dodatkowego źródła** otwierają własne menu, które pokazuje, który wpis przechowuje strefę.
+  Jego pierwsza pozycja ma ustawienia, które nadal działają, gdy podąża ono za głównym źródłem: jego
+  rodzaj ogrzewania, minimalne czasy załączenia i wyłączenia oraz, dla zaworu, jego krzywą. Pozostałe ustawienia regulatora
   zachowują swoje wartości. Działają tylko wtedy, gdy reguluje ono samodzielnie, bo główne źródło
   zamilkło, czyli nie wysyła wysterowań (sekcja 5.7).
 - **Rodzaje ogrzewania przy starcie.** Za każdym razem, gdy główne źródło startuje, moduł obsługi
@@ -193,10 +218,10 @@ flowchart TD
 - **Sąsiad oznaczony jako `indistinguishable`** (nie do odróżnienia) nie dał się odróżnić od
   wpływu temperatury zewnętrznej ani od innego sąsiada. Nic nie jest dla niego publikowane, a
   strefa działa tak, jakby go nie było.
-- **Przerwania.** Formularz zatrzymuje się, gdy użytkownik edytuje sąsiada, którego encja już
-  nie istnieje (`neighbour_missing`), usuwa, nie zaznaczywszy niczego
-  (`dependencies_unchanged`), albo zapisuje po tym, jak lista zmieniła się w innym formularzu
-  (`zone_changed`).
+- **Każdy krok kończy się w menu.** Edycja sąsiada, którego encja już nie istnieje, jest błędem na
+  formularzu (`neighbour_missing`). Usunięcie bez zaznaczenia niczego wraca do menu, które o tym
+  mówi. Zapis po tym, jak lista zmieniła się w innym oknie, zatrzymuje okno (`zone_changed`). Menu
+  sąsiadów, tak jak menu strefy, ma pozycję powrotu do głównego menu.
 
 **Zapisana konfiguracja.** Pozycje są zapisane w opcjach wpisu pod kluczem
 `smart_pi_dependencies`. Pozycja sąsiada zawiera `id`, `kind` (`neighbour`), `entity`
@@ -210,18 +235,21 @@ wersję może też zawierać `lead_lag_min` i `lead_tau_min`, których nic nie u
 
 ### 2.2 Reset nauczonego modelu
 
-Gdy zmiana konfiguracji wpływa na to, czego strefa się nauczyła, formularz pokazuje krok z opcją
-„Reset the zone's learned model” (zresetuj nauczony model strefy). Opcja jest domyślnie
-zaznaczona (`zone_reset` w formularzu strefy, `model_reset` w formularzach sąsiadów):
+Zmiana, która wpływa na to, czego się nauczono, jest powodem jednego pytania przy **Save and
+finish**: kroku „Reset the learned model” (zresetuj nauczony model, `model_reset`), domyślnie
+zaznaczonego, który wymienia sekcje, z których pochodzą powody. Pytanie pada raz, nawet gdy zmieniło
+się kilka sekcji, a bez powodu nie pada wcale:
 
-| Zmiana | Pokazuje krok resetu |
+| Zmiana | Powód pytania o reset |
 |---|---|
 | strefa ustawiona lub usunięta, jej dodatkowe źródło zamienione na inne, zmienione główne źródło, zmieniona własna odpowiedź dodatkowego źródła | tak |
 | sąsiad dodany lub usunięty, zmieniony jego tryb lub czujniki drzwi | tak |
+| rodzaj ogrzewania, źródło danych o wodzie albo jego czujnik zasilania ([Wejścia wody i kotła, §2](water_input.md#2-konfiguracja)) | tak |
 | reguła podziału lub jej parametr, reakcja na okno, minimalne czasy załączenia i wyłączenia oraz inne ustawienia regulatora | nie |
 
-- **Jak jest stosowany.** Jeśli użytkownik wybierze reset, formularz zapisuje nowy losowy token
-  (znacznik) we wpisie, który przechowuje strefę (`smart_pi_reset_token`). Gdy termostat startuje
+- **Jak jest stosowany.** Jeśli użytkownik wybierze reset, zapis umieszcza nowy losowy token
+  (znacznik, `smart_pi_reset_token`) w każdym wpisie, którego to dotyczy: w tym termostacie, a dla
+  strefy we wpisie głównego źródła (tam, gdzie jest strefa). Gdy termostat startuje
   z tym wpisem, SmartPI jeden raz resetuje cały nauczony model: `a`, `b`, czasy martwe
   (opóźnienia, zanim strefa zareaguje na wysterowanie), dopasowanie strefy i wymiany, tak jak
   robi to usługa `reset_smartpi_learning`. Token zachowuje w swoim zapisanym stanie
@@ -333,6 +361,8 @@ identyfikatorem z rejestru, więc zmiana nazwy encji nie zrywa powiązania.
   drzwi „zwykle zamkniętych”, a otwarcia nie są wykrywane z danych.
 - **Sąsiada ustaw we wpisach obu stref**, tak by każda wymieniała drugą. Wymiana działa w obie
   strony, a formularz ostrzega, gdy własny wpis sąsiada nie wymienia tej strefy.
+- Formularze sąsiadów wracają do menu opcji; sąsiad jest zapisywany przy **Save and finish**
+  (sekcja 2.1).
 - Dla sąsiada VTherm **reakcja na okno** mówi, co robić, gdy połączenie jest aktywne, a sąsiad
   zgłasza otwarte okno: `nothing`, `turn_off`, `frost`, `eco`.
 - Połączenie jest pomijane, gdy sąsiad jest niedostępny, jest w trybie bezpieczeństwa albo nie
@@ -1140,10 +1170,15 @@ W istniejących plikach:
   źródło wykonuje ścieżkę wykonawczą zamiast własnego regulatora. Gdy główne źródło milczy, działa
   własnym regulatorem (sekcja 5.7).
 - **`config_flow.py`** daje wpisowi termostatu menu opcji z formularzem strefy, listą zależności
-  i formularzami sąsiadów. Termostat, który pracuje jako dodatkowe źródło, dostaje zamiast tego
-  formularz swojej roli. Krok importu tworzy wpis członka strefy, który go nie ma (sekcja 2.1).
+  i formularzami sąsiadów; jeden mixin (`SmartPIFlowSections`) zawiera wszystkie sekcje, dla opcji
+  i dla nowego wpisu. Każda sekcja pracuje na szkicu i kończy się w menu; `async_step_save`
+  sprawdza jeszcze raz, raz pyta o reset i zapisuje. Termostat, który pracuje jako dodatkowe źródło,
+  dostaje zamiast tego własne menu. Krok importu tworzy przy zapisie wpis członka strefy, który go
+  nie ma (sekcja 2.1).
 - **`__init__.py`** przeładowuje główne źródło strefy, gdy zapisuje się wpis jej dodatkowego
-  źródła. Gdy formularz strefy tworzy wpis, przeładowuje tylko termostat, którego ten wpis dotyczy.
+  źródła, chyba że ten sam zapis zapisał też wpis głównego źródła (ten przeładowuje się sam: każdy
+  wpis przeładowuje się raz). Gdy formularz strefy tworzy wpis, przeładowuje tylko termostat,
+  którego ten wpis dotyczy.
 
 **Dane czytane z Versatile Thermostat.** Odczyty pochodzą z atrybutów stanu, które publikuje
 VTherm. Te atrybuty mogą się zmienić razem z gałęzią `master` VTherm:
@@ -1222,6 +1257,10 @@ zapisanego stanu SmartPI na każdy tryb HVAC, 26 KB z jednym sąsiadem i 38 KB z
 
 - Zapisany stan SmartPI przechowuje też ostatni zastosowany token resetu
   (`dependency_reset_token`, sekcja 2.2).
+- Strefa i sąsiedzi są zapisani w opcjach wpisów (`smart_pi_dependencies`). Wpis, który formularz
+  strefy tworzy dla członka bez własnego wpisu, korzysta z ustawień wspólnych z wartości
+  domyślnych (`smart_pi_use_defaults` włączony) i ma rodzaj ogrzewania członka oraz, gdy strefa
+  się tam przenosi, elementy strefy.
 - Stary zapisany stan bez tego klucza wczytuje się tak jak wcześniej.
 - Przy starcie stan pozycji, których nie ma już w konfiguracji, jest usuwany.
 - Zapisany stan, którego nie da się odczytać, jest pomijany. Wiersze, których nie da się użyć, są

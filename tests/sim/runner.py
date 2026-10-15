@@ -299,11 +299,14 @@ class SimThermostat(FakeThermostatRuntime):
         # FakeThermostatRuntime sets these as AsyncMock instance attributes.
         self.async_control_heating = self._async_control_heating
         self.async_underlying_entity_turn_off = self._async_underlying_entity_turn_off
-        self.entry_infos = {
-            CONF_MINIMAL_ACTIVATION_DELAY: spec.min_activation_delay_s,
-            CONF_MINIMAL_DEACTIVATION_DELAY: spec.min_deactivation_delay_s,
-            **spec.options,
-        }
+        # The thermostat's own SmartPI entry: its delays and the options of the scenario.
+        self.smartpi_options.update(
+            {
+                CONF_MINIMAL_ACTIVATION_DELAY: spec.min_activation_delay_s,
+                CONF_MINIMAL_DEACTIVATION_DELAY: spec.min_deactivation_delay_s,
+                **spec.options,
+            }
+        )
 
     @property
     def is_device_active(self) -> bool:
@@ -485,13 +488,13 @@ class Simulation:
             return
         if self.zone.water_data == "provider":
             self.provider.zones[thermostat.entity_id] = boiler
-            thermostat.entry_infos[CONF_SMART_PI_WATER_SOURCE] = provider_source(PROVIDER_NAME)
+            thermostat.smartpi_options[CONF_SMART_PI_WATER_SOURCE] = provider_source(PROVIDER_NAME)
             return
         object_id = thermostat.entity_id.split(".", 1)[1]
-        thermostat.entry_infos.update(
+        thermostat.smartpi_options.update(
             water_entities(self.states, self.clock, self.weather, boiler, object_id, lambda: self.forced_reasons)
         )
-        thermostat.entry_infos[CONF_SMART_PI_WATER_SOURCE] = SOURCE_ENTITIES
+        thermostat.smartpi_options[CONF_SMART_PI_WATER_SOURCE] = SOURCE_ENTITIES
 
     def force_water_reasons(self, reasons: list[tuple[float, float, str]]) -> None:
         """Reasons of a gap for time windows: the provider gives them, an entity is unavailable."""
