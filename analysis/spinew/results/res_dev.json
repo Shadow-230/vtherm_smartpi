@@ -1,0 +1,677 @@
+[
+ {
+  "variant": "no_water_input",
+  "phase_s": 0.0,
+  "water_factor": 1.0,
+  "a_ratio": 0.958,
+  "approaches": [
+   {
+    "reach_h": 2.22,
+    "overshoot_c": 0.077,
+    "cap_min": 32.3,
+    "cap_toggles": 2,
+    "water_limited_min": 0.0,
+    "arms": 0,
+    "retires": []
+   },
+   {
+    "reach_h": 2.23,
+    "overshoot_c": 0.078,
+    "cap_min": 154.2,
+    "cap_toggles": 2,
+    "water_limited_min": 0.0,
+    "arms": 0,
+    "retires": []
+   },
+   {
+    "reach_h": 2.06,
+    "overshoot_c": 0.15,
+    "cap_min": 53.2,
+    "cap_toggles": 2,
+    "water_limited_min": 0.0,
+    "arms": 0,
+    "retires": []
+   },
+   {
+    "reach_h": 2.04,
+    "overshoot_c": 0.181,
+    "cap_min": 26.5,
+    "cap_toggles": 4,
+    "water_limited_min": 0.0,
+    "arms": 0,
+    "retires": []
+   }
+  ],
+  "label": "dev"
+ },
+ {
+  "variant": "no_water_input",
+  "phase_s": 170.0,
+  "water_factor": 1.0,
+  "a_ratio": 0.968,
+  "approaches": [
+   {
+    "reach_h": 5.55,
+    "overshoot_c": 0.09,
+    "cap_min": 323.0,
+    "cap_toggles": 2,
+    "water_limited_min": 0.0,
+    "arms": 0,
+    "retires": []
+   },
+   {
+    "reach_h": 1.88,
+    "overshoot_c": 0.227,
+    "cap_min": 15.8,
+    "cap_toggles": 2,
+    "water_limited_min": 0.0,
+    "arms": 0,
+    "retires": []
+   },
+   {
+    "reach_h": 1.89,
+    "overshoot_c": 0.202,
+    "cap_min": 17.2,
+    "cap_toggles": 2,
+    "water_limited_min": 0.0,
+    "arms": 0,
+    "retires": []
+   },
+   {
+    "reach_h": 1.9,
+    "overshoot_c": 0.184,
+    "cap_min": 22.7,
+    "cap_toggles": 2,
+    "water_limited_min": 0.0,
+    "arms": 0,
+    "retires": []
+   }
+  ],
+  "label": "dev"
+ },
+ {
+  "variant": "no_water_input",
+  "phase_s": 340.0,
+  "water_factor": 1.0,
+  "a_ratio": 0.841,
+  "approaches": [
+   {
+    "reach_h": 1.89,
+    "overshoot_c": 0.182,
+    "cap_min": 29.8,
+    "cap_toggles": 2,
+    "water_limited_min": 0.0,
+    "arms": 0,
+    "retires": []
+   },
+   {
+    "reach_h": 1.9,
+    "overshoot_c": 0.087,
+    "cap_min": 29.0,
+    "cap_toggles": 2,
+    "water_limited_min": 0.0,
+    "arms": 0,
+    "retires": []
+   },
+   {
+    "reach_h": 1.9,
+    "overshoot_c": 0.172,
+    "cap_min": 28.3,
+    "cap_toggles": 2,
+    "water_limited_min": 0.0,
+    "arms": 0,
+    "retires": []
+   },
+   {
+    "reach_h": 1.89,
+    "overshoot_c": 0.051,
+    "cap_min": 19.7,
+    "cap_toggles": 2,
+    "water_limited_min": 0.0,
+    "arms": 0,
+    "retires": []
+   }
+  ],
+  "label": "dev"
+ },
+ {
+  "variant": "water_60C_data",
+  "phase_s": 0.0,
+  "water_factor": 0.971,
+  "a_ratio": 1.093,
+  "approaches": [
+   {
+    "reach_h": 2.07,
+    "overshoot_c": -0.011,
+    "cap_min": 44.3,
+    "cap_toggles": 4,
+    "water_limited_min": 0.0,
+    "arms": 0,
+    "retires": []
+   },
+   {
+    "reach_h": 2.05,
+    "overshoot_c": 0.169,
+    "cap_min": 40.5,
+    "cap_toggles": 2,
+    "water_limited_min": 0.0,
+    "arms": 0,
+    "retires": []
+   },
+   {
+    "reach_h": 2.23,
+    "overshoot_c": 0.082,
+    "cap_min": 265.8,
+    "cap_toggles": 4,
+    "water_limited_min": 0.0,
+    "arms": 0,
+    "retires": []
+   },
+   {
+    "reach_h": 1.91,
+    "overshoot_c": 0.175,
+    "cap_min": 31.2,
+    "cap_toggles": 2,
+    "water_limited_min": 0.0,
+    "arms": 0,
+    "retires": []
+   }
+  ],
+  "label": "dev"
+ },
+ {
+  "variant": "water_60C_data",
+  "phase_s": 170.0,
+  "water_factor": 0.968,
+  "a_ratio": 0.918,
+  "approaches": [
+   {
+    "reach_h": 2.23,
+    "overshoot_c": -0.095,
+    "cap_min": 383.2,
+    "cap_toggles": 1,
+    "water_limited_min": 0.0,
+    "arms": 0,
+    "retires": []
+   },
+   {
+    "reach_h": 2.04,
+    "overshoot_c": 0.175,
+    "cap_min": 29.0,
+    "cap_toggles": 4,
+    "water_limited_min": 0.0,
+    "arms": 0,
+    "retires": []
+   },
+   {
+    "reach_h": 2.22,
+    "overshoot_c": 0.125,
+    "cap_min": 150.7,
+    "cap_toggles": 2,
+    "water_limited_min": 0.0,
+    "arms": 0,
+    "retires": []
+   },
+   {
+    "reach_h": 1.91,
+    "overshoot_c": 0.082,
+    "cap_min": 41.8,
+    "cap_toggles": 2,
+    "water_limited_min": 0.0,
+    "arms": 0,
+    "retires": []
+   }
+  ],
+  "label": "dev"
+ },
+ {
+  "variant": "water_60C_data",
+  "phase_s": 340.0,
+  "water_factor": 0.971,
+  "a_ratio": 1.01,
+  "approaches": [
+   {
+    "reach_h": 1.9,
+    "overshoot_c": 0.077,
+    "cap_min": 33.0,
+    "cap_toggles": 2,
+    "water_limited_min": 0.0,
+    "arms": 0,
+    "retires": []
+   },
+   {
+    "reach_h": 1.9,
+    "overshoot_c": 0.033,
+    "cap_min": 198.2,
+    "cap_toggles": 6,
+    "water_limited_min": 0.0,
+    "arms": 0,
+    "retires": []
+   },
+   {
+    "reach_h": 2.22,
+    "overshoot_c": 0.085,
+    "cap_min": 140.5,
+    "cap_toggles": 2,
+    "water_limited_min": 0.0,
+    "arms": 0,
+    "retires": []
+   },
+   {
+    "reach_h": 1.9,
+    "overshoot_c": 0.177,
+    "cap_min": 32.5,
+    "cap_toggles": 2,
+    "water_limited_min": 0.0,
+    "arms": 0,
+    "retires": []
+   }
+  ],
+  "label": "dev"
+ },
+ {
+  "variant": "water_45C_data",
+  "phase_s": 0.0,
+  "water_factor": 0.518,
+  "a_ratio": 0.757,
+  "approaches": [
+   {
+    "reach_h": 4.23,
+    "overshoot_c": 0.136,
+    "cap_min": 45.0,
+    "cap_toggles": 2,
+    "water_limited_min": 212.5,
+    "arms": 0,
+    "retires": []
+   },
+   {
+    "reach_h": 4.4,
+    "overshoot_c": 0.125,
+    "cap_min": 41.3,
+    "cap_toggles": 2,
+    "water_limited_min": 218.8,
+    "arms": 0,
+    "retires": []
+   },
+   {
+    "reach_h": 4.44,
+    "overshoot_c": 0.041,
+    "cap_min": 12.7,
+    "cap_toggles": 2,
+    "water_limited_min": 211.2,
+    "arms": 0,
+    "retires": []
+   },
+   {
+    "reach_h": 4.76,
+    "overshoot_c": -0.004,
+    "cap_min": 13.2,
+    "cap_toggles": 2,
+    "water_limited_min": 212.5,
+    "arms": 0,
+    "retires": []
+   }
+  ],
+  "label": "dev"
+ },
+ {
+  "variant": "water_45C_data",
+  "phase_s": 170.0,
+  "water_factor": 0.515,
+  "a_ratio": 0.735,
+  "approaches": [
+   {
+    "reach_h": 4.27,
+    "overshoot_c": 0.081,
+    "cap_min": 36.2,
+    "cap_toggles": 2,
+    "water_limited_min": 207.3,
+    "arms": 0,
+    "retires": []
+   },
+   {
+    "reach_h": 4.6,
+    "overshoot_c": -0.005,
+    "cap_min": 20.3,
+    "cap_toggles": 2,
+    "water_limited_min": 211.5,
+    "arms": 0,
+    "retires": []
+   },
+   {
+    "reach_h": 4.59,
+    "overshoot_c": 0.013,
+    "cap_min": 13.2,
+    "cap_toggles": 2,
+    "water_limited_min": 212.7,
+    "arms": 0,
+    "retires": []
+   },
+   {
+    "reach_h": 4.77,
+    "overshoot_c": 0.107,
+    "cap_min": 20.5,
+    "cap_toggles": 2,
+    "water_limited_min": 212.8,
+    "arms": 0,
+    "retires": []
+   }
+  ],
+  "label": "dev"
+ },
+ {
+  "variant": "water_45C_data",
+  "phase_s": 340.0,
+  "water_factor": 0.515,
+  "a_ratio": 0.714,
+  "approaches": [
+   {
+    "reach_h": 4.42,
+    "overshoot_c": 0.078,
+    "cap_min": 25.3,
+    "cap_toggles": 2,
+    "water_limited_min": 210.2,
+    "arms": 0,
+    "retires": []
+   },
+   {
+    "reach_h": 4.43,
+    "overshoot_c": 0.044,
+    "cap_min": 22.7,
+    "cap_toggles": 2,
+    "water_limited_min": 212.2,
+    "arms": 0,
+    "retires": []
+   },
+   {
+    "reach_h": 4.22,
+    "overshoot_c": 0.147,
+    "cap_min": 25.2,
+    "cap_toggles": 2,
+    "water_limited_min": 210.5,
+    "arms": 0,
+    "retires": []
+   },
+   {
+    "reach_h": 4.6,
+    "overshoot_c": -0.022,
+    "cap_min": 13.0,
+    "cap_toggles": 2,
+    "water_limited_min": 210.5,
+    "arms": 0,
+    "retires": []
+   }
+  ],
+  "label": "dev"
+ },
+ {
+  "variant": "water_40C_data",
+  "phase_s": 0.0,
+  "water_factor": 0.38,
+  "a_ratio": 0.708,
+  "approaches": [
+   {
+    "reach_h": 7.57,
+    "overshoot_c": 0.078,
+    "cap_min": 14.5,
+    "cap_toggles": 2,
+    "water_limited_min": 471.5,
+    "arms": 0,
+    "retires": []
+   },
+   {
+    "reach_h": 7.4,
+    "overshoot_c": 0.024,
+    "cap_min": 21.8,
+    "cap_toggles": 2,
+    "water_limited_min": 406.8,
+    "arms": 0,
+    "retires": []
+   },
+   {
+    "reach_h": 7.45,
+    "overshoot_c": 0.012,
+    "cap_min": 0.0,
+    "cap_toggles": 0,
+    "water_limited_min": 410.7,
+    "arms": 0,
+    "retires": []
+   },
+   {
+    "reach_h": 7.44,
+    "overshoot_c": 0.02,
+    "cap_min": 0.0,
+    "cap_toggles": 0,
+    "water_limited_min": 419.8,
+    "arms": 0,
+    "retires": []
+   }
+  ],
+  "label": "dev"
+ },
+ {
+  "variant": "water_40C_data",
+  "phase_s": 170.0,
+  "water_factor": 0.38,
+  "a_ratio": 0.71,
+  "approaches": [
+   {
+    "reach_h": 7.78,
+    "overshoot_c": -0.068,
+    "cap_min": 0.0,
+    "cap_toggles": 0,
+    "water_limited_min": 405.7,
+    "arms": 0,
+    "retires": []
+   },
+   {
+    "reach_h": 7.79,
+    "overshoot_c": -0.078,
+    "cap_min": 0.0,
+    "cap_toggles": 0,
+    "water_limited_min": 401.7,
+    "arms": 0,
+    "retires": []
+   },
+   {
+    "reach_h": 7.54,
+    "overshoot_c": 0.068,
+    "cap_min": 14.5,
+    "cap_toggles": 2,
+    "water_limited_min": 445.2,
+    "arms": 0,
+    "retires": []
+   },
+   {
+    "reach_h": 7.46,
+    "overshoot_c": 0.022,
+    "cap_min": 18.0,
+    "cap_toggles": 2,
+    "water_limited_min": 415.5,
+    "arms": 0,
+    "retires": []
+   }
+  ],
+  "label": "dev"
+ },
+ {
+  "variant": "water_40C_data",
+  "phase_s": 340.0,
+  "water_factor": 0.38,
+  "a_ratio": 0.73,
+  "approaches": [
+   {
+    "reach_h": 7.57,
+    "overshoot_c": 0.078,
+    "cap_min": 14.5,
+    "cap_toggles": 2,
+    "water_limited_min": 471.5,
+    "arms": 0,
+    "retires": []
+   },
+   {
+    "reach_h": 7.4,
+    "overshoot_c": 0.035,
+    "cap_min": 20.7,
+    "cap_toggles": 2,
+    "water_limited_min": 409.8,
+    "arms": 0,
+    "retires": []
+   },
+   {
+    "reach_h": 7.47,
+    "overshoot_c": 0.018,
+    "cap_min": 18.2,
+    "cap_toggles": 2,
+    "water_limited_min": 410.8,
+    "arms": 0,
+    "retires": []
+   },
+   {
+    "reach_h": 7.46,
+    "overshoot_c": 0.029,
+    "cap_min": 17.7,
+    "cap_toggles": 2,
+    "water_limited_min": 411.0,
+    "arms": 0,
+    "retires": []
+   }
+  ],
+  "label": "dev"
+ },
+ {
+  "variant": "water_45C_no_data",
+  "phase_s": 0.0,
+  "water_factor": 1.0,
+  "a_ratio": 0.446,
+  "approaches": [
+   {
+    "reach_h": 4.21,
+    "overshoot_c": 0.229,
+    "cap_min": 35.8,
+    "cap_toggles": 2,
+    "water_limited_min": 0.0,
+    "arms": 0,
+    "retires": []
+   },
+   {
+    "reach_h": 4.42,
+    "overshoot_c": 0.025,
+    "cap_min": 14.5,
+    "cap_toggles": 2,
+    "water_limited_min": 0.0,
+    "arms": 0,
+    "retires": []
+   },
+   {
+    "reach_h": 4.42,
+    "overshoot_c": -0.039,
+    "cap_min": 14.7,
+    "cap_toggles": 2,
+    "water_limited_min": 0.0,
+    "arms": 0,
+    "retires": []
+   },
+   {
+    "reach_h": 7.86,
+    "overshoot_c": -0.051,
+    "cap_min": 109.0,
+    "cap_toggles": 3,
+    "water_limited_min": 0.0,
+    "arms": 0,
+    "retires": []
+   }
+  ],
+  "label": "dev"
+ },
+ {
+  "variant": "water_45C_no_data",
+  "phase_s": 170.0,
+  "water_factor": 1.0,
+  "a_ratio": 0.437,
+  "approaches": [
+   {
+    "reach_h": 4.17,
+    "overshoot_c": 0.315,
+    "cap_min": 23.8,
+    "cap_toggles": 2,
+    "water_limited_min": 0.0,
+    "arms": 0,
+    "retires": []
+   },
+   {
+    "reach_h": 4.08,
+    "overshoot_c": 0.222,
+    "cap_min": 25.7,
+    "cap_toggles": 2,
+    "water_limited_min": 0.0,
+    "arms": 0,
+    "retires": []
+   },
+   {
+    "reach_h": 4.43,
+    "overshoot_c": -0.055,
+    "cap_min": 8.0,
+    "cap_toggles": 2,
+    "water_limited_min": 0.0,
+    "arms": 0,
+    "retires": []
+   },
+   {
+    "reach_h": 4.77,
+    "overshoot_c": -0.04,
+    "cap_min": 15.2,
+    "cap_toggles": 2,
+    "water_limited_min": 0.0,
+    "arms": 0,
+    "retires": []
+   }
+  ],
+  "label": "dev"
+ },
+ {
+  "variant": "water_45C_no_data",
+  "phase_s": 340.0,
+  "water_factor": 1.0,
+  "a_ratio": 0.455,
+  "approaches": [
+   {
+    "reach_h": 4.44,
+    "overshoot_c": 0.035,
+    "cap_min": 20.8,
+    "cap_toggles": 2,
+    "water_limited_min": 0.0,
+    "arms": 0,
+    "retires": []
+   },
+   {
+    "reach_h": 4.27,
+    "overshoot_c": -0.034,
+    "cap_min": 29.8,
+    "cap_toggles": 2,
+    "water_limited_min": 0.0,
+    "arms": 0,
+    "retires": []
+   },
+   {
+    "reach_h": 4.58,
+    "overshoot_c": 0.039,
+    "cap_min": 20.0,
+    "cap_toggles": 2,
+    "water_limited_min": 0.0,
+    "arms": 0,
+    "retires": []
+   },
+   {
+    "reach_h": null,
+    "overshoot_c": -0.118,
+    "cap_min": 20.7,
+    "cap_toggles": 2,
+    "water_limited_min": 0.0,
+    "arms": 0,
+    "retires": []
+   }
+  ],
+  "label": "dev"
+ }
+]
