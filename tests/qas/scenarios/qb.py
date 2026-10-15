@@ -16,6 +16,7 @@ from __future__ import annotations
 from typing import Any
 
 from flows import Form, Menu
+from stages import save_steps
 
 from .common import (
     api,
@@ -106,7 +107,13 @@ async def QB2(r: Any) -> None:
     lines = log_lines(await system_log(r))
     r.check(not [line for line in lines if "format" in line or "unsupported" in line.lower()], f"no warning about the saved format: {lines[:3]}")
     r.check(not lines, f"no warning or error from SmartPI or VTherm since the upgrade's restart: {len(lines)}")
-    await options_flow(r, role().thermostats[0].name, [Menu("settings"), Form("settings")])
+    title = role().thermostats[0].name
+    own = await stored_options(title)
+    r.check(own.get("smart_pi_use_defaults") is False, f"the 0.4.0 entry migrated keeps its own values: use_defaults {own.get('smart_pi_use_defaults')}")
+    defaults = await stored_options("SmartPI defaults")
+    moved = sorted(k for k in ("smart_pi_heating_type", "minimal_activation_delay", "minimal_deactivation_delay", "smart_pi_allow_pwm_cycle_force") if k in defaults)
+    r.check(not moved, f"the defaults entry holds no setting of one thermostat: {moved}")
+    await options_flow(r, title, [Menu("settings"), Form("settings"), Form("settings_own", if_shown=True), *save_steps()])
     r.check(True, "the old entry's options open as the menu and save")
     await _hold_learning(r, True)
     r.note("put back: learning enabled")
@@ -124,7 +131,7 @@ async def QB3a(r: Any) -> None:
             Form("neighbour_add", {"entity": ATTIC_SENSOR}),
             Form("neighbour_details", {"mode": "always", "door_sensors": []}),
             Form("neighbour_confirm", if_shown=True),
-            Form("model_reset", {"reset_model": False}, if_shown=True),
+            *save_steps(),
         ],
     )
     stored = await stored_options(role().thermostats[0].name)
@@ -137,7 +144,7 @@ async def QB3a(r: Any) -> None:
 
 @scenario("QB3", ("ref-0.4.0",), 30, "—")
 async def QB3(r: Any) -> None:
-    """Back on 0.4.0 with a neighbour configured, the entry loads without errors and the state too; saving the options in 0.4.0 drops the fork's keys, as known."""
+    """Back on 0.4.0 with a neighbour configured, the entries migrated to version 1.2 load without errors (their major version is still 1) and the state too; saving the options in 0.4.0 drops the fork's keys, as known."""
     before = kept("qb3") or {}
     r.check(await wait_loaded(r, [LIVING], 600.0), "the thermostat runs on 0.4.0")
     title = role().thermostats[0].name

@@ -4,6 +4,14 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+- The QAS test pack follows the new options forms: every setup and scenario window goes through
+  its menu and ends with "Save and finish" (and the reset question where a change affects what
+  was learned); a zone's member without a heating type gets it in the zone's setup. QD1 and QE1
+  check the errors and notes that replace the forms' aborts and the save stopped by
+  `zone_changed`; QB2 checks the migrated entries and QB3 that 0.4.0 still loads them. A new
+  scenario, QA7, checks that a closed window stores and reloads nothing, that the menu names the
+  change in the instance's language, and that a save reloads the entry once (the helpers count
+  the entry's setups). QZ1 also checks the new texts.
 - Rework the options forms: one save at the end, as in Versatile Thermostat. Each section is
   reached from a menu and comes back to it; the changes stay in the open window, and only the
   last item, "Save and finish", writes them. Closing the window discards everything, also what

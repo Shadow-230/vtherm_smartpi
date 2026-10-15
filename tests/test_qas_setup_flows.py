@@ -282,7 +282,7 @@ async def test_a_thermostat_s_own_entry_takes_over_its_diagnostic_sensor(
     assert await hass.config_entries.async_reload(main)
     await hass.async_block_till_done()
     await run_flow(api.transport, "options", main, settings_save_steps(role))
-    await run_flow(api.transport, "options", main, zone_steps(role.zone))
+    await run_flow(api.transport, "options", main, zone_steps(role.zone, role))
     assert owner(floor) == _entry_id(hass, SMARTPI, floor.name)
     assert await hass.config_entries.async_reload(defaults)
     await hass.async_block_till_done()
@@ -311,10 +311,12 @@ async def _refused(api: _Api, entry_id: str, steps: list) -> dict[str, Any]:
 
 @pytest.mark.parametrize("expected_lingering_timers", [True])
 async def test_the_neighbour_scenarios_flows(hass: HomeAssistant) -> None:
-    """QD1's form paths: each refusal, the door suggestion, the warning, the reset step and the
-    three aborts, on the real forms."""
+    """QD1's form paths: each refusal, the door suggestion, the warning, the reset question at save,
+    a removal with nothing chosen back in the menu, a neighbour that is gone refused on its form,
+    and the save stopped by zone_changed, on the real forms."""
     from flows import Form, Menu, form_defaults, run_flow, walk  # noqa: PLC0415
     from scenarios import qd  # noqa: PLC0415
+    from stages import save_steps  # noqa: PLC0415
 
     role = ROLES["neighbours"]
     api = await _start(hass, role)
@@ -346,10 +348,10 @@ async def test_the_neighbour_scenarios_flows(hass: HomeAssistant) -> None:
         [Form("neighbour_details", {"mode": "door", "door_sensors": [qd.KITCHEN_DOOR], "neighbour_window_action": "nothing"})],
         resume=result,
     )  # fmt: skip
-    assert result.get("step_id") in ("neighbour_confirm", "model_reset"), result
+    assert result.get("step_id") in ("neighbour_confirm", "thermostat_menu"), result
     result = await walk(
         api.transport, "options", kitchen,
-        [Form("neighbour_confirm", if_shown=True), Form("model_reset", {"reset_model": False}, if_shown=True)],
+        [Form("neighbour_confirm", if_shown=True), *save_steps()],
         resume=result,
     )  # fmt: skip
     assert result.get("type") == "create_entry", result
@@ -357,35 +359,37 @@ async def test_the_neighbour_scenarios_flows(hass: HomeAssistant) -> None:
     dining = await item_id(qd.DINING)
     await run_flow(api.transport, "options", kitchen, qd._edit(dining, {"mode": "always", "door_sensors": [], "neighbour_window_action": "eco"}))  # noqa: SLF001
     result = await walk(api.transport, "options", kitchen, [Menu("dependencies"), Menu("dependency_remove"), Form("dependency_remove", {"remove": []})])
-    assert (result.get("type"), result.get("reason")) == ("abort", "dependencies_unchanged"), result
+    assert result.get("step_id") == "thermostat_menu", result
+    assert result["description_placeholders"]["note"].strip(), result
+    await api.transport.abort("options", result["flow_id"])
     pending = await walk(api.transport, "options", kitchen, [Menu("dependencies"), Menu("dependency_remove"), Form("dependency_remove", {"remove": [dining]})])
-    assert pending.get("step_id") == "model_reset", pending
+    assert pending.get("step_id") == "thermostat_menu", pending
     await run_flow(api.transport, "options", kitchen, qd._edit(dining, {"mode": "always", "door_sensors": [], "neighbour_window_action": "nothing"}))  # noqa: SLF001
-    result = await walk(api.transport, "options", kitchen, [Form("model_reset", {"reset_model": False})], resume=pending)
+    result = await walk(api.transport, "options", kitchen, [Menu("save")], resume=pending)
     assert (result.get("type"), result.get("reason")) == ("abort", "zone_changed"), result
 
     await run_flow(api.transport, "options", kitchen, qd._add() + [  # noqa: SLF001
         Form("neighbour_add", {"entity": qd.HALL_SENSOR}),
         Form("neighbour_details", {"mode": "always", "door_sensors": []}),
         Form("neighbour_confirm", if_shown=True),
-        Form("model_reset", {"reset_model": False}, if_shown=True),
+        *save_steps(),
     ])  # fmt: skip
     sensor_item = await item_id(qd.HALL_SENSOR)
     er.async_get(hass).async_remove(qd.HALL_SENSOR)
     await hass.async_block_till_done()
-    result = await walk(api.transport, "options", kitchen, [Menu("dependencies"), Menu("dependency_edit"), Form("dependency_edit", {"dependency": sensor_item})])
-    assert (result.get("type"), result.get("reason")) == ("abort", "neighbour_missing"), result
+    result = await _refused(api, kitchen, [Menu("dependencies"), Menu("dependency_edit"), Form("dependency_edit", {"dependency": sensor_item})])
+    assert result.get("errors") == {"dependency": "neighbour_missing"}, result
     await run_flow(api.transport, "options", kitchen, qd._remove([sensor_item]))  # noqa: SLF001
 
 
 @pytest.mark.parametrize("expected_lingering_timers", [True])
 async def test_the_zone_scenarios_flows(hass: HomeAssistant) -> None:
-    """QE1's, QE2's and QE4's form paths: each wrong master refused, the missing entry created,
-    the zone moved to the main source, zone_changed, the floor's heating type and the master's
-    devices changed, on the real forms."""
+    """QE1's, QE2's and QE4's form paths: each wrong master refused, the missing entry created at
+    save, the zone moved to the main source, the save stopped by zone_changed, the floor's heating
+    type and the master's devices changed, on the real forms."""
     from flows import Form, Menu, run_flow, walk  # noqa: PLC0415
     from scenarios import qe  # noqa: PLC0415
-    from stages import vt_thermostat_steps, zone_steps  # noqa: PLC0415
+    from stages import save_steps, vt_thermostat_steps, zone_steps  # noqa: PLC0415
 
     role = ROLES["zone"]
     api = await _start(hass, role)
@@ -411,34 +415,31 @@ async def test_the_zone_scenarios_flows(hass: HomeAssistant) -> None:
         await hass.config_entries.async_remove(_entry_id(hass, VT, master.name))
         await hass.async_block_till_done()
 
-    remove = [Menu("zone"), Menu("zone_remove"), Form("zone_reset", {"reset_model": False}, if_shown=True)]
+    remove = [Menu("zone"), Menu("zone_remove"), *save_steps()]
     await run_flow(api.transport, "options", main, remove)
     assert not [i for i in (await stored(main_title)).get("smart_pi_dependencies") or [] if i.get("kind") == "source"]
     await hass.config_entries.async_remove(_entry_id(hass, SMARTPI, other_title))
     await hass.async_block_till_done()
-    await run_flow(api.transport, "options", main, zone_steps(zone))
+    await run_flow(api.transport, "options", main, zone_steps(zone, role))
     assert any(e.title == other_title for e in hass.config_entries.async_entries(SMARTPI))
 
     await run_flow(api.transport, "options", main, remove)
-    await run_flow(api.transport, "options", _entry_id(hass, SMARTPI, other_title), zone_steps(zone))
+    await run_flow(api.transport, "options", _entry_id(hass, SMARTPI, other_title), zone_steps(zone, role))
     assert [i for i in (await stored(main_title)).get("smart_pi_dependencies") or [] if i.get("kind") == "source"]
 
     pending = await walk(api.transport, "options", main, [
         Menu("zone"), Menu("zone_master"), Form("zone_master", {"master": zone.master}),
         Form("zone_sources", {"main_source": zone.main, "split_rule": zone.rule, "custom_response": False}),
+        Form("zone_parameter"),
     ])  # fmt: skip
     await run_flow(api.transport, "options", main, remove)
-    result = await walk(
-        api.transport, "options", main,
-        [Form("zone_parameter"), Form("zone_reset", {"reset_model": False}, if_shown=True)],
-        resume=pending,
-    )  # fmt: skip
+    result = await walk(api.transport, "options", main, [Menu("save")], resume=pending)
     assert (result.get("type"), result.get("reason")) == ("abort", "zone_changed"), result
-    await run_flow(api.transport, "options", main, zone_steps(zone))
+    await run_flow(api.transport, "options", main, zone_steps(zone, role))
 
     other = _entry_id(hass, SMARTPI, other_title)
-    await run_flow(api.transport, "options", other, [Menu("source_role", if_shown=True), Form("source_role", {"smart_pi_heating_type": "floor_electric"})])
-    await run_flow(api.transport, "options", other, [Menu("source_role", if_shown=True), Form("source_role", {"smart_pi_heating_type": "floor_water"})])
+    await run_flow(api.transport, "options", other, [Menu("source_role"), Form("source_role", {"smart_pi_heating_type": "floor_electric"}), *save_steps()])
+    await run_flow(api.transport, "options", other, [Menu("source_role"), Form("source_role", {"smart_pi_heating_type": "floor_water"}), *save_steps()])
 
     master_entry = _entry_id(hass, VT, "Lounge")
     for devices in ([zone.main, "climate.lounge_dummy"], [zone.main, zone.additional]):
@@ -448,7 +449,7 @@ async def test_the_zone_scenarios_flows(hass: HomeAssistant) -> None:
 @pytest.mark.parametrize("expected_lingering_timers", [True])
 async def test_the_water_scenarios_flows(hass: HomeAssistant, caplog: pytest.LogCaptureFixture) -> None:
     """QW9's form path: the studio's water source to none and back to entities, the model kept
-    each time, on the real forms; the reset step is asked on each change and no error is logged."""
+    each time, on the real forms; the reset question is asked at each save and no error is logged."""
     from flows import run_flow, walk  # noqa: PLC0415
     from scenarios import qw  # noqa: PLC0415
 
@@ -460,7 +461,7 @@ async def test_the_water_scenarios_flows(hass: HomeAssistant, caplog: pytest.Log
     stored = _stored(hass)
 
     result = await walk(api.transport, "options", studio, qw._studio_water("none", keep=True)[:-1])  # noqa: SLF001
-    assert result.get("step_id") == "heating_reset", result
+    assert result.get("step_id") == "model_reset", result
     await api.transport.abort("options", result["flow_id"])
     await run_flow(api.transport, "options", studio, qw._studio_water("none", keep=True))  # noqa: SLF001
     options = await stored("Studio")

@@ -325,7 +325,8 @@ def _studio_water(source: str, keep: bool) -> list[Form | Menu]:
     steps: list[Form | Menu] = [Menu("heating_inputs"), Form("heating_inputs", {WATER_SOURCE: source})]
     if source == "entities":
         steps.append(Form("heating_entities", {SUPPLY_ENTITY: supply_sensor("studio_radiator"), "smart_pi_boiler_signals": "defaults"}))
-    steps.append(Form("heating_reset", {"reset_model": not keep}))
+    steps.append(Menu("save"))
+    steps.append(Form("model_reset", {"reset_model": not keep}))
     return steps
 
 

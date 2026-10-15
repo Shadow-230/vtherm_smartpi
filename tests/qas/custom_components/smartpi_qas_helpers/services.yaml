@@ -69,3 +69,13 @@ set_provider:
 provider_status:
   name: Heating provider status
   description: Whether the simulated heating provider is registered, and how often SmartPI asked it by thermostat, as the response (test only).
+entry_setups:
+  name: SmartPI entry setups
+  description: How many times a SmartPI entry was set up (loaded) since the start, as the response (test only).
+  fields:
+    entry_id:
+      name: Entry
+      description: The SmartPI config entry's id.
+      required: true
+      selector:
+        text:

@@ -10,10 +10,12 @@ again after a failure:
 2. ``areas``   — the areas, with the simulator's entities and the thermostats in them (the door
    suggestions of the neighbour form read them);
 3. ``inputs``  — VTherm's central boiler thresholds and the power manager's maximum power;
-4. ``smartpi`` — one SmartPI entry per SmartPI thermostat, with its heating type;
+4. ``smartpi`` — one SmartPI entry per SmartPI thermostat, with its heating type, created through
+   the entry's menu and "Save and finish";
 5. ``options`` — each thermostat entry's options saved once, then the role's neighbours and zone,
    the boiler's signals in the defaults entry and each thermostat's "Water and boiler" (the water
-   data and the boiler's call sources).
+   data and the boiler's call sources). Every options window ends with "Save and finish" and,
+   where a change affects what was learned, the reset question.
 
 ``Api`` is where it runs: the bench's client (``setup/setup_role.py``) or Home Assistant in a test.
 """
@@ -261,17 +263,27 @@ async def stage_inputs(api: Api, role: Role) -> None:
 # --- SmartPI entries --------------------------------------------------------------------------
 
 
+def save_steps(reset: bool = False) -> list[Form | Menu]:
+    """A window's end: "Save and finish", and the reset question when a change affects what was
+    learned (the model is kept unless ``reset``)."""
+    return [Menu("save"), Form("model_reset", {"reset_model": reset}, if_shown=True)]
+
+
 def smartpi_thermostat_steps(role: Role, thermostat: Thermostat) -> list[Form | Menu]:
     settings: dict[str, Any] = {}
     if thermostat.heating_type is not None:
         settings["smart_pi_heating_type"] = thermostat.heating_type
+    if role.plugin != "qas":
+        # The release 0.4.0: one settings form, without a heating type.
+        return [
+            Form("thermostat", {"target_vtherm_unique_id": thermostat.climate}),
+            Form("thermostat_settings", settings, optional=frozenset({"smart_pi_heating_type"})),
+        ]
     return [
         Form("thermostat", {"target_vtherm_unique_id": thermostat.climate}),
-        Form(
-            "thermostat_settings",
-            settings,
-            optional=frozenset({"smart_pi_heating_type"}) if role.plugin != "qas" else frozenset(),
-        ),
+        Menu("settings"),
+        Form("settings", settings),
+        *save_steps(),
     ]
 
 
@@ -291,7 +303,7 @@ def settings_save_steps(role: Role) -> list[Form | Menu]:
     """A thermostat entry's options saved as they are: its stored options become complete."""
     if role.plugin != "qas":
         return [Form("init")]
-    return [Menu("settings"), Form("settings")]
+    return [Menu("settings"), Form("settings"), Form("settings_own", if_shown=True), *save_steps()]
 
 
 def neighbour_steps(neighbour: Neighbour) -> list[Form | Menu]:
@@ -304,23 +316,36 @@ def neighbour_steps(neighbour: Neighbour) -> list[Form | Menu]:
         Form("neighbour_add", {"entity": neighbour.entity}),
         Form("neighbour_details", details),
         Form("neighbour_confirm", if_shown=True),
-        Form("model_reset", {"reset_model": True}, if_shown=True),
+        *save_steps(reset=True),
     ]
 
 
-def zone_steps(zone: Zone) -> list[Form | Menu]:
+def zone_heating_types(role: Role | None, zone: Zone) -> dict[str, Any]:
+    """The answers of the zone's heating types step (shown for a device whose entry sets none):
+    the role's types of the master's two devices, in the master's order."""
+    by_climate = {t.climate: t.heating_type for t in role.thermostats} if role is not None else {}
+    answers = {}
+    for index, climate in enumerate((zone.main, zone.additional), 1):
+        if by_climate.get(climate):
+            answers[f"source_{index}_heating_type"] = by_climate[climate]
+    return answers
+
+
+def zone_steps(zone: Zone, role: Role | None = None) -> list[Form | Menu]:
+    types = zone_heating_types(role, zone)
     return [
         Menu("zone"),
         Form("zone_master", {"master": zone.master}),
+        Form("zone_heating_types", types, optional=frozenset(types), if_shown=True),
         Form("zone_sources", {"main_source": zone.main, "split_rule": zone.rule, "custom_response": False}),
         Form("zone_parameter", {zone.parameter_key: zone.parameter}),
-        Form("zone_reset", {"reset_model": True}, if_shown=True),
+        *save_steps(reset=True),
     ]
 
 
 def boiler_signals_steps() -> list[Form | Menu]:
     """The defaults entry's "Boiler signals": the simulator's boiler."""
-    return [Menu("boiler_signals"), Form("boiler_signals", dict(BOILER_SIGNALS))]
+    return [Menu("boiler_signals"), Form("boiler_signals", dict(BOILER_SIGNALS)), Menu("save")]
 
 
 def heating_inputs_steps(role: Role, thermostat: Thermostat, reset: bool = False) -> list[Form | Menu]:
@@ -339,7 +364,7 @@ def heating_inputs_steps(role: Role, thermostat: Thermostat, reset: bool = False
         Menu("heating_inputs"),
         Form("heating_inputs", sources),
         Form("heating_entities", entities, if_shown=True),
-        Form("heating_reset", {"reset_model": reset}, if_shown=True),
+        *save_steps(reset),
     ]
 
 
@@ -377,7 +402,7 @@ async def stage_options(
     if role.zone is not None and role.zone_entry is not None:
         items = (await stored(role.zone_entry)).get("smart_pi_dependencies") or []
         if not any(item.get("kind") == "source" for item in items):
-            await _options(api, role, role.zone_entry, zone_steps(role.zone))
+            await _options(api, role, role.zone_entry, zone_steps(role.zone, role))
             api.log(f"options of {role.zone_entry}: zone with {role.zone.additional}")
     if role.boiler_signals:
         defaults = await stored(SMARTPI_DEFAULTS_TITLE)

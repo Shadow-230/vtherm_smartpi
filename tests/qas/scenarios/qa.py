@@ -7,9 +7,10 @@ import asyncio
 import time
 from typing import Any
 
-from flows import Form, Menu
+from bench import RestTransport
+from flows import FlowError, Form, Menu, walk
 from roles import PROVIDER
-from stages import CALL_SOURCE, SMARTPI, VT, WATER_SOURCE
+from stages import CALL_SOURCE, SMARTPI, VT, WATER_SOURCE, save_steps
 
 from .common import (
     MARGIN_S,
@@ -68,12 +69,12 @@ async def QA1(r: Any) -> None:
 
 @scenario("QA2", ("base",), 15, "test_config_flow_dependencies.py", minimum=True)
 async def QA2(r: Any) -> None:
-    """Saving a thermostat entry's settings unchanged goes through the options menu without a reset step, keeps the stored options, and reloads the entry once without a loop."""
+    """Saving a thermostat entry's settings unchanged goes through the options menu and "Save and finish" without the reset question, keeps the stored options, and reloads the entry once without a loop."""
     title = role().thermostats[0].name
     climate = role().thermostats[0].climate
     before = await stored_options(title)
-    await options_flow(r, title, [Menu("settings"), Form("settings")])
-    r.check(True, "menu → settings saved, no model_reset step (the flow ended at create_entry)")
+    await options_flow(r, title, [Menu("settings"), Form("settings"), Form("settings_own", if_shown=True), Menu("save")])
+    r.check(True, "menu → settings → Save and finish, no reset question (the flow ended at create_entry)")
     after = await stored_options(title)
     r.check(after == before, f"stored options unchanged ({len(after)} keys)")
     diag = await diag_entity(r, climate)
@@ -224,7 +225,7 @@ async def QA6(r: Any) -> None:
     if role().name == "base":
         title = role().thermostats[0].name
         try:
-            await options_flow(r, title, [Menu("settings"), Form("settings", {"smart_pi_heating_type": "floor_water"})])
+            await options_flow(r, title, [Menu("settings"), Form("settings", {"smart_pi_heating_type": "floor_water"}), Form("settings_own", if_shown=True), *save_steps()])
             took, data = await wait_live(
                 r, LIVING, lambda d: path(d, "water.heating_type") == "floor_water", 2 * MARGIN_S, 10.0
             )
@@ -233,8 +234,58 @@ async def QA6(r: Any) -> None:
                 f"floor_water: water {path(data, 'water.source')!r}, factor {path(data, 'water.factor')}",
             )
         finally:
-            await options_flow(r, title, [Menu("settings"), Form("settings", {"smart_pi_heating_type": "radiator"})])
+            await options_flow(r, title, [Menu("settings"), Form("settings", {"smart_pi_heating_type": "radiator"}), Form("settings_own", if_shown=True), *save_steps()])
             r.note("put back: heating type radiator")
     await asyncio.sleep(10 * 60.0)
     lines = log_lines(await system_log(r), since=since, loggers=("custom_components.vtherm_smartpi",))
     r.check(not lines, f"nothing logged by SmartPI over 10 minutes of control calls: {lines[:3]}")
+
+
+@scenario("QA7", ("base",), 15, "test_config_flow_save.py", minimum=True)
+async def QA7(r: Any) -> None:
+    """A change made in the options and the window closed stores nothing and reloads nothing; the menu names the change in the instance's language (English where SmartPI has no text of its own); the same change saved is stored and reloads the entry once."""
+    title = role().thermostats[0].name
+    found = await entry(r, SMARTPI, title)
+    before = await stored_options(title)
+    deadband = 0.11 if before.get("smart_pi_deadband") != 0.11 else 0.12
+    change = [
+        Menu("settings"),
+        Form("settings", {"smart_pi_use_defaults": False}),
+        Form("settings_own", {"smart_pi_deadband": deadband}),
+    ]
+    transport = RestTransport(r.ha)
+    config = await r.ha.rest("GET", "/api/config")
+    language = (config or {}).get("language") or "en"
+    texts = await r.ha.ws_cmd(
+        {"type": "frontend/get_translations", "language": language, "category": "options", "integration": [SMARTPI]}
+    )
+    label = ((texts or {}).get("resources") or {}).get(
+        "component.vtherm_smartpi.options.step.thermostat_menu.menu_options.settings"
+    )
+    reloads_before = await _reloads(r, found["entry_id"])
+    result = await walk(transport, "options", found["entry_id"], change)
+    changes = (result.get("description_placeholders") or {}).get("changes")
+    r.check(result.get("step_id") == "thermostat_menu" and changes == label, f"the menu names the change in {language!r}: {changes!r} (expected {label!r})")
+    await transport.abort("options", result["flow_id"])
+    await asyncio.sleep(15.0)
+    r.check(await stored_options(title) == before, "closing the window stored nothing")
+    r.check(await _reloads(r, found["entry_id"]) == reloads_before, "closing the window reloaded nothing")
+    try:
+        await options_flow(r, title, [*change, *save_steps()])
+        stored = await stored_options(title)
+        r.check(stored.get("smart_pi_deadband") == deadband, f"saved: deadband {stored.get('smart_pi_deadband')}")
+        r.check(await _reloads(r, found["entry_id"]) == reloads_before + 1, "the save reloaded the entry once")
+    except FlowError as err:
+        r.check(False, f"the save went another way: {err}")
+    finally:
+        restore = [Menu("settings"), Form("settings", {"smart_pi_use_defaults": before.get("smart_pi_use_defaults", False)})]
+        if not before.get("smart_pi_use_defaults", False):
+            restore.append(Form("settings_own", {k: before[k] for k in ("smart_pi_deadband",) if k in before}))
+        await options_flow(r, title, [*restore, *save_steps()])
+        r.note("put back: the settings as before")
+
+
+async def _reloads(r: Any, entry_id: str) -> int:
+    """How many times SmartPI's entry was set up since the start (the helpers count it)."""
+    status = await api(r).respond("smartpi_qas_helpers", "entry_setups", {"entry_id": entry_id})
+    return int((status or {}).get("count") or 0)
