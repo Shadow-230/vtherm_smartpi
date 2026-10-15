@@ -256,3 +256,18 @@ def test_reset_learning_keeps_the_water_average():
     average = algo.water._long_avg
     algo.reset_learning()
     assert algo.water._long_avg == average
+
+
+def test_the_valve_s_activation_floor_applies_to_the_command_too():
+    """A valve whose command would stay open shorter than the activation delay opens for the
+    delay: the floor is the valve's command, so the power is that command times the water."""
+    algo = make_smartpi(minimal_activation_delay=60)
+    algo.configure_valve_linearization(False, valve_mode=True)
+    algo.update_water(live(31.0), 20.0)
+    factor = algo.water_factor
+    assert factor < 1.0
+
+    power = algo.update_timing_constraints(0.0, 0.05 * factor)  # a command of 5 %: 30 s of 600
+
+    assert power == pytest.approx(0.1 * factor)  # the command raised to 60 s of 600
+    assert algo.forced_by_timing

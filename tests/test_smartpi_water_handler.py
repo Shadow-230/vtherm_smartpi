@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, MagicMock, PropertyMock, patch
 
 import pytest
 
+from custom_components.vtherm_smartpi import heating_inputs
 from custom_components.vtherm_smartpi.algo import SmartPI
 from custom_components.vtherm_smartpi.const import (
     CONF_SMART_PI_BOILER_SIGNALS,
@@ -445,3 +446,13 @@ async def test_an_entry_from_before_the_sources_keeps_today_s_behaviour_without_
     assert create_issue.call_args.kwargs["translation_key"] == "water_data_gone"
     # Once the options choose a source, the state is the chosen inputs'.
     assert algo.water.inputs == "none"
+
+
+def test_without_a_registry_or_states_entities_stay_as_stored() -> None:
+    """A Home Assistant stand-in with neither (a real instance always has both): a stored
+    registry id stays as it is, a chosen entity is stored by its entity id, no state is read."""
+    hass = object()
+    assert heating_inputs.resolve_entity(hass, "0123abcd") == "0123abcd"
+    assert heating_inputs.stored_entity(hass, "sensor.supply") == "sensor.supply"
+    assert heating_inputs._state(hass, "sensor.supply") is None
+    assert heating_inputs._vt_entity_id(hass, "sensor", "central_boiler") is None

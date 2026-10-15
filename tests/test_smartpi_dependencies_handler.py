@@ -394,3 +394,46 @@ async def test_a_source_entry_change_reloads_its_zone_s_main_too(hass) -> None:
 
     assert _zone_mains_of(hass, "vt-floor") == ["vt-radiator"]
     assert _zone_mains_of(hass, "vt-radiator") == []
+
+
+async def test_a_thermostat_range_that_is_not_a_range_is_not_used(hass) -> None:
+    _, thermostat = _handler(
+        hass,
+        [{"id": "n1", "kind": "neighbour", "entity": "0123456789abcdef", "mode": "none"}],
+    )
+    hass.states.async_set(thermostat.entity_id, "heat", {"min_temp": 25.0, "max_temp": 20.0})
+
+    assert _readings(thermostat).temp_range is None
+
+
+async def test_a_second_source_turned_off_turns_its_device_off(hass) -> None:
+    """Off while its device still runs: the device is turned off, nothing left on in the cycle."""
+    handler, thermostat = _handler(hass, [])
+    thermostat.vtherm_hvac_mode = "off"
+    thermostat.is_device_active = True
+
+    await handler._control_as_source(False)
+
+    thermostat.async_underlying_entity_turn_off.assert_awaited_once()
+    assert thermostat._on_time_sec == 0
+
+
+async def test_a_source_that_cannot_be_resolved_has_no_heating_type(hass, monkeypatch) -> None:
+    handler, _ = _handler(hass, [])
+
+    def _fail(_registry_id):
+        raise RuntimeError("registry not ready")
+
+    monkeypatch.setattr(handler, "_resolve_unique_id", _fail)
+
+    assert handler._source_heating_type("0123456789abcdef") is None
+
+
+async def test_a_zone_whose_master_was_deleted_is_reported(hass, caplog) -> None:
+    """The master thermostat removed from Home Assistant while the zone still names it."""
+    registry = er.async_get(hass)
+    floor = registry.async_get_or_create("climate", VT_DOMAIN, "vt-floor", suggested_object_id="floor")
+
+    _handler(hass, [{**_source_item(floor.id), "zone_master": "0123456789abcdef"}])
+
+    assert "The zone's master thermostat cannot be found" in caplog.text

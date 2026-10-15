@@ -244,3 +244,39 @@ async def test_the_defaults_entry_moves_its_settings_once_home_assistant_has_sta
 
     assert set(_own_entries(hass)) == {"vt-bedroom"}
     assert CONF_SMART_PI_SETTINGS_TO_MOVE not in defaults.options
+
+
+async def test_an_entry_already_migrated_is_left_as_it_is(hass) -> None:
+    entry = MockConfigEntry(
+        domain=DOMAIN, unique_id=DOMAIN, data={}, options=dict(RELEASE_DEFAULTS), version=1, minor_version=2
+    )
+    entry.add_to_hass(hass)
+
+    assert await smartpi_init.async_migrate_entry(hass, entry)
+    assert dict(entry.options) == RELEASE_DEFAULTS and entry.minor_version == 2
+
+
+async def test_a_thermostat_whose_entry_is_not_created_is_not_named_in_the_notice(hass) -> None:
+    """Another integration's climate entity is not a thermostat on SmartPI; an import that
+    creates no entry (aborted) leaves the thermostat out of the notice."""
+    _vtherm(hass, "vt-bedroom", "Bedroom")
+    er.async_get(hass).async_get_or_create("climate", "generic_thermostat", "gt-office")
+    defaults = _defaults(hass, {**DEV_DEFAULTS, CONF_MINIMAL_ACTIVATION_DELAY: 20})
+    assert await smartpi_init.async_migrate_entry(hass, defaults)
+    init = AsyncMock(return_value={"type": "abort", "reason": "already_configured"})
+
+    with patch.object(hass.config_entries.flow, "async_init", init):
+        await smartpi_init._async_move_settings(hass, defaults.entry_id)
+
+    assert [call.kwargs["data"][CONF_TARGET_VTHERM] for call in init.await_args_list] == ["vt-bedroom"]
+    assert CONF_SMART_PI_SETTINGS_TO_MOVE not in defaults.options
+    assert ir.async_get(hass).async_get_issue(DOMAIN, ISSUE_THERMOSTAT_ENTRIES_CREATED) is None
+
+
+async def test_moving_the_settings_of_a_removed_entry_does_nothing(hass) -> None:
+    """The defaults entry removed before Home Assistant has started: nothing is created."""
+    _vtherm(hass, "vt-bedroom", "Bedroom")
+
+    await smartpi_init._async_move_settings(hass, "removed-entry")
+
+    assert _own_entries(hass) == {}

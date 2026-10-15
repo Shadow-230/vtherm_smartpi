@@ -122,3 +122,17 @@ async def test_an_own_entry_that_uses_the_defaults_records_as_the_defaults_say(h
 
     assert recorded()
     using_defaults.assert_awaited()
+
+
+async def test_a_sensor_removed_after_another_took_its_thermostat_leaves_that_one_live(hass) -> None:
+    """The entry that took the thermostat over holds its live sensor: removing the old sensor
+    afterwards does not drop the new one."""
+    from custom_components.vtherm_smartpi.sensor import SmartPIDiagnosticSensor, _live_diagnostic_sensors
+
+    old = SmartPIDiagnosticSensor(hass, "climate.vt_x", "vt-x")
+    new = SmartPIDiagnosticSensor(hass, "climate.vt_x", "vt-x")
+    _live_diagnostic_sensors(hass)["vt-x"] = new
+
+    await old.async_will_remove_from_hass()
+
+    assert _live_diagnostic_sensors(hass)["vt-x"] is new

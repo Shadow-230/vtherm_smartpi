@@ -4,6 +4,10 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+- Tests for the four services (each reaches the thermostats a call names, skips the others) and
+  for the paths the code coverage found untested: the migration's edge cases, the heating inputs
+  without a registry, a diagnostic sensor removed after a takeover, the valve's activation floor
+  with water data, a second source turned off, a thermostat range that is not a range.
 - The QAS test pack follows the new options forms: every setup and scenario window goes through
   its menu and ends with "Save and finish" (and the reset question where a change affects what
   was learned); a zone's member without a heating type gets it in the zone's setup. QD1 and QE1
