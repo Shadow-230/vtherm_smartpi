@@ -420,6 +420,18 @@ Les états transitoires de rattrapage ne sont pas restaurés après reboot :
 
 Le redémarrage repart donc d'un état PI persistant utile, mais sans restaurer des états servo transitoires qui ne sont plus physiquement valides hors de leur session d'origine. Le timestamp mural de la dernière régulation active valide est persisté et n'est pas rafraîchi lorsque le mode HVAC est OFF. Si l'inactivité dépasse 96 heures, la mémoire PI du contrôleur est purgée à la reprise tandis que le modèle A/B appris reste disponible.
 
+Le mode HVAC du modèle enregistré (`est.model_hvac_mode`) est aussi restauré. Quand Home Assistant
+redémarre dans l'autre mode (par exemple l'état a été enregistré en HEAT et le thermostat démarre en
+COOL), le premier calcul voit le changement de mode et réinitialise l'état du PI, comme le fait un
+changement de mode en marche : une intégrale apprise sur le chauffage ne pilote pas le
+refroidissement.
+
+Certaines interruptions de la régulation relancent le suivi du temps, comme le fait OFF : un
+capteur de température absent, une coupure de garde (guard cut), et un thermostat qui travaille
+comme source additionnelle d'un autre thermostat
+([Dépendances entre zones, §5.7](zone_dependencies.md#57-voie-dexécution)). Le premier calcul après
+l'interruption n'intègre alors rien, au lieu de l'erreur sur toute la durée de l'interruption.
+
 ### 4.5 Deadband, near-band et protections
 
 `DeadbandManager` gère :

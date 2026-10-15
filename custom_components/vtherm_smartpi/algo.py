@@ -3833,6 +3833,8 @@ class SmartPI:
             # Its boiler's call does not apply to a command that is not its own.
             self.boiler.update(calling=False, heating=False, now_s=now)
             self._boiler_mode = None
+            # Own regulation is suspended: the first own tick must not integrate this period.
+            self._last_calculate_time = None
             return
 
         # --- Known model inputs and the reaction to a neighbour's open window ---

@@ -4,6 +4,12 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+- After a restart into the other HVAC mode, the PI state is reset on the first calculation, from
+  the saved model's mode; a missing sensor and a guard cut restart the time tracking, so the next
+  calculation does not integrate the error over the whole gap (taken from the author's newer
+  code). The same now holds for a thermostat leaving the additional source's role: two hours in
+  that role raised its integral from 1.0 to 11.0 on its first own calculation; now it stays at 1.0.
+
 - `testing.md` gets a section "Coverage": the code coverage per file against the baseline, the
   fork's own lines (99.2 % of the lines, 98.0 % of the branches) with the reason for each line left
   uncovered, and a matrix of the features, their variants and use cases with where each is tested.
