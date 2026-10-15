@@ -187,6 +187,13 @@ bounded while preserving the mode sign; `b` remains strictly positive.
 
 With water heating, `u` is the power at the reference water (the command times `φ`).
 
+When the measurements of `a` or of `b` move for good (a lasting drift), `ab_drift.py` recentres
+that history. It only accepts drift candidates that follow each other closely (sequence numbers
+at most three apart). Each channel numbers its own candidates (`learn_seq_a`, `learn_seq_b`), so
+heating measurements between two cooling measurements do not hide a real drift of `b` (and the
+other way round). A state saved with the older shared counter `learn_seq` starts both counters
+from it.
+
 ### 3.5 Dead-time estimation
 
 `DeadTimeEstimator` implements an independent FSM. Its channels describe the

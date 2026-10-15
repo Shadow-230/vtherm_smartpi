@@ -1,10 +1,13 @@
 """Tests for persistent drift handling in Smart-PI ABEstimator."""
 
+import json
+from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
 
 from custom_components.vtherm_smartpi.algo import SmartPI
+from custom_components.vtherm_smartpi.hvac_mode import VThermHvacMode_HEAT
 from custom_components.vtherm_smartpi.smartpi.ab_drift import (
     DriftChannelState,
     append_drift_candidate,
@@ -249,3 +252,39 @@ def test_smartpi_diagnostics_expose_ab_drift_fields():
     assert "b_drift_state" in diag
     assert "a_drift_buffer_count" in diag
     assert "b_drift_buffer_count" in diag
+
+
+def test_a_legacy_state_from_the_qas_fixture_seeds_both_counters():
+    """The learned room of the QAS pack, saved with one shared learn_seq, loads into both counters."""
+    fixture = (
+        Path(__file__).parent / "qas/custom_components/smartpi_qas_helpers/fixtures/learned_room.json"
+    )
+    state = json.loads(fixture.read_text())["est_state"]
+    assert state["learn_seq"] == 49
+
+    est = ABEstimator()
+    est.load_state(state)
+
+    assert (est._learn_seq_a, est._learn_seq_b) == (49, 49)
+    saved = est.save_state()
+    assert (saved["learn_seq_a"], saved["learn_seq_b"]) == (49, 49)
+    assert "learn_seq" not in saved
+
+
+def test_zone_fit_seed_does_not_block_drift():
+    """Histories seeded from a zone's joint fit carry no sequence numbers; b still follows a drift."""
+    algo = SmartPI(
+        hass=MagicMock(), cycle_min=10, minimal_activation_delay=0, minimal_deactivation_delay=0, name="Seeded"
+    )
+    algo.dependency_model.pending_seed = (0.05, 0.002)
+    algo._apply_zone_fit(VThermHvacMode_HEAT)
+    est = algo.est
+    assert (est.a, est.b) == (0.05, 0.002)
+    assert (est._learn_seq_a, est._learn_seq_b) == (0, 0)
+
+    for _ in range(40):
+        for _ in range(4):
+            est.learn(dT_int_per_min=0.03, u=1.0, t_int=20.0, t_ext=10.0)
+        est.learn(dT_int_per_min=-0.04, u=0.0, t_int=20.0, t_ext=10.0)
+
+    assert est.b >= 0.003

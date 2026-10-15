@@ -4,6 +4,12 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+- Separate drift sequence counters for `a` and `b` (taken from the author's newer code). With one
+  shared counter, three or more heating measurements between two cooling measurements kept a real
+  drift of `b` from ever recentring its history (and the other way round). A saved state with the
+  old shared counter, such as the QAS pack's learned room, starts both counters from it; histories
+  seeded from a zone's joint fit do not hold a drift back.
+
 - `testing.md` gets a section "Coverage": the code coverage per file against the baseline, the
   fork's own lines (99.2 % of the lines, 98.0 % of the branches) with the reason for each line left
   uncovered, and a matrix of the features, their variants and use cases with where each is tested.
