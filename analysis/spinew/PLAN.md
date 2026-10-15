@@ -572,8 +572,10 @@ pomiaru); `testing.md`; CHANGELOG. Treść o reference governorze z
 `git show origin/SPINew:documentation/<jęz>/<plik>`; nasze etykiety UI (zgodne z
 `translations/en.json`) i nasze poprawki zostają; PL tłumaczymy. Karty
 `cards/smartpi_diags-{en,fr}.md` przychodzą od autora; dodajemy w nich nasze sekcje (D4): znane
-wejścia (`dependencies.*`), woda (`water.*`), kocioł (`boiler.*`), w EN i FR. Karty PL nie ma;
-nowa tylko po decyzji właściciela.
+wejścia (`dependencies.*`), woda (`water.*`), kocioł (`boiler.*`). Nowa karta
+`cards/smartpi_diags-pl.md`: tłumaczenie karty EN po zmianach (ta sama struktura, te same klucze i
+warunki szablonu, teksty wg słownika `ANALIZA.md` §4). Kontrola: trzy karty mają te same sekcje w
+tej samej kolejności.
 
 ### C2. Poprawki COOL (`8823c17`, `770c444`)
 

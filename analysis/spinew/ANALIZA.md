@@ -394,7 +394,7 @@ się parsują.
 | B4 | `CHANGELOG.md` | `async_fire`, `requirements` |
 | C1 | `technical_doc.md` §4.4, §6.3 i pozostałe wzmianki o lądowaniu; `vtherm_smartpi.md` (opis filtra nastawy); `diagnostics.md` (atrybuty `landing_*` → atrybuty reference governora, atrybuty historii); `README.md` (1 wzmianka) | lądowanie → reference governor; treść z `git show origin/SPINew:documentation/<jęz>/<plik>`, nasze etykiety UI i nasze poprawki zostają |
 | C1 | `water_input.md` §3.4 i §3.6 | przy ograniczeniu wodą reference governor nie hamuje; wyniki §13 |
-| C1 | `cards/smartpi_diags-{en,fr}.md` | przychodzą od autora; dodajemy nasze sekcje (znane wejścia `dependencies.*`, woda `water.*`, kocioł `boiler.*`) w EN i FR (D4). Karty PL nie ma; nowa tylko po decyzji właściciela |
+| C1 | `cards/smartpi_diags-{en,fr}.md`, nowa `cards/smartpi_diags-pl.md` | EN i FR przychodzą od autora; dodajemy nasze sekcje (znane wejścia `dependencies.*`, woda `water.*`, kocioł `boiler.*`) (D4). Karta PL: tłumaczenie karty EN po zmianach, ta sama struktura i te same klucze, teksty wg słownika §4 |
 | C2 | `technical_doc.md` (COOL) | bierny czas martwy; histereza lustrzana |
 | każdy | `testing.md` | nowe testy, pokrycie, katalog QAS (§6.5) |
 
@@ -425,7 +425,7 @@ się parsują.
 | D1 | Serwisy: walidacja celu i błąd, gdy brak termostatu SmartPI (autor) albo ciche ignorowanie (dev) | przyjęte 2026-10-15: wersja autora (wywołania z `entity_id` w danych, np. pakiet QAS, nadal działają) |
 | D2 | Po A1: czy `_apply_zone_fit` nadal nadpisuje a/b strefy | przyjęte 2026-10-15: decyzja po pomiarze na symulatorze po A1 |
 | D3 | Zmiany tylko dla COOL (C2) | przyjęte (D0) |
-| D4 | Nasze sekcje (znane wejścia, woda, kocioł) w kartach diagnostycznych | przyjęte 2026-10-15: dodajemy (C1) |
+| D4 | Nasze sekcje (znane wejścia, woda, kocioł) w kartach diagnostycznych | przyjęte 2026-10-15: dodajemy (C1); nowa karta PL `cards/smartpi_diags-pl.md` |
 | D5 | Dokumentacja EN/FR/PL razem z kodem | przyjęte 2026-10-15 |
 | D6 | Cykl życia: sposób autora (B1) | przyjęte 2026-10-15 (§11.4) |
 | D7 | Korekta reference governora przy wodzie | pomiar 2026-10-15: niepotrzebna, opcja D (§13.4) |
