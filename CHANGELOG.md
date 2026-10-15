@@ -4,6 +4,10 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+- Tests for the edge cases the code coverage found in the options forms (entities without a unique
+  id, a zone or entry changed in another window, a member entry that cannot be created) and in the
+  computation of neighbours and zones (fits that cannot be published, saved states that cannot be
+  read, a missing outdoor temperature or target).
 - Remove the second source's `response` property, which nothing read (found by the code coverage).
 - Tests for the four services (each reaches the thermostats a call names, skips the others) and
   for the paths the code coverage found untested: the migration's edge cases, the heating inputs
