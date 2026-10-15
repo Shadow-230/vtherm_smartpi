@@ -74,20 +74,35 @@ Stan na: 2026-10-15.
 
 ## 1. Kolejność i zależności
 
-| Etap | Zakres | Źródło | Zależy od | Ryzyko |
+### Faza A – poprawki niezależne (dowolna kolejność)
+
+| Etap | Co | Źródło | Ryzyko |
+|---|---|---|---|
+| A0 | Przygotowanie: liczby testów (zakres CI i pełny lokalny) i pokrycie na `dev` jako punkt odniesienia | – | – |
+| A1 | Uczenie a/b z surowych pomiarów; filtr EMA tylko do wykrywania czasu martwego. Po etapie pomiar na symulatorze do decyzji D2 (`_apply_zone_fit`) | `69da036` | niskie |
+| A2 | Osobne liczniki dryfu dla a i b; stary stan z jednym `learn_seq` dalej się wczytuje | `dd62923` | niskie |
+| A3 | Reset PI po restarcie w innym trybie; brak całkowania przez przerwę (brak czujnika, guard cut). Nasze rozszerzenie: ta sama poprawka po wyjściu z roli wykonawczej | `c506522` (ręcznie) | niskie |
+| A4 | Zapis stanu najwyżej co 5 min (`state_store.py`); serwisy, usunięcie wpisu i reset strefy (D9) zapisują od razu | `a4624e5` | niskie |
+| A5 | OFF w fazie wyłączenia PWM anuluje cykl; usunięcie setterów, które zawsze rzucały wyjątek | `4070630`, `144ff02` | niskie |
+
+### Faza B – cykl życia i ustawienia
+
+| Etap | Co | Źródło | Zależy od | Ryzyko |
 |---|---|---|---|---|
-| A0 | Przygotowanie, pomiar bazowy, pokrycie bazowe | – | – | – |
-| A1 | Nachylenia z surowych pomiarów | `69da036` | – | niskie |
-| A2 | Osobne liczniki dryfu a/b | `dd62923` | – | niskie |
-| A3 | Reset PI po restarcie; bez całkowania przez przerwę (także po roli wykonawczej) | `c506522` (ręcznie) | – | niskie |
-| A4 | Zapis stanu najwyżej co 5 min | `a4624e5` | – | niskie |
-| A5 | OFF anuluje cykl; usunięcie setterów | `4070630`, `144ff02` | – | niskie |
-| B1 | Cykl życia wpisów (sposób autora, decyzja D6) | `b3c8939` + nasze elementy | – | średnie |
-| B2 | Wpis „SmartPI defaults” do odtworzenia, bez kroku `global` | `b00384a` (część) | B1 | niskie |
-| B3 | Walidacja celu serwisów (D1: wersja autora) | `b00384a` (część) | B1 | niskie |
-| B4 | `bus.async_fire`, martwa gałąź, manifest | `b00384a` (część) | – | niskie |
-| C1 | Reference governor (zamiast lądowania) | `c6f9f88`, `b2b0249`, `15fc13f` | A, B | **wysokie** |
-| C2 | Poprawki COOL | `8823c17`, `770c444` | C1 | niskie |
+| B1 | Cykl życia wpisów w sposobie autora (D6): fabryka i serwisy rejestrowane na stałe, przeładowanie tylko dotkniętych termostatów, `async_remove_entry`. Nasze elementy zostają (strefa, grupa jednego zapisu, migracja 1.2, czujnik diagnostyczny) | `b3c8939` + nasze | – | średnie |
+| B2 | Wpis „SmartPI defaults” da się odtworzyć po usunięciu; usunięty martwy krok `global` | `b00384a` (część) | B1 | niskie |
+| B3 | Walidacja celu serwisów w wersji autora (D1): błąd, gdy cel nie jest termostatem SmartPI | `b00384a` (część) | B1 | niskie |
+| B4 | `bus.async_fire`, usunięta martwa gałąź w anulowaniu kalibracji, `requirements` w manifeście | `b00384a` (część) | – | niskie |
+
+### Faza C – reference governor
+
+| Etap | Co | Źródło | Zależy od | Ryzyko |
+|---|---|---|---|---|
+| C1 | Reference governor zamiast lądowania, falsyfikacja prognozy, atrybuty historii. Kluczowe jest sprawdzenie, czy nasze podstawienia (`b_eff`, `T_ref`, woda) docierają do nowych elementów. Bez korekty przy wodzie (D7); „drganie” capa mierzymy (D8). Karty diagnostyczne EN/FR z naszymi sekcjami i nowa karta PL (D4) | `c6f9f88`, `b2b0249`, `15fc13f` | A, B | **wysokie** |
+| C2 | COOL: bierny czas martwy przy hamowaniu i w bliźniaku, histereza lustrzana, flaga zmiany nastawy w cyklu, FF3 bez martwego wejścia | `8823c17`, `770c444` | C1 | niskie |
+
+**Kolejność:** A0 → A1–A5 → B1 → B2, B3 (B4 w dowolnym momencie) → C1 → C2. Każdy etap zaczyna
+krótki plan do akceptacji właściciela (§0.1); push i PR tylko za jego „tak” (§0.3).
 
 Etapy A są od siebie niezależne. Każdy etap to gałąź robocza od aktualnego `dev` (albo wskazana
 przez właściciela) i PR do `dev`. Commity `b3c8939` i `b00384a` przenosimy ręcznie (logika
