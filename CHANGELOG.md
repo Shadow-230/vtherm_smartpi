@@ -4,6 +4,10 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+- `testing.md` gets a section "Coverage": the code coverage per file against the baseline, the
+  fork's own lines (99.2 % of the lines, 98.0 % of the branches) with the reason for each line left
+  uncovered, and a matrix of the features, their variants and use cases with where each is tested.
+  Section 4 lists the new test files.
 - Tests for the edge cases the code coverage found in the options forms (entities without a unique
   id, a zone or entry changed in another window, a member entry that cannot be created) and in the
   computation of neighbours and zones (fits that cannot be published, saved states that cannot be
