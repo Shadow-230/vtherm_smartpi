@@ -29,6 +29,10 @@ AB_TOLERANCE = 0.05
 # estimate comes 1-3 minutes late. The bound is symmetric so that a more precise
 # estimator still passes.
 DEADTIME_TOLERANCE_MIN = 4.0
+# With a 0.1 degC sensor the learned a and b stay within these bounds of the
+# truth (measured 0.95-1.04; the margin keeps the test robust to small changes).
+COARSE_AB_TOLERANCE = 0.15
+SETBACK_AB_TOLERANCE = 0.10
 
 
 async def _identify(monkeypatch, zone: ZoneSpec, weather: Weather, max_hours: float):
@@ -69,18 +73,59 @@ async def test_smartpi_identifies_known_zone(monkeypatch, zone) -> None:
 
 
 async def test_learning_completes_with_a_coarse_sensor(monkeypatch) -> None:
-    """A 0.1 degC sensor still lets SmartPI finish learning with a usable model.
+    """A 0.1 degC sensor still lets SmartPI finish learning with a close model.
 
-    Quantization at slow temperature rates scatters the learned a and b (about
-    -50 % to +25 % across zones), so only the order of magnitude is checked.
+    The learning slopes come from the raw reading. When they came from the
+    filtered temperature, this zone finished after about 6 h with a and b at
+    0.68-0.71 of the truth; now it finishes after about 15 h with 0.95-1.00
+    (control phases 0, 170 and 340 s).
     """
     zone = ZoneSpec(a=0.03, b=0.001, deadtime_min=10.0, sensor_resolution_c=0.1)
     sim, finished_at_h = await _identify(monkeypatch, zone, Weather(base_c=5.0), max_hours=24.0)
 
     assert finished_at_h, "SmartPI did not finish its learning phase within 24 h"
     result = identification(sim)
-    assert 0.4 <= result.a_ratio <= 1.6
-    assert 0.4 <= result.b_ratio <= 1.6
+    assert result.a_ratio == pytest.approx(1.0, abs=COARSE_AB_TOLERANCE)
+    assert result.b_ratio == pytest.approx(1.0, abs=COARSE_AB_TOLERANCE)
+
+
+async def _set_target(sim: Simulation, target_c: float) -> None:
+    sim.thermostat.target_temperature = target_c
+    sim.zone.setpoint_c = target_c
+    await sim.thermostat.async_control_heating(force=True)
+
+
+@LOCAL_ONLY
+@pytest.mark.parametrize("control_phase_s", [0.0, 170.0, 340.0])
+@pytest.mark.parametrize(
+    "ab", [(0.03, 0.001), (0.02, 0.0006), (0.05, 0.0015)], ids=["radiator", "slow_loss", "fast"]
+)
+async def test_own_learning_with_a_tenth_degree_sensor(monkeypatch, ab, control_phase_s) -> None:
+    """Night setbacks no longer pull SmartPI's own a and b away from the truth with a 0.1 degC sensor.
+
+    Two days at 20 degC, then four days at 21 degC with 17 degC from 22:00 to
+    06:00, outdoor 3 +/- 3 degC, no zone fit. With slopes from the filtered
+    temperature the long cool-downs ended with a at 0.51-1.15 and b at
+    0.44-1.11 of the truth; from the raw reading a is 0.95-1.04 and b 0.98-1.02.
+    """
+    zone = ZoneSpec(
+        a=ab[0],
+        b=ab[1],
+        deadtime_min=20.0 if ab[0] == 0.05 else 10.0,
+        sensor_resolution_c=0.1,
+        control_phase_s=control_phase_s,
+    )
+    sim = Simulation(monkeypatch, zone, Weather(base_c=3.0, daily_amplitude_c=3.0))
+    await sim.run_for(46.0)
+    for _ in range(4):
+        await _set_target(sim, 17.0)
+        await sim.run_for(8.0)
+        await _set_target(sim, 21.0)
+        await sim.run_for(16.0)
+
+    result = identification(sim)
+    assert result.a_ratio == pytest.approx(1.0, abs=SETBACK_AB_TOLERANCE)
+    assert result.b_ratio == pytest.approx(1.0, abs=SETBACK_AB_TOLERANCE)
 
 
 @LOCAL_ONLY

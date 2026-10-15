@@ -159,6 +159,7 @@ async def test_learning_gate_pauses_learning_and_dead_times(monkeypatch) -> None
     assert not algo.learn_win.active
     assert algo.dt_est.state == "OFF"
     assert not algo.dt_est.tin_history
+    assert not algo.dt_est._tin_lp_history
     assert build_published_diagnostics(algo)["dependencies"]["learning_gate"] == "door_open"
 
     provider.inputs = KnownInputs(status=STATUS)

@@ -560,8 +560,11 @@ sources working, by a joint fit of the zone (one fit of all the values together,
 fit gives the losses `b`, the main source's `a` and delay, the additional source's `a_f` and time
 scale, and the neighbours' `k`. SmartPI starts from that model and keeps it. The first design
 learned each source on its own, one after the other. It was dropped (section 5.8). With 0.1 degC
-sensors, SmartPI's own windows measure a slow cooling as about half as fast as it really is. Every
-value learned on top of SmartPI's model took on its errors.
+sensors, SmartPI's own windows then measured a slow cooling as about half as fast as it really is,
+because they read the filtered temperature. Every value learned on top of SmartPI's model took on
+its errors. SmartPI now computes its learning slopes on the raw reading
+([technical documentation, §3.3](technical_doc.md#33-robust-slope-estimation)), which removes most
+of that error; the joint fit stays, because it also separates the two sources and the neighbours.
 
 ```mermaid
 flowchart LR
