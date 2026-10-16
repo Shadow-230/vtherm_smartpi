@@ -197,6 +197,13 @@ bornée tout en conservant le signe du mode ; `b` reste strictement positif.
 
 Avec un chauffage à eau, `u` est la puissance pour l'eau de référence (la commande multipliée par `φ`).
 
+Quand les mesures de `a` ou de `b` changent durablement (une dérive), `ab_drift.py` recentre cet
+historique. Il n'accepte que des candidats de dérive qui se suivent de près (numéros de séquence
+écartés de trois au plus). Chaque canal numérote ses propres candidats (`learn_seq_a`,
+`learn_seq_b`), si bien que des mesures en chauffe entre deux mesures en refroidissement ne cachent
+pas une vraie dérive de `b` (et inversement). Un état enregistré avec l'ancien compteur commun
+`learn_seq` initialise les deux compteurs.
+
 ### 3.5 Estimation du temps mort
 
 `DeadTimeEstimator` implémente une FSM indépendante. Les canaux décrivent la
@@ -428,6 +435,18 @@ Les états transitoires de rattrapage ne sont pas restaurés après reboot :
 
 Le redémarrage repart donc d'un état PI persistant utile, mais sans restaurer des états servo transitoires qui ne sont plus physiquement valides hors de leur session d'origine. Le timestamp mural de la dernière régulation active valide est persisté et n'est pas rafraîchi lorsque le mode HVAC est OFF. Si l'inactivité dépasse 96 heures, la mémoire PI du contrôleur est purgée à la reprise tandis que le modèle A/B appris reste disponible.
 
+Le mode HVAC du modèle enregistré (`est.model_hvac_mode`) est aussi restauré. Quand Home Assistant
+redémarre dans l'autre mode (par exemple l'état a été enregistré en HEAT et le thermostat démarre en
+COOL), le premier calcul voit le changement de mode et réinitialise l'état du PI, comme le fait un
+changement de mode en marche : une intégrale apprise sur le chauffage ne pilote pas le
+refroidissement.
+
+Certaines interruptions de la régulation relancent le suivi du temps, comme le fait OFF : un
+capteur de température absent, une coupure de garde (guard cut), et un thermostat qui travaille
+comme source additionnelle d'un autre thermostat
+([Dépendances entre zones, §5.7](zone_dependencies.md#57-voie-dexécution)). Le premier calcul après
+l'interruption n'intègre alors rien, au lieu de l'erreur sur toute la durée de l'interruption.
+
 ### 4.5 Deadband, near-band et protections
 
 `DeadbandManager` gère :
@@ -653,6 +672,15 @@ Le payload actuel de `SmartPI.save_state()` contient notamment :
 
 Les clés optionnelles sont décrites dans [Dépendances entre zones, §8](zone_dependencies.md#8-état-sauvegardé)
 et [Entrées eau et chaudière, §7](water_input.md#7-état-sauvegardé). Un payload sans ces clés se charge comme avant.
+
+**Quand l'état est écrit.** `state_store.py` (`SmartPIStateStore`) l'écrit sous la clé
+`vtherm_smartpi.<nom du thermostat>` et lit encore un état trouvé sous l'ancienne clé
+`versatile_thermostat.smartpi.<nom du thermostat>`. La boucle de régulation demande une écriture
+différée au plus une fois toutes les cinq minutes (`SAVE_DELAY_SEC = 300`) ; l'état est pris au
+moment de l'écriture, et Home Assistant écrit celle qui attend quand il s'arrête. Les services, la
+suppression du thermostat et une calibration annulée écrivent tout de suite. De même une
+réinitialisation du modèle appris demandée par le formulaire de la zone (`dependency_reset_token`) :
+sinon un redémarrage dans les cinq minutes réinitialiserait le modèle une seconde fois.
 
 Seul le trim appris reste persistant. Les fenêtres de propriété, propositions
 en attente et transferts d'intégrale sont transitoires ; après redémarrage,

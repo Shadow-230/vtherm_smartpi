@@ -197,6 +197,13 @@ ograniczona, ale zachowuje znak trybu; `b` jest zawsze większe od zera.
 
 Przy ogrzewaniu wodnym `u` to moc przy wodzie odniesienia (wysterowanie pomnożone przez `φ`).
 
+Gdy pomiary `a` albo `b` zmieniają się na stałe (dryf), `ab_drift.py` przesuwa środek tej
+historii. Przyjmuje tylko kandydatów dryfu, którzy następują blisko po sobie (numery sekwencji
+różnią się najwyżej o trzy). Każdy kanał numeruje własnych kandydatów (`learn_seq_a`,
+`learn_seq_b`), więc pomiary grzania między dwoma pomiarami stygnięcia nie ukrywają prawdziwego
+dryfu `b` (i odwrotnie). Stan zapisany ze starszym wspólnym licznikiem `learn_seq` ustawia z niego
+oba liczniki.
+
 ### 3.5 Wyznaczanie czasu martwego
 
 `DeadTimeEstimator` to niezależny automat stanów (FSM). Jego kanały opisują
@@ -425,6 +432,17 @@ Przejściowe stany doganiania nie są przywracane po restarcie:
 
 Po restarcie zostaje więc tylko przydatna, trwała pamięć PI. Przejściowe stany regulacji nie są przywracane, bo poza swoją pierwotną sesją pracy nie mają już fizycznego sensu. Czas zegarowy (rzeczywisty) ostatniego poprawnego kroku aktywnej regulacji jest zapisywany i nie jest odświeżany, gdy HVAC jest wyłączony (OFF). Jeśli bezczynność trwa ponad 96 godzin, przy wznowieniu pamięć PI regulatora jest czyszczona, a nauczony model A/B zostaje.
 
+Odtwarzany jest też tryb HVAC zapisanego modelu (`est.model_hvac_mode`). Gdy Home Assistant
+uruchomi się w innym trybie (na przykład stan zapisano w HEAT, a termostat startuje w COOL),
+pierwsze obliczenie widzi zmianę trybu i kasuje stan PI, tak jak przy zmianie trybu w trakcie
+pracy: całka nauczona przy grzaniu nie steruje chłodzeniem.
+
+Niektóre przerwy w regulacji zaczynają liczenie czasu od nowa, tak jak OFF: brak czujnika
+temperatury, „guard cut” (wymuszone wyłączenie przez ochronę) oraz praca termostatu jako
+dodatkowe źródło innego termostatu
+([Zależności stref, §5.7](zone_dependencies.md#57-ścieżka-wykonawcza)). Pierwsze obliczenie po
+przerwie niczego wtedy nie całkuje, zamiast całkować uchyb z całej przerwy.
+
 ### 4.5 Strefa nieczułości, pasmo przy nastawie i zabezpieczenia
 
 `DeadbandManager` obsługuje:
@@ -649,6 +667,15 @@ Obecne dane zapisywane przez `SmartPI.save_state()` zawierają między innymi:
 
 Klucze opcjonalne są opisane w [Zależności stref, §8](zone_dependencies.md#8-zapisywany-stan)
 i [Wejścia wody i kotła, §7](water_input.md#7-zapisywany-stan). Dane bez tych kluczy wczytują się tak jak wcześniej.
+
+**Kiedy stan jest zapisywany.** `state_store.py` (`SmartPIStateStore`) zapisuje go pod kluczem
+`vtherm_smartpi.<nazwa termostatu>` i nadal wczytuje stan znaleziony pod starszym kluczem
+`versatile_thermostat.smartpi.<nazwa termostatu>`. Pętla regulacji prosi o zapis odroczony
+najwyżej raz na pięć minut (`SAVE_DELAY_SEC = 300`); stan jest pobierany w chwili zapisu, a
+oczekujący zapis Home Assistant wykonuje przy zatrzymaniu. Serwisy, usunięcie termostatu i
+anulowana kalibracja zapisują od razu. Tak samo reset nauczonego modelu, o który prosi formularz
+strefy (`dependency_reset_token`): inaczej restart w ciągu tych pięciu minut skasowałby model
+drugi raz.
 
 Trwale zapisywana jest tylko nauczona korekta FF. Okna przypisania, oczekujące
 propozycje i przeniesienia całki są przejściowe; po restarcie obserwator jest

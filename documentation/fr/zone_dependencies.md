@@ -1076,6 +1076,10 @@ sequenceDiagram
   et 20.6 degC. Une source principale retirée de Home Assistant (ou rechargée) détache le lien tout de
   suite. La source additionnelle régule alors seule sans attendre, avec un message d'information dans
   le journal, jusqu'à ce qu'elle soit de nouveau rattachée.
+- **Retour à sa propre régulation.** Tant qu'elle applique la commande de la source principale, le
+  SmartPI propre de la source additionnelle ne régule rien. Quand elle quitte ce rôle (la source
+  principale est muette ou détachée, ou la zone est supprimée), son suivi du temps repart de zéro :
+  son premier calcul propre n'intègre rien pour le temps passé dans ce rôle.
 - **L'eau.** La commande de la source principale est une puissance à l'eau de référence. La source
   additionnelle lit ses propres données d'eau à chaque appel de régulation et donne à son émetteur
   `power / factor` (au plus 1), comme le ferait son propre SmartPI. Elle publie son **plafond de

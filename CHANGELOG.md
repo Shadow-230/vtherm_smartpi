@@ -22,6 +22,35 @@ All notable changes to this project will be documented in this file.
   in every case, for up to 2.7 % more heat than Economical. The entries move to minor version 3,
   which adds the setting.
 
+- SmartPI's events are fired with Home Assistant's loop-safe `bus.async_fire`; a branch in the
+  cancellation of a calibration that could never run is removed, and the manifest declares its
+  `vtherm_api` requirement (taken from the author's newer code).
+
+- A thermostat switched off during the off phase of its PWM cycle cancels the running cycle, so
+  the scheduler does not switch the device on again later; a main source still sends its 0 to
+  its additional source first. An additional source that stops working (its thermostat off, or
+  a command for another HVAC mode) cancels its running cycle the same way. Remove the setters of `guard_cut_active` and `guard_kick_active`,
+  which could only raise an error and were not used (both taken from the author's newer code).
+
+- SmartPI writes its state at most once every five minutes from the control loop instead of at
+  each control call, about once a minute per thermostat (taken from the author's newer code, with
+  its `state_store.py`). The services, the removal of a thermostat and a cancelled calibration
+  still write at once, and so does a reset of the learned model asked by the zone's form, so that
+  a restart within the five minutes does not reset the model again. The fork's parts of the state
+  (dependencies, the zone's reset token, the water input) are written as before.
+
+- After a restart into the other HVAC mode, the PI state is reset on the first calculation, from
+  the saved model's mode; a missing sensor and a guard cut restart the time tracking, so the next
+  calculation does not integrate the error over the whole gap (taken from the author's newer
+  code). The same now holds for a thermostat leaving the additional source's role: two hours in
+  that role raised its integral from 1.0 to 11.0 on its first own calculation; now it stays at 1.0.
+
+- Separate drift sequence counters for `a` and `b` (taken from the author's newer code). With one
+  shared counter, three or more heating measurements between two cooling measurements kept a real
+  drift of `b` from ever recentring its history (and the other way round). A saved state with the
+  old shared counter, such as the QAS pack's learned room, starts both counters from it; histories
+  seeded from a zone's joint fit do not hold a drift back.
+
 - The exchange with a neighbour is learned also during a guard cut, when the zone gets no heat:
   with learning slopes from the raw reading guard cuts come more often, and an always-connected
   neighbour was never learned in the simulator. Now its `k` is learned within 3 % of the truth.

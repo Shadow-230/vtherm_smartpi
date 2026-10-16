@@ -1047,6 +1047,10 @@ sequenceDiagram
   źródła. Z nim strefa trzymała się w przedziale od 19.4 do 20.6 degC. Główne źródło usunięte
   z Home Assistant (albo przeładowane) od razu odłącza łącze. Dodatkowe źródło od razu reguluje
   wtedy samo, z informacją w logu, aż zostanie znowu podłączone.
+- **Powrót do własnej regulacji.** Gdy dodatkowe źródło wykonuje polecenie głównego, jego własny
+  SmartPI niczego nie reguluje. Gdy wychodzi z tej roli (główne źródło milczy albo zostało
+  odłączone, albo strefę usunięto), liczenie czasu zaczyna się od nowa: pierwsze własne obliczenie
+  niczego nie całkuje za czas spędzony w tej roli.
 - **Woda.** Wysterowanie głównego źródła to moc przy wodzie odniesienia. Dodatkowe źródło przy
   każdym wywołaniu sterowania czyta własne dane o wodzie i daje swojemu emiterowi `power / factor`
   (najwyżej 1), tak jak zrobiłby to jego własny SmartPI. Publikuje swój **limit mocy**: największą

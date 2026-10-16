@@ -260,7 +260,6 @@ async def _restart(sim: Simulation, monkeypatch) -> None:
     for handler, state in ((sim.source_handler, source_state), (sim.handler, lead_state)):
         handler.init_algorithm()
         handler._store = None
-        handler._legacy_store = None
         handler._thermostat.prop_algorithm.load_state(state)
     sim._drive_source(monkeypatch, sim.zone.source.split)
     for thermostat in (sim.thermostat, sim.source_thermostat):
