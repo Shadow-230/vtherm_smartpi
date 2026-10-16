@@ -2043,14 +2043,18 @@ class SmartPI:
         off_reason: str | None,
         power_shedding: bool,
     ) -> bool:
-        """Whether SmartPI's own learning conditions allow the exchanges to learn."""
+        """Whether SmartPI's own learning conditions allow the exchanges to learn.
+
+        A guard cut does not stop them: the zone then gets no heat, which is a known
+        power, and with learning slopes from the raw reading guard cuts come often
+        enough to keep an always-connected neighbour from ever being learned.
+        """
         resume_ts = self.learn_win.learning_resume_ts
         return (
             self._learning_enabled
             and hvac_mode in (VThermHvacMode_HEAT, VThermHvacMode_COOL)
             and off_reason is None
             and not power_shedding
-            and not self.guards.guard_cut_active
             and not self.calibration_mgr.is_calibrating
             and (resume_ts is None or now_monotonic >= resume_ts)
         )
@@ -3169,6 +3173,7 @@ class SmartPI:
             self._last_u_pi = 0.0
             self._last_u_limited = 0.0
             self.ctl.last_i_mode = "I:FREEZE(missing_sensor)"
+            self._last_calculate_time = None
             return True
 
         if hvac_mode == VThermHvacMode_OFF:
@@ -3824,6 +3829,8 @@ class SmartPI:
             # Its boiler's call does not apply to a command that is not its own.
             self.boiler.update(calling=False, heating=False, now_s=now)
             self._boiler_mode = None
+            # Own regulation is suspended: the first own tick must not integrate this period.
+            self._last_calculate_time = None
             return
 
         # --- Known model inputs and the reaction to a neighbour's open window ---
@@ -3838,29 +3845,29 @@ class SmartPI:
         # Track active modes BEFORE validation so that missing presets in COOL
         # don't intercept the cycle and hide the transition.
         if hvac_mode in (VThermHvacMode_HEAT, VThermHvacMode_COOL):
-            if self._last_hvac_mode is not None and hvac_mode != self._last_hvac_mode:
+            # The persisted model mode covers the first tick after a restart.
+            previous_mode = self._last_hvac_mode or self.est.model_hvac_mode
+            mode_changed = previous_mode is not None and str(hvac_mode) != str(previous_mode)
+            if mode_changed:
                 self.ctl.reset()
                 self._recovery_hold_armed = False
                 self._ff_trim.clear_pending()
                 self._ff_trim.clear_last_transaction()
-                self._fftrim_observer.reset_runtime()
-                self._fftrim_periodic_observer.reset_runtime()
-                self._fftrim_observation_mode = "stationary"
-                self.reset_command_ownership("ownership_context_changed")
                 _LOGGER.info(
                     "%s - HVAC mode changed (%s → %s): PI state reset",
-                    self._name, self._last_hvac_mode, hvac_mode
+                    self._name, previous_mode, hvac_mode
                 )
             self._last_hvac_mode = hvac_mode
             model_reset = self.est.ensure_hvac_mode(hvac_mode)
             self.dt_est.ensure_hvac_mode(hvac_mode)
-            if model_reset is True:
-                self._ab_confidence.reset()
-                self._ff_trim.reset()
+            if mode_changed or model_reset is True:
                 self._fftrim_observer.reset_runtime()
                 self._fftrim_periodic_observer.reset_runtime()
                 self._fftrim_observation_mode = "stationary"
                 self.reset_command_ownership("ownership_context_changed")
+            if model_reset is True:
+                self._ab_confidence.reset()
+                self._ff_trim.reset()
                 self._cycles_since_reset = 0
                 self._session_learn_ok_count_base = self.est.learn_ok_count
                 self._session_learn_skip_count_base = self.est.learn_skip_count
@@ -3888,6 +3895,7 @@ class SmartPI:
             self.ctl.last_i_mode = "I:OVERRIDE(guard_cut)"
             self._last_aw_du = 0.0
             self._set_linear_output(0.0)
+            self._last_calculate_time = None
             return
 
         self._refresh_active_timestamp_and_expire_controller_memory()
@@ -3979,6 +3987,7 @@ class SmartPI:
             self.dt_est.update(
                 now=now,
                 tin=t_int_lp,
+                tin_raw=current_temp,
                 sp=target_temp_filt,
                 u_applied=self._deadtime_input(),
                 max_on_percent=self._max_on_percent if self._max_on_percent is not None else 1.0,
@@ -4051,6 +4060,7 @@ class SmartPI:
                 self.dt_est.update(
                     now=now,
                     tin=t_int_lp,
+                    tin_raw=current_temp,
                     sp=target_temp_filt,
                     u_applied=self._deadtime_input(),
                     max_on_percent=self._max_on_percent if self._max_on_percent is not None else 1.0,

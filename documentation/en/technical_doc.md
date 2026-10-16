@@ -162,6 +162,13 @@ In practice, the decision to submit or extend the window depends on slope robust
 - minimum number of level changes: `OLS_MIN_JUMPS = 3`,
 - statistical significance: `OLS_T_MIN = 2.5`.
 
+The slope is computed on `dt_est.tin_history`, which holds the **raw** measured temperature (a
+new sample when the reading changes, or every 60 s). The guardrails count level changes, so they
+rely on the sensor's steps: the EMA-filtered temperature `t_int_lp` would turn one 0.1 °C step
+into several small levels, and a slow slope would pass too early and come out too flat (about
+half of the true cooling rate). The filtered samples are kept apart (`_tin_lp_history`) and only
+serve the dead-time detection (section 3.5).
+
 Validated slopes are then fed into `ABEstimator.learn()`, which:
 
 - rejects physical outliers (`max_abs_dT_per_min = 0.35`),
@@ -186,6 +193,13 @@ Histories are filtered through median/MAD. The published magnitude of `a` is
 bounded while preserving the mode sign; `b` remains strictly positive.
 
 With water heating, `u` is the power at the reference water (the command times `φ`).
+
+When the measurements of `a` or of `b` move for good (a lasting drift), `ab_drift.py` recentres
+that history. It only accepts drift candidates that follow each other closely (sequence numbers
+at most three apart). Each channel numbers its own candidates (`learn_seq_a`, `learn_seq_b`), so
+heating measurements between two cooling measurements do not hide a real drift of `b` (and the
+other way round). A state saved with the older shared counter `learn_seq` starts both counters
+from it.
 
 ### 3.5 Dead-time estimation
 
@@ -416,6 +430,16 @@ Transient catch-up states are not restored after a reboot:
 
 The restart therefore keeps only useful persistent PI memory, without restoring transient servo states that are no longer physically valid outside their original runtime session. The wall-clock timestamp of the last valid active regulation tick is persisted and is not refreshed while HVAC is OFF. If inactivity exceeds 96 hours, controller PI memory is purged on resume while the learned A/B model remains available.
 
+The HVAC mode of the saved model (`est.model_hvac_mode`) is restored too. When Home Assistant
+restarts in the other mode (for example the state was saved in HEAT and the thermostat starts in
+COOL), the first calculation sees the mode change and resets the PI state, as a change of mode
+while running does: an integral learned on the heating plant does not drive the cooling.
+
+Some gaps in the regulation restart the time tracking, as OFF does: a missing temperature
+sensor, a guard cut, and a thermostat working as another thermostat's additional source
+([Zone dependencies, §5.7](zone_dependencies.md#57-executive-path)). The first calculation after
+the gap then integrates nothing, instead of the error over the whole gap.
+
 ### 4.5 Deadband, near-band, and protections
 
 `DeadbandManager` handles:
@@ -636,6 +660,15 @@ The current payload from `SmartPI.save_state()` notably contains:
 
 The optional keys are described in [Zone dependencies, §8](zone_dependencies.md#8-persistent-state)
 and [Water and boiler inputs, §7](water_input.md#7-persistent-state). A payload without these keys loads as before.
+
+**When the state is written.** `state_store.py` (`SmartPIStateStore`) writes it under the key
+`vtherm_smartpi.<thermostat name>` and still reads a state found under the older key
+`versatile_thermostat.smartpi.<thermostat name>`. The control loop asks for a delayed write at
+most once every five minutes (`SAVE_DELAY_SEC = 300`); the state is taken when the write happens,
+and Home Assistant writes a pending one when it stops. The services, the removal of the
+thermostat and a cancelled calibration write at once. So does a reset of the learned model asked
+by the zone's form (`dependency_reset_token`): a restart within the five minutes would otherwise
+reset the model a second time.
 
 Only the learned trim remains persistent. Ownership windows, pending
 proposals, and integral transfers are transient; after restart the observer is
