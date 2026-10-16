@@ -181,7 +181,7 @@ The results are in [Water and boiler inputs, §4.4](water_input.md#44-results-si
 
 | File | Set | What it checks |
 |---|---|---|
-| `test_smartpi_sim_baseline.py` | short and long | SmartPI alone learns a known room. With a 0.01 °C sensor: `a` and `b` ±5 % and the delay within 4 min, all within 12 h (a grid of 12 rooms in the long set). With a 0.1 °C sensor it still finishes learning, with `a` and `b` within 0.4–1.6 |
+| `test_smartpi_sim_baseline.py` | short and long | SmartPI alone learns a known room. With a 0.01 °C sensor: `a` and `b` ±5 % and the delay within 4 min, all within 12 h (a grid of 12 rooms in the long set). With a 0.1 °C sensor it finishes learning (in about 15 h) with `a` and `b` within ±15 %; in the long set, four nights with a setback leave `a` and `b` within ±10 % (three rooms, three control phases) |
 | `test_smartpi_sim_two_thermostats.py` | short and long | the floor's delay and lag in the room model; two thermostats, each with its own SmartPI, heating one room (today's behaviour, the baseline for Z1 and Z4) |
 | `test_smartpi_regression_no_dependencies.py` | short | features configured but not active: exactly the same run and saved state as without the feature |
 | `test_smartpi_sim_harness.py` | short | the clock, the timers, on/off cycles, minimum on and off times, valves, VTherm's control call at each cycle; the same run done twice gives the same result |
@@ -264,6 +264,20 @@ The results are in [Water and boiler inputs, §4.4](water_input.md#44-results-si
 | `test_config_migration.py` | minor version 1 → 2 (the major version stays 1, so 0.4.0 still loads the entries): a thermostat's entry keeps its values and does not use the defaults; the defaults entry gets every shared setting and loses the others; only the "thermostat only" settings that are set wait to move; after the start, each thermostat on SmartPI without an entry gets one with them and a repair notice lists them; nothing set creates nothing; removing the temporary key reloads nothing; a newer major version is refused; an entry already migrated is left as it is; another integration's climate entity and an import that creates no entry are not named in the notice; a removed defaults entry moves nothing |
 | `test_config_flow_paths.py` | the forms in the cases only some setups reach: an entity without a unique ID refused, a neighbour whose entry lists this zone back, a door that is also the window sensor, the split recommended for devices of similar speed, an entry whose thermostat was deleted, a change made in another window (or in VTherm's options) while a window is open (the save ends the window and writes nothing), a zone member's entry that cannot be created |
 | `test_services_routing.py` | the four services reach the thermostats a call names (in its target or its data, one or a list; the method on the thermostat or on its handler), each once, and skip the others (another algorithm, an entity that is not there, a thermostat without the method, which is warned about); they are registered once and removed |
+
+### 4.9 Changes taken from the author's new code
+
+The author's newer code (branch `trajectoryv2`, `SPINew` in the fork) is taken over in stages. The
+author's own tests come with each change; the tests below check that the fork's additions keep
+working with it.
+
+| File | What it checks |
+|---|---|
+| `test_smartpi_dependencies_handler.py` (two tests added) | a main source switched off during the off phase of its cycle cancels the cycle and still sends 0 to its additional source; an additional source switched off in its off phase cancels its own cycle |
+| `test_handler_persistence_extensions.py` | the fork's parts of the state (dependencies, the zone's reset token, the water input) survive a write and a load through the state store; calls every minute arm one delayed write per five minutes; a reset asked by the zone's form is written at once, and only once |
+| `test_smartpi_regulation_gaps.py` | a thermostat leaving the additional source's role integrates nothing for the time spent in it; a restart into the other HVAC mode resets the PI on the first calculation only |
+| `test_smartpi_ab_drift.py` (two tests added) | a state of the QAS pack's learned room, saved with one shared `learn_seq`, starts both drift counters from it; histories seeded from a zone's joint fit still let `b` follow a drift |
+| `test_smartpi_raw_slopes.py` | learning slopes come from the raw measured temperature: a slow ramp read by a 0.1 °C sensor gives its true slope, minus the rate of the known inputs; a zone held by a boiler that is not called keeps recording raw samples; a change of the boiler's call empties the raw and the filtered history |
 
 ## 5. Limits
 
