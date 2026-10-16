@@ -58,6 +58,7 @@ from .const import (
     DOOR_SETTLING_S,
     COUPLING_K_MAX,
     KNOWN_INPUT_FADE_S,
+    SOURCE_BOOST_ARM_C,
     SOURCE_BOOST_END_CYCLES,
     SOURCE_BOOST_ERROR_C,
     SOURCE_BRAKE_STEPS,
@@ -229,6 +230,8 @@ class _Source:
         self.braked = False
         # The lead's feed-forward leaves the source's heat out while the zone recovers.
         self.boost = False
+        # A recovery in progress: armed SOURCE_BOOST_ARM_C below the setpoint, until reached.
+        self.recovering = False
         # Time each HVAC mode has spent with the source active and its fit not
         # published: the clock of the learning blocks and of the fit's timeout.
         self.learn_elapsed_s = {_FIT_HEAT: 0.0, _FIT_COOL: 0.0}
@@ -511,18 +514,29 @@ class DependencyModel:
         feed-forward would hand its share over while the zone is still cold, and
         only its gentle proportional part would drive the recovery; two
         independent SmartPI recover faster because each counts the whole load.
-        So while the zone is colder than its setpoint by more than
-        SOURCE_BOOST_ERROR_C, the lead works as if it were alone. The boost ends
-        early, once the fitted model says the zone reaches that band within the
-        lead's delay plus SOURCE_BOOST_END_CYCLES of its cycles at the present
-        powers: the heat the lead has already sent, and its answer to the error
-        left in the next cycle, then land the zone instead of overshooting it.
+        So while the zone recovers and is colder than its setpoint by more than
+        SOURCE_BOOST_ERROR_C, the lead works as if it were alone. A recovery starts
+        SOURCE_BOOST_ARM_C below the setpoint (after a setback or a cold start, not
+        a dip of a steady zone) and lasts until the zone reaches its setpoint. The
+        boost ends early, once the fitted model says the zone reaches that band
+        within the lead's delay plus SOURCE_BOOST_END_CYCLES of its cycles at the
+        present powers: the heat the lead has already sent, and its answer to the
+        error left in the next cycle, then land the zone instead of overshooting it.
         """
         source = self._source
         if fit is None or source.mode != SOURCE_MODE_ALLOCATION:
             return False
         error = self._zone_error(ctx)
+        if error is not None and error <= 0.0:
+            source.recovering = False
         if error is None or error <= SOURCE_BOOST_ERROR_C or ctx.zone_temp is None or ctx.ext_temp is None:
+            return False
+        # A recovery starts SOURCE_BOOST_ARM_C below the setpoint and lasts until the zone
+        # reaches it. A dip of a steady zone is the lead's to correct: a boost there would
+        # flip its feed-forward between the shares with and without the source.
+        if error > SOURCE_BOOST_ARM_C:
+            source.recovering = True
+        if not source.recovering:
             return False
         sign = _sign(ctx.hvac_mode)
         lead = min(max(ctx.lead_output, 0.0), 1.0) * min(max(ctx.lead_power_cap, 0.0), 1.0)
