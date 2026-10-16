@@ -4,6 +4,10 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+- SmartPI's events are fired with Home Assistant's loop-safe `bus.async_fire`; a branch in the
+  cancellation of a calibration that could never run is removed, and the manifest declares its
+  `vtherm_api` requirement (taken from the author's newer code).
+
 - `testing.md` gets a section "Coverage": the code coverage per file against the baseline, the
   fork's own lines (99.2 % of the lines, 98.0 % of the branches) with the reason for each line left
   uncovered, and a matrix of the features, their variants and use cases with where each is tested.
