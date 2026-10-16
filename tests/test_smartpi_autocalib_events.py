@@ -215,6 +215,6 @@ async def test_forced_calibration_event_identifies_thermostat_entity(fake_runtim
 
     await handler.service_force_smartpi_calibration()
 
-    data = _fired_data(fake_runtime.hass.bus.fire, "smartpi_autocalib_triggered")
+    data = _fired_data(fake_runtime.hass.bus.async_fire, "smartpi_autocalib_triggered")
     _assert_identifies_thermostat(data, fake_runtime)
     assert data["triggered_params"] == ["manual_request"]
