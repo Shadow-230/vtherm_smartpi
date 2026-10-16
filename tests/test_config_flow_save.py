@@ -4,6 +4,7 @@ one "Save and finish" at the end; closing the window discards them.
 
 from __future__ import annotations
 
+import asyncio
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -268,9 +269,12 @@ async def test_a_save_reloads_each_entry_once_also_when_the_zone_moves(hass) -> 
     result = await configure(hass, result, {"main_source": floor.entity_id, "split_rule": "together", "custom_response": False})
     result = await configure(hass, result, {"split_ratio": 100})
     async def reload_entry(entry_id):
-        # As Home Assistant: the entry's unload, then its setup (which reloads its thermostat).
+        # As Home Assistant: the entry's unload (which drops its update listener), then its
+        # setup (which reloads its thermostat and adds the listener again).
+        await asyncio.sleep(0)
         plugin_entry = hass.config_entries.async_get_entry(entry_id)
         await smartpi_init.async_unload_entry(hass, plugin_entry)
+        plugin_entry.update_listeners.clear()
         return await REAL_SETUP_ENTRY(hass, plugin_entry)
 
     with (
@@ -279,7 +283,7 @@ async def test_a_save_reloads_each_entry_once_also_when_the_zone_moves(hass) -> 
         patch.object(hass.config_entries, "async_forward_entry_setups", AsyncMock()),
         patch.object(hass.config_entries, "async_unload_platforms", AsyncMock(return_value=True)),
     ):
-        hass.state = CoreState.running
+        hass.set_state(CoreState.running)
         result = await save(hass, result, reset=True)
         await hass.async_block_till_done()
 
