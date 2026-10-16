@@ -393,9 +393,11 @@ stateDiagram-v2
   colder all the time, it paused SmartPI's learning most of the time, and it still gave no correct
   `k`.
 - `k` is learned only when SmartPI itself could learn. This needs: learning enabled and not
-  paused; the zone heating or cooling; no power shedding, guard cut or calibration; SmartPI past
-  its learning phase; a reliable dead time; no neighbour window; and no door change within the
-  last `DOOR_SETTLING_S`.
+  paused; the zone heating or cooling; no power shedding or calibration; SmartPI past its learning
+  phase; a reliable dead time; no neighbour window; and no door change within the last
+  `DOOR_SETTLING_S`. A guard cut does not stop it: the zone then gets no heat, which is a known
+  power. Since SmartPI learns its slopes from the raw reading, guard cuts come often enough that
+  stopping for them kept an always-connected neighbour from ever being learned in the tests.
 
 ### 4.3 Measurement windows
 

@@ -403,10 +403,13 @@ stateDiagram-v2
   permanence, il mettait l'apprentissage de SmartPI en pause la plupart du temps, et il ne donnait
   quand même pas un `k` correct.
 - `k` n'est appris que lorsque SmartPI lui-même pourrait apprendre. Il faut pour cela : l'apprentissage
-  activé et pas en pause ; la zone en chauffe ou en refroidissement ; pas de délestage, de coupure par une
-  garde ni de calibration ; SmartPI sorti de sa phase d'apprentissage ; un temps mort fiable ; pas de
+  activé et pas en pause ; la zone en chauffe ou en refroidissement ; pas de délestage ni de
+  calibration ; SmartPI sorti de sa phase d'apprentissage ; un temps mort fiable ; pas de
   fenêtre ouverte chez un voisin ; et aucun changement d'état de porte pendant les derniers
-  `DOOR_SETTLING_S`.
+  `DOOR_SETTLING_S`. Une coupure de garde (guard cut) ne l'arrête pas : la zone ne reçoit alors pas
+  de chaleur, ce qui est une puissance connue. Depuis que SmartPI apprend ses pentes sur la lecture
+  brute, les coupures de garde sont assez fréquentes pour que, en s'arrêtant pour elles, un voisin
+  toujours connecté ne soit jamais appris dans les tests.
 
 ### 4.3 Fenêtres de mesure
 

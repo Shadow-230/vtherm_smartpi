@@ -403,10 +403,12 @@ stateDiagram-v2
   jest cały czas chłodniejszy, wstrzymywała uczenie SmartPI przez większość czasu, a i tak nie
   dawała poprawnego `k`.
 - `k` jest uczone tylko wtedy, gdy sam SmartPI mógłby się uczyć. Wymaga to: uczenia włączonego i
-  niewstrzymanego; strefy, która grzeje lub chłodzi; braku zrzutu mocy, odcięcia
-  zabezpieczającego (guard cut) i kalibracji; SmartPI po fazie uczenia; wiarygodnego czasu
-  martwego; braku otwartego okna u sąsiada; braku zmiany stanu drzwi w ciągu ostatnich
-  `DOOR_SETTLING_S`.
+  niewstrzymanego; strefy, która grzeje lub chłodzi; braku zrzutu mocy i kalibracji; SmartPI po
+  fazie uczenia; wiarygodnego czasu martwego; braku otwartego okna u sąsiada; braku zmiany stanu
+  drzwi w ciągu ostatnich `DOOR_SETTLING_S`. Odcięcie zabezpieczające (guard cut) go nie
+  zatrzymuje: strefa nie dostaje wtedy ciepła, a to znana moc. Odkąd SmartPI liczy nachylenia z
+  surowego odczytu, odcięcia zdarzają się na tyle często, że przy zatrzymaniu na nie sąsiad
+  połączony na stałe nigdy nie był nauczony w testach.
 
 ### 4.3 Okna pomiarowe
 

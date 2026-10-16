@@ -4,6 +4,9 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+- The exchange with a neighbour is learned also during a guard cut, when the zone gets no heat
+  (a known power). Stopping for each guard cut kept an always-connected neighbour from being
+  learned in the simulator, or left its `k` far off; now it is learned within 3 % of the truth.
 - After a restart into the other HVAC mode, the PI state is reset on the first calculation, from
   the saved model's mode; a missing sensor and a guard cut restart the time tracking, so the next
   calculation does not integrate the error over the whole gap (taken from the author's newer
