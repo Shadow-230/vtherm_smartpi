@@ -11,6 +11,7 @@ from custom_components.vtherm_smartpi.hvac_mode import VThermHvacMode_HEAT, VThe
 from custom_components.vtherm_smartpi.smartpi import learning_window as learning_window_module
 
 from sim.clock import EventQueue, VirtualClock
+from sim.metrics import learning_finished
 from sim.runner import Simulation, ZoneSpec
 from sim.scheduler import SimActuator, SimCycleScheduler
 from sim.sensors import VThermSlope
@@ -201,7 +202,10 @@ async def test_valve_cycle_starts_report_the_applied_opening(monkeypatch, zone) 
         await on_cycle_started(on_time_sec, off_time_sec, on_percent, hvac_mode, physical_on_percent)
 
     monkeypatch.setattr(sim.algo, "on_cycle_started", recording)
-    await sim.run_for(8.0)
+    # Until its learning phase ends SmartPI drives the valve fully open or closed; with
+    # learning slopes from the raw reading that phase lasts about 15 h here.
+    await sim.run_for(24.0, stop=learning_finished)
+    await sim.run_for(2.0)
 
     assert len(starts) > 40
     assert any(0.0 < command < 1.0 for command, _physical, _power in starts)

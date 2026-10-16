@@ -193,7 +193,7 @@ Les résultats sont dans [Entrées eau et chaudière, §4.4](water_input.md#44-r
 
 | Fichier | Ensemble | Ce qu'il vérifie |
 |---|---|---|
-| `test_smartpi_sim_baseline.py` | court et long | SmartPI seul apprend une pièce connue. Avec un capteur de 0.01 °C : `a` et `b` ±5 % et le retard à 4 min près, le tout en 12 h (une grille de 12 pièces dans l'ensemble long). Avec un capteur de 0.1 °C, il termine quand même son apprentissage, avec `a` et `b` dans 0.4–1.6 |
+| `test_smartpi_sim_baseline.py` | court et long | SmartPI seul apprend une pièce connue. Avec un capteur de 0.01 °C : `a` et `b` ±5 % et le retard à 4 min près, le tout en 12 h (une grille de 12 pièces dans l'ensemble long). Avec un capteur de 0.1 °C, il termine son apprentissage (en 15 h environ) avec `a` et `b` à ±15 % ; dans l'ensemble long, quatre nuits avec réduit laissent `a` et `b` à ±10 % (trois pièces, trois phases d'appel) |
 | `test_smartpi_sim_two_thermostats.py` | court et long | le retard et l'inertie du plancher dans le modèle de la pièce ; deux thermostats, chacun avec son propre SmartPI, qui chauffent une même pièce (le fonctionnement actuel, la base de comparaison pour Z1 et Z4) |
 | `test_smartpi_regression_no_dependencies.py` | court | des fonctions configurées mais pas actives : exactement la même simulation et le même état sauvegardé que sans la fonction |
 | `test_smartpi_sim_harness.py` | court | l'horloge, les minuteries, les cycles tout-ou-rien, les temps minimaux de marche et d'arrêt, les vannes, l'appel de régulation de VTherm à chaque cycle ; la même simulation faite deux fois donne le même résultat |
@@ -276,6 +276,16 @@ Les résultats sont dans [Entrées eau et chaudière, §4.4](water_input.md#44-r
 | `test_config_migration.py` | la version mineure 1 → 2 (la version majeure reste 1, donc la 0.4.0 charge encore les entrées) : l'entrée d'un thermostat garde ses valeurs et n'utilise pas les valeurs par défaut ; l'entrée des valeurs par défaut reçoit chaque réglage partagé et perd les autres ; seuls les réglages « ce thermostat seulement » définis attendent d'être déplacés ; après le démarrage, chaque thermostat sur SmartPI sans entrée en reçoit une avec eux et un avis de réparation les liste ; rien de défini ne crée rien ; retirer la clé temporaire ne recharge rien ; une version majeure plus récente est refusée ; une entrée déjà migrée reste telle quelle ; l'entité climate d'une autre intégration et une importation qui ne crée pas d'entrée ne sont pas nommées dans l'avis ; une entrée de base supprimée ne déplace rien |
 | `test_config_flow_paths.py` | les formulaires dans les cas que seules certaines installations atteignent : une entité sans identifiant unique refusée, un voisin dont l'entrée indique cette zone en retour, une porte qui est aussi le capteur de fenêtre, la répartition recommandée pour des appareils de vitesse proche, une entrée dont le thermostat a été supprimé, un changement fait dans une autre fenêtre (ou dans les options de VTherm) pendant qu'une fenêtre est ouverte (l'enregistrement ferme la fenêtre sans rien écrire), l'entrée d'un membre de zone qui ne peut pas être créée |
 | `test_services_routing.py` | les quatre services atteignent les thermostats qu'un appel nomme (dans sa cible ou ses données, un seul ou une liste ; la méthode sur le thermostat ou sur son gestionnaire), chacun une fois, et laissent les autres (un autre algorithme, une entité absente, un thermostat sans la méthode, signalé) ; ils sont enregistrés une fois et retirés |
+
+### 4.9 Changements repris du nouveau code de l'auteur
+
+Le code plus récent de l'auteur (branche `trajectoryv2`, `SPINew` dans le fork) est repris par étapes.
+Les tests de l'auteur viennent avec chaque changement ; les tests ci-dessous vérifient que les
+ajouts du fork fonctionnent toujours avec lui.
+
+| Fichier | Ce qu'il vérifie |
+|---|---|
+| `test_smartpi_raw_slopes.py` | les pentes d'apprentissage viennent de la température mesurée brute : une rampe lente lue par un capteur de 0.1 °C donne sa vraie pente, moins la vitesse due aux entrées connues ; une zone retenue par une chaudière non appelée continue d'enregistrer des échantillons bruts ; un changement de l'appel de la chaudière vide l'historique brut et l'historique filtré |
 
 ## 5. Limites
 
