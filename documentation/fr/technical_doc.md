@@ -197,6 +197,13 @@ bornée tout en conservant le signe du mode ; `b` reste strictement positif.
 
 Avec un chauffage à eau, `u` est la puissance pour l'eau de référence (la commande multipliée par `φ`).
 
+Quand les mesures de `a` ou de `b` changent durablement (une dérive), `ab_drift.py` recentre cet
+historique. Il n'accepte que des candidats de dérive qui se suivent de près (numéros de séquence
+écartés de trois au plus). Chaque canal numérote ses propres candidats (`learn_seq_a`,
+`learn_seq_b`), si bien que des mesures en chauffe entre deux mesures en refroidissement ne cachent
+pas une vraie dérive de `b` (et inversement). Un état enregistré avec l'ancien compteur commun
+`learn_seq` initialise les deux compteurs.
+
 ### 3.5 Estimation du temps mort
 
 `DeadTimeEstimator` implémente une FSM indépendante. Les canaux décrivent la

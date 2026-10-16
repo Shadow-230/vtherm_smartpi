@@ -4,6 +4,12 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+- Separate drift sequence counters for `a` and `b` (taken from the author's newer code). With one
+  shared counter, three or more heating measurements between two cooling measurements kept a real
+  drift of `b` from ever recentring its history (and the other way round). A saved state with the
+  old shared counter, such as the QAS pack's learned room, starts both counters from it; histories
+  seeded from a zone's joint fit do not hold a drift back.
+
 - The exchange with a neighbour is learned also during a guard cut, when the zone gets no heat:
   with learning slopes from the raw reading guard cuts come more often, and an always-connected
   neighbour was never learned in the simulator. Now its `k` is learned within 3 % of the truth.

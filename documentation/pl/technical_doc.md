@@ -197,6 +197,13 @@ ograniczona, ale zachowuje znak trybu; `b` jest zawsze większe od zera.
 
 Przy ogrzewaniu wodnym `u` to moc przy wodzie odniesienia (wysterowanie pomnożone przez `φ`).
 
+Gdy pomiary `a` albo `b` zmieniają się na stałe (dryf), `ab_drift.py` przesuwa środek tej
+historii. Przyjmuje tylko kandydatów dryfu, którzy następują blisko po sobie (numery sekwencji
+różnią się najwyżej o trzy). Każdy kanał numeruje własnych kandydatów (`learn_seq_a`,
+`learn_seq_b`), więc pomiary grzania między dwoma pomiarami stygnięcia nie ukrywają prawdziwego
+dryfu `b` (i odwrotnie). Stan zapisany ze starszym wspólnym licznikiem `learn_seq` ustawia z niego
+oba liczniki.
+
 ### 3.5 Wyznaczanie czasu martwego
 
 `DeadTimeEstimator` to niezależny automat stanów (FSM). Jego kanały opisują
