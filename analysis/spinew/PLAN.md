@@ -24,6 +24,7 @@ Stan na: 2026-10-16.
 | B2 | `feat/spinew-b2-defaults-entry` | #26 | scalone 2026-10-16 |
 | B3 | `feat/spinew-b3-service-targets` | #27 | scalone 2026-10-16 |
 | B4 | `fix/spinew-b4-events` | #22 | scalone 2026-10-16 |
+| H1 | `feat/humidity-events` | #28 | scalone 2026-10-16 |
 
 Konflikty przy scalaniu były tylko w `CHANGELOG.md` i `testing.md` §4 (wpisy obu stron zostały,
 podwójny wpis D11 usunięty), w teście `test_smartpi_dependencies_handler.py` (dwie funkcje
@@ -32,7 +33,7 @@ Narzędzie: `tools/union_resolve.py`.
 
 **Następne kroki:**
 1. H1 – zdarzenia wilgotności (prysznic, gotowanie), `ANALIZA.md` §22: gałąź
-   `feat/humidity-events` gotowa lokalnie, czeka na decyzję właściciela (push/PR).
+   `feat/humidity-events`, PR #28, scalone do `dev2` 2026-10-16 (`705b3f2`).
 2. Faza C – dopiero po potwierdzeniu właściciela.
 
 Odtworzenie środowiska i pomiarów: `ANALIZA.md` §3, `tools/` (skrypty), `results/` (wyniki).
