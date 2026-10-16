@@ -4,6 +4,13 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+- SmartPI writes its state at most once every five minutes from the control loop instead of at
+  each control call, about once a minute per thermostat (taken from the author's newer code, with
+  its `state_store.py`). The services, the removal of a thermostat and a cancelled calibration
+  still write at once, and so does a reset of the learned model asked by the zone's form, so that
+  a restart within the five minutes does not reset the model again. The fork's parts of the state
+  (dependencies, the zone's reset token, the water input) are written as before.
+
 - After a restart into the other HVAC mode, the PI state is reset on the first calculation, from
   the saved model's mode; a missing sensor and a guard cut restart the time tracking, so the next
   calculation does not integrate the error over the whole gap (taken from the author's newer

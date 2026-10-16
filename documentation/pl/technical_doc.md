@@ -668,6 +668,15 @@ Obecne dane zapisywane przez `SmartPI.save_state()` zawierają między innymi:
 Klucze opcjonalne są opisane w [Zależności stref, §8](zone_dependencies.md#8-zapisywany-stan)
 i [Wejścia wody i kotła, §7](water_input.md#7-zapisywany-stan). Dane bez tych kluczy wczytują się tak jak wcześniej.
 
+**Kiedy stan jest zapisywany.** `state_store.py` (`SmartPIStateStore`) zapisuje go pod kluczem
+`vtherm_smartpi.<nazwa termostatu>` i nadal wczytuje stan znaleziony pod starszym kluczem
+`versatile_thermostat.smartpi.<nazwa termostatu>`. Pętla regulacji prosi o zapis odroczony
+najwyżej raz na pięć minut (`SAVE_DELAY_SEC = 300`); stan jest pobierany w chwili zapisu, a
+oczekujący zapis Home Assistant wykonuje przy zatrzymaniu. Serwisy, usunięcie termostatu i
+anulowana kalibracja zapisują od razu. Tak samo reset nauczonego modelu, o który prosi formularz
+strefy (`dependency_reset_token`): inaczej restart w ciągu tych pięciu minut skasowałby model
+drugi raz.
+
 Trwale zapisywana jest tylko nauczona korekta FF. Okna przypisania, oczekujące
 propozycje i przeniesienia całki są przejściowe; po restarcie obserwator jest
 budowany od nowa i nadal obowiązuje istniejące zamrożenie korekty FF na trzy cykle.

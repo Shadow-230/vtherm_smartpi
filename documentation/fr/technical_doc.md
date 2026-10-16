@@ -673,6 +673,15 @@ Le payload actuel de `SmartPI.save_state()` contient notamment :
 Les clés optionnelles sont décrites dans [Dépendances entre zones, §8](zone_dependencies.md#8-état-sauvegardé)
 et [Entrées eau et chaudière, §7](water_input.md#7-état-sauvegardé). Un payload sans ces clés se charge comme avant.
 
+**Quand l'état est écrit.** `state_store.py` (`SmartPIStateStore`) l'écrit sous la clé
+`vtherm_smartpi.<nom du thermostat>` et lit encore un état trouvé sous l'ancienne clé
+`versatile_thermostat.smartpi.<nom du thermostat>`. La boucle de régulation demande une écriture
+différée au plus une fois toutes les cinq minutes (`SAVE_DELAY_SEC = 300`) ; l'état est pris au
+moment de l'écriture, et Home Assistant écrit celle qui attend quand il s'arrête. Les services, la
+suppression du thermostat et une calibration annulée écrivent tout de suite. De même une
+réinitialisation du modèle appris demandée par le formulaire de la zone (`dependency_reset_token`) :
+sinon un redémarrage dans les cinq minutes réinitialiserait le modèle une seconde fois.
+
 Seul le trim appris reste persistant. Les fenêtres de propriété, propositions
 en attente et transferts d'intégrale sont transitoires ; après redémarrage,
 l'observateur est reconstruit et le gel existant du trim pendant trois cycles s'applique toujours.

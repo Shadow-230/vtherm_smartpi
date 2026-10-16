@@ -661,6 +661,15 @@ The current payload from `SmartPI.save_state()` notably contains:
 The optional keys are described in [Zone dependencies, §8](zone_dependencies.md#8-persistent-state)
 and [Water and boiler inputs, §7](water_input.md#7-persistent-state). A payload without these keys loads as before.
 
+**When the state is written.** `state_store.py` (`SmartPIStateStore`) writes it under the key
+`vtherm_smartpi.<thermostat name>` and still reads a state found under the older key
+`versatile_thermostat.smartpi.<thermostat name>`. The control loop asks for a delayed write at
+most once every five minutes (`SAVE_DELAY_SEC = 300`); the state is taken when the write happens,
+and Home Assistant writes a pending one when it stops. The services, the removal of the
+thermostat and a cancelled calibration write at once. So does a reset of the learned model asked
+by the zone's form (`dependency_reset_token`): a restart within the five minutes would otherwise
+reset the model a second time.
+
 Only the learned trim remains persistent. Ownership windows, pending
 proposals, and integral transfers are transient; after restart the observer is
 rebuilt and the existing three-cycle trim freeze still applies.
