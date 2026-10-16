@@ -342,8 +342,9 @@ async def test_exchange_learning_follows_smartpi_learning_conditions(monkeypatch
     assert not allowed()
     algo.learn_win.set_learning_resume_ts(None)
 
+    # A guard cut gives the zone a known power (none): the exchange keeps learning.
     monkeypatch.setattr(algo.guards, "_guard_cut_active", True)
-    assert not allowed()
+    assert allowed()
     monkeypatch.setattr(algo.guards, "_guard_cut_active", False)
 
     algo.calibration_mgr.start_calibration(now=0.0, is_manual=True)

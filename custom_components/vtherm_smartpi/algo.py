@@ -2043,14 +2043,18 @@ class SmartPI:
         off_reason: str | None,
         power_shedding: bool,
     ) -> bool:
-        """Whether SmartPI's own learning conditions allow the exchanges to learn."""
+        """Whether SmartPI's own learning conditions allow the exchanges to learn.
+
+        A guard cut does not stop them: the zone then gets no heat, which is a known
+        power, and with learning slopes from the raw reading guard cuts come often
+        enough to keep an always-connected neighbour from ever being learned.
+        """
         resume_ts = self.learn_win.learning_resume_ts
         return (
             self._learning_enabled
             and hvac_mode in (VThermHvacMode_HEAT, VThermHvacMode_COOL)
             and off_reason is None
             and not power_shedding
-            and not self.guards.guard_cut_active
             and not self.calibration_mgr.is_calibrating
             and (resume_ts is None or now_monotonic >= resume_ts)
         )

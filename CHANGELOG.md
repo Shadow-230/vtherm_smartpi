@@ -4,6 +4,10 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+- The exchange with a neighbour is learned also during a guard cut, when the zone gets no heat:
+  with learning slopes from the raw reading guard cuts come more often, and an always-connected
+  neighbour was never learned in the simulator. Now its `k` is learned within 3 % of the truth.
+
 - Learning slopes come from the raw measured temperature (taken from the author's newer code).
   The learning windows used the EMA-filtered temperature, which turns one step of a 0.1 °C sensor
   into several small levels: slow slopes passed too early and came out too flat. In
