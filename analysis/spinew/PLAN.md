@@ -24,6 +24,11 @@ Stan na: 2026-10-16.
 | A4 | `feat/spinew-a4-state-store` | `d04c21f` (autor), `fab5e37` (D9) | PR #20; wszystko zielone |
 | A5 | `fix/spinew-a5-off-cycle` | `e4a0a49`, `c750ac3` (autor), `823f2e4`, `5c11903` (D12) | PR #21; wszystko zielone |
 | Z1 | `feat/zone-recovery` (od A1) | `7c7f5e6` | wypchnięte, PR po scaleniu #17; CI 1369 passed, lokalnie 1453 passed (w tym oba pokoje z A1/A3), pokrycie 93,19 → 93,22 %; wynik i odstępstwa: `ANALIZA.md` §20.6 |
+| Z2 | `fix/zone-aw-reference` (od Z1) | `658538e` | lokalnie; CI 1371, lokalnie 1455 passed, pokrycie 93,22 → 93,23 %; `ANALIZA.md` §20.7 |
+| B1 | `feat/spinew-b1-lifecycle` (od `dev2`) | `d6bd030`, `1aca7e7` | lokalnie; testowany razem z B3 (CI 1345, lokalnie 1420 passed) |
+| B2 | `feat/spinew-b2-defaults-entry` (od B1) | `09e1954`, `ed58be7` | lokalnie; CI i lokalnie zielone po `ed58be7` (wcześniej 1 test: wpis defaults tworzony przy dodaniu integracji) |
+| B3 | `feat/spinew-b3-service-targets` (od B1) | `6421a40` | lokalnie; CI 1345, lokalnie 1420 passed, pokrycie 93,16 → 93,19 % |
+| B4 | `fix/spinew-b4-events` (od `dev2`) | `1f10101` | lokalnie; CI 1323, lokalnie 1398 passed |
 
 Gałęzie etapów i `feat/zone-recovery` są w forku (wypchnięte 2026-10-16 za zgodą właściciela).
 PR-y A1–A5 do `dev2`: #17–#21 (2026-10-16), nie scalone. Z1 (`7c7f5e6`) wypchnięty; jego PR po
@@ -35,9 +40,11 @@ scaleniu #17. PR-y #17–#21 obserwowane w sesji (CI zielone na wszystkich). Kol
    `testing.md` §4.9 (EN/FR/PL; każda gałąź dodaje tę sekcję) – łączyć wpisy. Zmiana D11 jest w
    A1 i A3 jako ten sam kod: przy drugim scaleniu zostaje jedna kopia i jeden wpis CHANGELOG.
 2. Z1: push i PR do `dev2` po scaleniu #17 (za „tak” właściciela).
-3. Faza B, potem C (opisy niżej) – dopiero po potwierdzeniu właściciela.
-4. Etap Z2 (D18, `ANALIZA.md` §20.6): błąd ustalony strefy 0,20 °C w szybkim pokoju
-   (`fastcool-fastheat`, mróz) przy fazach 170/340 s; najpierw diagnoza, potem plan do akceptacji.
+3. Z2 i faza B (B1–B4) zrobione lokalnie (2026-10-16): push i PR-y za „tak” właściciela. PR B2 i
+   B3 po scaleniu B1; PR Z2 po scaleniu Z1. Przy scaleniu B2 z Z1: B2 usuwa `config.step.global`
+   z `en.json`/`fr.json`, a Z1 dodaje tam `smart_pi_zone_recovery` – zostaje usunięcie (krok
+   `global` nie istnieje).
+4. Faza C – dopiero po potwierdzeniu właściciela.
 
 Odtworzenie środowiska i pomiarów: `ANALIZA.md` §3, `tools/` (skrypty), `results/` (wyniki).
 

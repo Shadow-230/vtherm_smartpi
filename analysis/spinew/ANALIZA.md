@@ -445,7 +445,8 @@ się parsują.
 | D16 | Pokój „fastcool-midheat, mróz” przy „Szybkie” +0,7 h: opisany wyjątek w teście | przyjęte 2026-10-16: wyjątek 0,8 h w `RECOVERY_SLOWER_H` |
 | D16a | Koniec przyspieszenia (boost) głównego źródła: opóźnienie + 2 cykle (§20.6) | przyjęte 2026-10-16 |
 | D17 | Poranne podbicie krzywej grzewczej (strona kotła, nie SmartPI), §20.5 | informacyjnie; ewentualnie osobna funkcja smart boilera |
-| D18 | Strefa `fastcool-fastheat`, mróz, fazy 170/340 s: błąd ustalony 0,20 °C także na `dev2` (§20.6) | przyjęte 2026-10-16: osobny etap (Z2), po Z1 |
+| D18 | Strefa `fastcool-fastheat`, mróz, fazy 170/340 s: błąd ustalony 0,20 °C także na `dev2` (§20.6) | przyjęte 2026-10-16: osobny etap (Z2), po Z1; zrobione (§20.7) |
+| D19 | Anti-windup autora liczony względem wyjścia modelu z początku cyklu (§20.7) | nie wdrożone: pomagało w Z2, ale spowalniało pokój D16 o 0,17 h; kod autora bez zmian |
 
 ## 17. Testy – stan i wpływ
 
@@ -650,3 +651,36 @@ Sprawdzenie z fazą wywołania regulacji 170 i 340 s (`tools/zr_phase.py`, §0a.
 - **Nowe, poza Z1:** `fastcool-fastheat` mróz przy fazach 170/340 – błąd ustalony strefy
   0,20 °C (faza 0: 0,044); to samo na `dev2` (`zr_phase2.txt`), więc istniejący problem
   (przyczyna niezbadana). Osobny temat (D18).
+
+### 20.7 Etap Z2: przyspieszenie (boost) tylko w powrocie (2026-10-16)
+
+Diagnoza (`tools/z2_steady.py`, `tools/z2_int.py`, `results/zone-z2/`): w `fastcool-fastheat`,
+mróz, przy fazach 170/340 s całka kaloryfera stała na −0,3 przez dziesiątki godzin, choć strefa
+była 0,1–0,3 °C poniżej nastawy. Każdy spadek o 0,2 °C włączał boost, który przełączał FF
+kaloryfera z ~0,4 na 1,0; anti-windup autora (`update_realized_power`) porównuje moc z
+zakończonego cyklu z bieżącym wyjściem modelu, więc taki skok w trakcie cyklu „wysysał” całkę
+(np. −0,045 naraz). Faza 0 omija to kolejnością koniec cyklu → obliczenie.
+
+Warianty (12 pokoi × fazy 0/170/340, `z2_sweep.txt`):
+- AW względem modelu z początku cyklu (D19): pomaga, ale pokój D16 3,63 → 3,80 h (+0,93 > 0,8);
+- próg uzbrojenia 0,5 °C bez „powrotu”: wolniejsze dojście (brak ponownego włączenia po wczesnym
+  końcu boostu);
+- **wdrożone:** powrót zaczyna się 0,5 °C poniżej nastawy (`SOURCE_BOOST_ARM_C`) i trwa do jej
+  osiągnięcia; boost działa w nim jak dotąd (od 0,2 °C). 36/36 przypadków spełnia kryteria, błąd
+  ustalony ≤ 0,059 °C.
+
+Wynik (faza 0, `z2_final.txt`): zmienia się tylko `fastcool-fastheat` mróz (dojście 1,13 wobec
+1,00 h, w tolerancji 0,2 h; błąd ustalony 0,030). Ciepło (`gZ2_*.json`): „Szybkie” wobec osobnych
+−0,7…+2,0 %, „Oszczędne” −1,3…+0,4 %; „Oszczędne” dojście 2,97 h.
+
+## 21. Faza B (2026-10-16)
+
+B1–B4 według planu (`PLAN.md`, Faza B), lokalnie. Odstępstwa i znaleziska:
+- B1: test `test_config_flow_save.py::test_a_save_reloads_each_entry_once_also_when_the_zone_moves`
+  przepisany na technikę autora; zastępstwo `async_reload` musi oddać sterowanie
+  (`asyncio.sleep(0)`) i usuwać listenery, inaczej HA iteruje po rosnącej liście listenerów
+  (nieskończona pętla w teście, nie w kodzie).
+- B2: przy braku wpisu „SmartPI defaults” dodanie integracji tworzy go (także gdy są wpisy
+  termostatów); test `test_config_flow_paths.py` dostał wpis defaults.
+- B3: wywołania QAS (`entity_id` w danych) działają (`test_a_qas_style_call_with_entity_id_in_data_still_works`).
+
