@@ -4,6 +4,10 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+- SmartPI's events are fired with Home Assistant's loop-safe `bus.async_fire`; a branch in the
+  cancellation of a calibration that could never run is removed, and the manifest declares its
+  `vtherm_api` requirement (taken from the author's newer code).
+
 - A thermostat switched off during the off phase of its PWM cycle cancels the running cycle, so
   the scheduler does not switch the device on again later; a main source still sends its 0 to
   its additional source first. An additional source that stops working (its thermostat off, or
