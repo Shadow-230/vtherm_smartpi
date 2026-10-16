@@ -3,7 +3,7 @@
 Dokument roboczy dla każdej sesji, która podejmuje przeniesienie zmian autora do naszej wersji.
 Plan wykonania: [`PLAN.md`](PLAN.md). Ten plik opisuje stan, ustalenia, dowody i decyzje.
 
-Stan na: 2026-10-16 (po fazie A: §19; po pomiarach dojścia strefy po obniżeniu: §20).
+Stan na: 2026-10-16 (fazy A i B, etapy Z1, Z2 i H1 scalone do `dev2` = `705b3f2`: §19–§22).
 
 ---
 
@@ -40,20 +40,24 @@ Zasady łączą dokumenty procesu właściciela (`CLAUDE.md` i `PLAN_ROZWOJU.md`
     autora). Słownik w §4.
 11. Komunikacja z właścicielem po polsku, krótko i rzeczowo. Kod, commity i PR po angielsku.
 12. Te dokumenty zostają w `analysis/spinew/` na gałęzi analizy (2026-10-15). Gałąź
-    `process-docs` jest osobna i sesje w chmurze jej nie widzą.
+    `process-docs` jest osobna (bez wspólnej historii); jej `CLAUDE.md` i `PLAN_ROZWOJU.md` wskazują
+    na te dokumenty i są aktualizowane razem z nimi.
+13. **Po scaleniu PR etapu gałąź etapu jest usuwana** (2026-10-16): lokalnie (gałąź i worktree)
+    robi to sesja; na GitHubie usuwa ją właściciel, bo proxy sesji w chmurze odrzuca
+    `git push --delete` (HTTP 403). Przed usunięciem: SHA gałęzi = głowica PR i zawiera się w `dev2`.
 
 ## 2. Gałęzie i punkty odniesienia
 
 | Gałąź | SHA | Co to jest |
 |---|---|---|
 | `master` | `6a131df` | Wspólny przodek `dev` i `SPINew`; ostatni wspólny stan z autorem. Nietknięty. |
-| `dev` | `34c1440` | Nasza gałąź integracyjna (31 commitów od `master`, ostatni: PR #16). |
+| `dev` | `34c1440` | Poprzednia gałąź integracyjna (31 commitów od `master`, ostatni: PR #16); zapas, nic tu nie wypychamy. |
 | `SPINew` | `770c444` | Kopia `KipK/vtherm_smartpi@trajectoryv2` (13 commitów od `master`). |
 | `qas` | `9be2e2f` | Stabilny kod do testów (pełne scenariusze na GitHubie). |
-| `process-docs` | `823810f` | Osobna gałąź (bez wspólnej historii) z dokumentami procesu: `CLAUDE.md`, `PLAN_ROZWOJU.md`, `specs/`. |
-| `dev2` | `34c1440` | **Gałąź integracyjna tej pracy** (od 2026-10-16), kopia `dev`. PR-y etapów trafiają tutaj. |
+| `process-docs` | aktualny `origin/process-docs` | Osobna gałąź (bez wspólnej historii) z dokumentami procesu: `CLAUDE.md`, `PLAN_ROZWOJU.md`, `specs/`. |
+| `dev2` | `705b3f2` | **Gałąź integracyjna tej pracy** (od 2026-10-16, start: kopia `dev@34c1440`). Zawiera A1–A5, Z1, Z2, B1–B4, H1 (PR #17–#28). |
 | `analysis/spinew-vs-dev` | od `34c1440` | Ta analiza, plan, skrypty pomiaru (`tools/`) i wyniki (`results/`). |
-| gałęzie etapów | od `dev2` | Stan w `PLAN.md` „Stan prac”. |
+| gałęzie etapów | od `dev2` | Usuwane po scaleniu (§1 p. 13); historia w `PLAN.md` „Stan prac”. |
 | `measure/governor-water` | lokalna, niewypchnięta | `dev` + `c6f9f88`, `b2b0249`, `15fc13f` do pomiaru z §13. Odtworzenie: §13.6. |
 
 Porównania robimy trójstronnie: `master → SPINew` to zmiany autora, `master → dev` to nasze.
@@ -94,6 +98,9 @@ Wzorce:
   **1397 passed** lokalnie, pokrycie 93,16 % (linie 94,7 %, gałęzie 88,0 %); dane:
   `results/phase-a/cov_dev2.json`. Skrypt: `tools/run_suite.sh`, porównanie pokrycia:
   `tools/covcmp.py`, kontrola dokumentacji: `tools/doccheck.py`.
+- `dev2@705b3f2` (po A1–A5, Z1, Z2, B1–B4, H1; zmierzone 2026-10-16 na `823c8da`, to samo drzewo):
+  **1451 passed + 84 skipped** (zakres CI), **1535 passed** lokalnie, pokrycie 93,57 % (linie 95,1 %,
+  gałęzie 88,6 %); dane: `results/h1/cov_dev2_705b3f2.json`.
 - Pokrycie (`process-docs: specs/2026-10-15-coverage-5e9f853.json`): 93,16 % ogółem.
 - Cele: kod forka ≥ 95 % linii i ≥ 90 % gałęzi; pliki autora bez spadku pokrycia.
 
@@ -401,6 +408,7 @@ się parsują.
 | C1 | `water_input.md` §3.4 i §3.6 | przy ograniczeniu wodą reference governor nie hamuje; wyniki §13 |
 | C1 | `cards/smartpi_diags-{en,fr}.md`, nowa `cards/smartpi_diags-pl.md` | EN i FR przychodzą od autora; dodajemy nasze sekcje (znane wejścia `dependencies.*`, woda `water.*`, kocioł `boiler.*`) (D4). Karta PL: tłumaczenie karty EN po zmianach, ta sama struktura i te same klucze, teksty wg słownika §4 |
 | C2 | `technical_doc.md` (COOL) | bierny czas martwy; histereza lustrzana |
+| H1 (zrobione) | `technical_doc.md` §4.7 (nowy) i §3.2, §4.5, §5.2, §5.5; `diagnostics.md` (`humidity`); `vtherm_smartpi.md` („Showers and cooking”); `zone_dependencies.md` (`learning_gate`); `testing.md` §4.10, §7.3 | zdarzenia wilgotności (§22) |
 | każdy | `testing.md` | nowe testy, pokrycie, katalog QAS (§6.5) |
 
 ## 15. Zgodność z dokumentami procesu (`process-docs`)
@@ -447,6 +455,10 @@ się parsują.
 | D17 | Poranne podbicie krzywej grzewczej (strona kotła, nie SmartPI), §20.5 | informacyjnie; ewentualnie osobna funkcja smart boilera |
 | D18 | Strefa `fastcool-fastheat`, mróz, fazy 170/340 s: błąd ustalony 0,20 °C także na `dev2` (§20.6) | przyjęte 2026-10-16: osobny etap (Z2), po Z1; zrobione (§20.7) |
 | D19 | Anti-windup autora liczony względem wyjścia modelu z początku cyklu (§20.7) | nie wdrożone: pomagało w Z2, ale spowalniało pokój D16 o 0,17 h; kod autora bez zmian |
+| D20 | H1: SmartPI używa wilgotności z VT (`current_humidity`) automatycznie, bez ustawienia; bez czujnika nic się nie zmienia | przyjęte 2026-10-16 (właściciel) |
+| D21 | H1: progi sprawdzone na danych właściciela (§22): start 5 %RH w 10 min, koniec przy 25 % wzrostu albo po 3 h, 30 min uspokojenia | przyjęte 2026-10-16 (dane właściciela jako odniesienie; scalone w PR #28) |
+| D22 | H1: w czasie zdarzenia całka wstrzymana (`I:HOLD`), nie ochrona w jedną stronę (§22.1) | przyjęte 2026-10-16 (znalezisko z symulacji, scalone w PR #28 za „tak” właściciela) |
+| D23 | Gałęzie etapów usuwane po scaleniu; na GitHubie usuwa właściciel (§1 p. 13) | przyjęte 2026-10-16 |
 
 ## 17. Testy – stan i wpływ
 
@@ -723,7 +735,10 @@ nowe narastanie w danym kierunku, a dodatnią całkę grzania pozwala „odwija�
 (`I:GUARD_UNWIND`), czyli dokładnie spadek, który miał być zatrzymany. Zamienione na pełne
 wstrzymanie.
 
-### 22.2 Symulacja (`tools/h1_probe.py`)
+Scalone: PR #28 do `dev2` (`705b3f2`), CI zielone, lokalnie 1535 passed; `humidity_event.py`
+pokryty w 100 %.
+
+### 22.2 Symulacja (`tools/h1_probe.py`, wyniki w `results/h1/`)
 
 Łazienka a=0,03, b=0,001, czujnik 0,1 °C, 3 °C na zewnątrz; prysznic = źródło 40 °C przez
 przewodność g przez 15–60 min o 7:00, wilgotność +25 %RH (narastanie 10 min, zanik τ 40 min).

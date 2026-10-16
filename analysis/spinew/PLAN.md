@@ -12,8 +12,10 @@ Stan na: 2026-10-16.
 
 ## Stan prac (dla kolejnej sesji)
 
-**Gałąź integracyjna: `dev2`** (= `dev@34c1440`, w forku). Każdy etap na własnej gałęzi od `dev2`,
-**osobny PR na etap** do `dev2`. Na `dev`, `qas`, `master` nic nie wypychamy (decyzja D10).
+**Gałąź integracyjna: `dev2`** (start: `dev@34c1440`; teraz `705b3f2`, w forku). Każdy etap na własnej
+gałęzi od `dev2`, **osobny PR na etap** do `dev2`. Na `dev`, `qas`, `master` nic nie wypychamy (decyzja
+D10). Po scaleniu gałąź etapu jest usuwana (D23; na GitHubie usuwa właściciel). Wzorzec testów `dev2@705b3f2`:
+1451 passed + 84 skipped (CI), 1535 passed lokalnie, pokrycie 93,57 % (`ANALIZA.md` §3).
 
 | Etap | Gałąź | PR do `dev2` | Stan |
 |---|---|---|---|
@@ -31,10 +33,11 @@ podwójny wpis D11 usunięty), w teście `test_smartpi_dependencies_handler.py` 
 dopisane na końcu) i w `config.step.global` (`en.json`/`fr.json`: krok usunięty przez B2).
 Narzędzie: `tools/union_resolve.py`.
 
-**Następne kroki:**
-1. H1 – zdarzenia wilgotności (prysznic, gotowanie), `ANALIZA.md` §22: gałąź
-   `feat/humidity-events`, PR #28, scalone do `dev2` 2026-10-16 (`705b3f2`).
-2. Faza C – dopiero po potwierdzeniu właściciela.
+Wszystkie gałęzie z tabeli są scalone i usunięte (lokalnie i na GitHubie, 2026-10-16).
+
+**Następny krok:** faza C (reference governor, poprawki COOL) – dopiero po potwierdzeniu właściciela.
+Przed C1: `git fetch origin`, gałąź od aktualnego `dev2`; przy C1 sprawdzić współpracę reference
+governora z H1 (wstrzymana całka w czasie zdarzenia wilgotności).
 
 Odtworzenie środowiska i pomiarów: `ANALIZA.md` §3, `tools/` (skrypty), `results/` (wyniki).
 
@@ -132,7 +135,9 @@ Odtworzenie środowiska i pomiarów: `ANALIZA.md` §3, `tools/` (skrypty), `resu
 **Kolejność:** A0 → A1–A5 → B1 → B2, B3 (B4 w dowolnym momencie) → C1 → C2. Każdy etap zaczyna
 krótki plan do akceptacji właściciela (§0.1); push i PR tylko za jego „tak” (§0.3).
 
-**Etap Z1** (dojście strefy po obniżeniu, nasza logika) po A1, przed B; opis niżej.
+**Etapy własne** (nasza logika, poza kodem autora), opis niżej: **Z1** (dojście strefy po obniżeniu)
+po A1, przed B; **Z2** (boost głównego źródła tylko w powrocie) po Z1; **H1** (zdarzenia wilgotności)
+po B. Wszystkie scalone; zostaje C1 → C2.
 
 Etapy A są od siebie niezależne. Każdy etap to gałąź robocza od aktualnego `dev2` i osobny PR
 do `dev2`. Commity `b3c8939` i `b00384a` przenosimy ręcznie (logika
@@ -590,6 +595,20 @@ woła z `{"entity_id": ...}`); cel bez termostatu SmartPI daje błąd widoczny w
 **Dokumentacja B4:** CHANGELOG.
 
 ---
+
+## Etap H1 – zdarzenia wilgotności (nasza logika; decyzje D20–D22) – scalony (PR #28)
+
+Specyfikacja i wyniki: `ANALIZA.md` §22. Skrót:
+- **Wejście:** `current_humidity` termostatu VT (funkcja wilgotności VT); handler przekazuje je przy każdym
+  sterowaniu (`algo.update_humidity`). Bez czujnika: `None`, nic się nie zmienia.
+- **Detektor** `smartpi/humidity_event.py`: start przy wzroście ≥ `HUMIDITY_EVENT_RISE` (5 %RH) w
+  `HUMIDITY_EVENT_WINDOW_S` (10 min); koniec przy poziomie bazowym + `HUMIDITY_EVENT_END_SHARE` (0,25)
+  wzrostu albo po `HUMIDITY_EVENT_MAX_S` (3 h); `HUMIDITY_EVENT_SETTLE_S` (30 min) uspokojenia.
+- **Skutek w czasie zdarzenia i uspokajania:** bramka uczenia `humidity_event`; zależności strefy się nie
+  uczą; całka wstrzymana (`I:HOLD`, źródło `humidity_event`); trym FF bez okna. Diagnostyka: blok `humidity`.
+- **Testy:** `tests/test_smartpi_humidity_event.py`, jeden test w `test_smartpi_boiler_handler.py`;
+  sonda symulacji `tools/h1_probe.py` (efekt neutralny ±0,01 °C, §22.2).
+- **Dokumentacja:** `technical_doc.md` §4.7 i pozostałe miejsca z `ANALIZA.md` §14.
 
 ## Faza C – reference governor
 
