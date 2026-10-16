@@ -84,7 +84,7 @@ Po ponownym uruchomieniu potrzebne są dwa kroki: dodanie integracji SmartPI w H
 
 Wejdź w **Ustawienia → Integracje → Dodaj integrację** (Settings → Integrations → Add integration) i wyszukaj *SmartPI*.
 
-Przy pierwszej instalacji SmartPI sam tworzy wpis „SmartPI defaults” (wartości domyślne). Są w nim ustawienia wspólne dla termostatów (oznaczone „wspólne” w [tabeli konfiguracji](#konfiguracja)) i sygnały kotła. Możesz je później zmienić w **Ustawienia → Integracje → SmartPI → Konfiguruj** (Settings → Integrations → SmartPI → Configure).
+Przy pierwszej instalacji SmartPI sam tworzy wpis „SmartPI defaults” (wartości domyślne). Są w nim ustawienia wspólne dla termostatów (oznaczone „wspólne” w [tabeli konfiguracji](#konfiguracja)) i sygnały kotła. Możesz je później zmienić w **Ustawienia → Integracje → SmartPI → Konfiguruj** (Settings → Integrations → SmartPI → Configure). Jeśli usuniesz ten wpis, ponowne dodanie integracji SmartPI tworzy go znowu z wartościami początkowymi, także gdy termostaty mają własne wpisy; termostaty korzystające z wartości domyślnych zostają przeładowane.
 
 ### Wybór SmartPI w Versatile Thermostat
 

@@ -2,19 +2,6 @@
   "title": "Versatile Thermostat SmartPI",
   "config": {
     "step": {
-      "global": {
-        "title": "SmartPI defaults",
-        "data": {
-          "smart_pi_deadband": "Deadband",
-          "smart_pi_hysteresis_on": "Hysteresis on",
-          "smart_pi_hysteresis_off": "Hysteresis off",
-          "smart_pi_release_tau_factor": "Release tau factor",
-          "smart_pi_use_setpoint_filter": "Use setpoint filter",
-          "smart_pi_use_ff3": "Use FF3",
-          "smart_pi_deadband_allow_p": "Allow damped P near deadband edge",
-          "smart_pi_debug": "Record full diagnostics (debug)"
-        }
-      },
       "thermostat": {
         "title": "SmartPI per-thermostat",
         "description": "Choose the thermostat. Its settings follow in a menu; nothing is written before **Save and finish**.",

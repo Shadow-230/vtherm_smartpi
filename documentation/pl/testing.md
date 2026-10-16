@@ -210,7 +210,7 @@ Wyniki są w [Wejścia wody i kotła, §4.4](water_input.md#44-wyniki-symulacja)
 | `test_smartpi_learning_window_known_inputs.py` | okna uczenia odejmują ciepło znanych wejść |
 | `test_smartpi_dependencies_algo.py` | algorytm używa `b_eff` i `T_ref` wszędzie w sterowaniu, zachowuje surowe wartości do uczenia, zatrzymuje uczenie, gdy ustawiona jest bramka uczenia (warunek taki jak otwarte drzwi do sąsiada), oraz zapisuje i wczytuje swój stan; nastawa okna sąsiada bez temperatury docelowej, polecenie źródła poza rolą źródła, wspólny model opublikowany po fazie nauki (a i b zostają) |
 | `test_smartpi_dependencies.py`, `test_smartpi_dependency_inputs.py` | skonfigurowane elementy, sposób ich sprawdzania, odczyty używane w jednym obliczeniu |
-| `test_config_flow.py`, `test_config_flow_dependencies.py` | menu opcji wpisu termostatu (z pozycją Woda i kocioł dla wodnego rodzaju ogrzewania, Save and finish na końcu) i wpisu globalnego; tworzenie wpisu przez menu; lista zależności (każdy krok wraca do menu, usunięcie bez wyboru wraca do menu z notatką, pozycja powrotu) |
+| `test_config_flow.py`, `test_config_flow_dependencies.py` | menu opcji wpisu termostatu (z pozycją Woda i kocioł dla wodnego rodzaju ogrzewania, Save and finish na końcu) i wpisu globalnego; tworzenie wpisu przez menu; wpis wartości domyślnych tworzony ponownie po usunięciu (wpisy termostatów zostają), starszy bez unikalnego identyfikatora nie jest powielany; lista zależności (każdy krok wraca do menu, usunięcie bez wyboru wraca do menu z notatką, pozycja powrotu) |
 
 ### 4.3 Strefy sąsiednie
 

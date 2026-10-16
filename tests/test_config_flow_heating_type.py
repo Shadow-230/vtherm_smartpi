@@ -107,7 +107,7 @@ def test_english_texts_cover_the_heating_type_and_the_reset_offer():
     assert set(texts["selector"]["heating_type"]["options"]) == {"not_set", *HEATING_TYPES}
     for section, step in (("config", "settings"), ("options", "settings"), ("options", "source_role")):
         assert CONF_SMART_PI_HEATING_TYPE in texts[section]["step"][step]["data"]
-    for section, step in (("config", "global"), ("options", "regulator")):
+    for section, step in (("options", "regulator"),):
         assert CONF_SMART_PI_HEATING_TYPE not in texts[section]["step"][step]["data"]
     for issue in ("water_data_appeared", "water_data_gone"):
         confirm = texts["issues"][issue]["fix_flow"]["step"]["confirm"]

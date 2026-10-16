@@ -84,7 +84,7 @@ Two steps are required after the restart: adding the SmartPI integration in Home
 
 Go to **Settings → Integrations → Add integration**, then search for *SmartPI*.
 
-On first install, SmartPI automatically creates the "SmartPI defaults" entry. It holds the settings shared by the thermostats (marked "shared" in the [configuration table](#configuration)) and the boiler's signals. You can edit them later from **Settings → Integrations → SmartPI → Configure**.
+On first install, SmartPI automatically creates the "SmartPI defaults" entry. It holds the settings shared by the thermostats (marked "shared" in the [configuration table](#configuration)) and the boiler's signals. You can edit them later from **Settings → Integrations → SmartPI → Configure**. If you remove this entry, adding the SmartPI integration again creates it again with the starting values, also while thermostats keep their own entries; the thermostats that use the defaults are reloaded.
 
 ### Selecting SmartPI in Versatile Thermostat
 

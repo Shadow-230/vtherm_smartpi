@@ -204,7 +204,7 @@ The results are in [Water and boiler inputs, §4.4](water_input.md#44-results-si
 | `test_smartpi_learning_window_known_inputs.py` | learning windows subtract the heat of known inputs |
 | `test_smartpi_dependencies_algo.py` | the algorithm uses `b_eff` and `T_ref` everywhere in its control, keeps the raw values for learning, pauses learning while a learning gate is set (a condition such as a neighbour's open door), and saves and loads its state; a neighbour's window preset without a target, a source command outside the source role, a joint fit published after the learning phase (a and b kept) |
 | `test_smartpi_dependencies.py`, `test_smartpi_dependency_inputs.py` | the configured items, how they are checked, the readings used in one calculation |
-| `test_config_flow.py`, `test_config_flow_dependencies.py` | the options menu of a thermostat entry (with Water and boiler for a water heating type, Save and finish last) and of the defaults entry; creating an entry through the menu; the list of dependencies (each step back in the menu, a removal with nothing chosen back in the menu with a note, an item to go back) |
+| `test_config_flow.py`, `test_config_flow_dependencies.py` | the options menu of a thermostat entry (with Water and boiler for a water heating type, Save and finish last) and of the defaults entry; creating an entry through the menu; the defaults entry created again after it was removed (thermostats' entries remain), an older one without its unique ID not duplicated; the list of dependencies (each step back in the menu, a removal with nothing chosen back in the menu with a note, an item to go back) |
 
 ### 4.3 Neighbouring zones
 
