@@ -432,6 +432,17 @@ Przejściowe stany doganiania nie są przywracane po restarcie:
 
 Po restarcie zostaje więc tylko przydatna, trwała pamięć PI. Przejściowe stany regulacji nie są przywracane, bo poza swoją pierwotną sesją pracy nie mają już fizycznego sensu. Czas zegarowy (rzeczywisty) ostatniego poprawnego kroku aktywnej regulacji jest zapisywany i nie jest odświeżany, gdy HVAC jest wyłączony (OFF). Jeśli bezczynność trwa ponad 96 godzin, przy wznowieniu pamięć PI regulatora jest czyszczona, a nauczony model A/B zostaje.
 
+Odtwarzany jest też tryb HVAC zapisanego modelu (`est.model_hvac_mode`). Gdy Home Assistant
+uruchomi się w innym trybie (na przykład stan zapisano w HEAT, a termostat startuje w COOL),
+pierwsze obliczenie widzi zmianę trybu i kasuje stan PI, tak jak przy zmianie trybu w trakcie
+pracy: całka nauczona przy grzaniu nie steruje chłodzeniem.
+
+Niektóre przerwy w regulacji zaczynają liczenie czasu od nowa, tak jak OFF: brak czujnika
+temperatury, „guard cut” (wymuszone wyłączenie przez ochronę) oraz praca termostatu jako
+dodatkowe źródło innego termostatu
+([Zależności stref, §5.7](zone_dependencies.md#57-ścieżka-wykonawcza)). Pierwsze obliczenie po
+przerwie niczego wtedy nie całkuje, zamiast całkować uchyb z całej przerwy.
+
 ### 4.5 Strefa nieczułości, pasmo przy nastawie i zabezpieczenia
 
 `DeadbandManager` obsługuje:

@@ -430,6 +430,16 @@ Transient catch-up states are not restored after a reboot:
 
 The restart therefore keeps only useful persistent PI memory, without restoring transient servo states that are no longer physically valid outside their original runtime session. The wall-clock timestamp of the last valid active regulation tick is persisted and is not refreshed while HVAC is OFF. If inactivity exceeds 96 hours, controller PI memory is purged on resume while the learned A/B model remains available.
 
+The HVAC mode of the saved model (`est.model_hvac_mode`) is restored too. When Home Assistant
+restarts in the other mode (for example the state was saved in HEAT and the thermostat starts in
+COOL), the first calculation sees the mode change and resets the PI state, as a change of mode
+while running does: an integral learned on the heating plant does not drive the cooling.
+
+Some gaps in the regulation restart the time tracking, as OFF does: a missing temperature
+sensor, a guard cut, and a thermostat working as another thermostat's additional source
+([Zone dependencies, §5.7](zone_dependencies.md#57-executive-path)). The first calculation after
+the gap then integrates nothing, instead of the error over the whole gap.
+
 ### 4.5 Deadband, near-band, and protections
 
 `DeadbandManager` handles:

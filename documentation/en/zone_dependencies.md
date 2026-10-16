@@ -981,6 +981,10 @@ sequenceDiagram
   the zone stayed within 19.4 to 20.6 degC. A main source removed from Home Assistant (or reloaded)
   detaches the link at once. The additional source then regulates on its own right away, with an
   information message in the log, until it is attached again.
+- **Back to its own regulation.** While it applies the main source's command, the additional
+  source's own SmartPI regulates nothing. When it leaves that role (the main source is silent or
+  detached, or the zone is removed), its time tracking starts again: its first own calculation
+  integrates nothing for the time spent in the role.
 - **Water.** The main source's command is a power at the reference water. The additional source
   reads its own water data at each control call and gives its emitter `power / factor` (at most 1),
   as its own SmartPI would. It publishes its **power cap**: the most power that a full command gives

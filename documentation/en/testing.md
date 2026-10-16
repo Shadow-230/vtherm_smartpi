@@ -273,6 +273,7 @@ working with it.
 
 | File | What it checks |
 |---|---|
+| `test_smartpi_regulation_gaps.py` | a thermostat leaving the additional source's role integrates nothing for the time spent in it; a restart into the other HVAC mode resets the PI on the first calculation only |
 | `test_smartpi_ab_drift.py` (two tests added) | a state of the QAS pack's learned room, saved with one shared `learn_seq`, starts both drift counters from it; histories seeded from a zone's joint fit still let `b` follow a drift |
 | `test_smartpi_raw_slopes.py` | learning slopes come from the raw measured temperature: a slow ramp read by a 0.1 °C sensor gives its true slope, minus the rate of the known inputs; a zone held by a boiler that is not called keeps recording raw samples; a change of the boiler's call empties the raw and the filtered history |
 
