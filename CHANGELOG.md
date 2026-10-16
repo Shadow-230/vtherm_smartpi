@@ -4,6 +4,10 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+- SmartPI's services take a standard target of Versatile Thermostat climate entities, and a call
+  that names no thermostat on SmartPI now fails with an error instead of doing nothing; a call with
+  `entity_id` in its data still works (taken from the author's newer code).
+
 - Each change of the SmartPI entries reloads only the thermostats it concerns, each once (taken
   from the author's newer code, with the fork's zones and entries that use the defaults): a save
   reloads its thermostat and, for a zone's additional source, the zone's main source; a save of the

@@ -93,19 +93,32 @@
     }
   },
   "services": {
+    "reset_smartpi_learning": {
+      "name": "Réinitialiser l'apprentissage SmartPI",
+      "description": "Réinitialise l'état d'apprentissage SmartPI d'un thermostat."
+    },
     "set_smartpi_learning": {
       "name": "Définir l'apprentissage SmartPI",
       "description": "Active ou met en pause l'apprentissage thermique SmartPI pour un thermostat.",
       "fields": {
-        "entity_id": {
-          "name": "Thermostat cible",
-          "description": "L'entité climate VTherm à mettre à jour."
-        },
         "learning_enabled": {
           "name": "Apprentissage activé",
           "description": "Indique si SmartPI peut mettre à jour son modèle thermique et ses estimations de temps mort."
         }
       }
+    },
+    "force_smartpi_calibration": {
+      "name": "Forcer la calibration SmartPI",
+      "description": "Force un cycle de calibration SmartPI pour un thermostat."
+    },
+    "reset_smartpi_integral": {
+      "name": "Réinitialiser l'intégrale SmartPI",
+      "description": "Réinitialise l'accumulateur d'intégrale SmartPI d'un thermostat."
+    }
+  },
+  "exceptions": {
+    "no_smartpi_target": {
+      "message": "Aucune des entités ciblées n'est un Versatile Thermostat utilisant SmartPI."
     }
   }
 }

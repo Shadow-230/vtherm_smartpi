@@ -536,19 +536,27 @@
     }
   },
   "services": {
+    "reset_smartpi_learning": {
+      "name": "Reset SmartPI learning",
+      "description": "Reset the SmartPI learning state for a thermostat."
+    },
     "set_smartpi_learning": {
       "name": "Set SmartPI learning",
       "description": "Enable or pause SmartPI thermal learning for a thermostat.",
       "fields": {
-        "entity_id": {
-          "name": "Target thermostat",
-          "description": "The VTherm climate entity to update."
-        },
         "learning_enabled": {
           "name": "Learning enabled",
           "description": "Whether SmartPI may update its thermal model and dead-time estimates."
         }
       }
+    },
+    "force_smartpi_calibration": {
+      "name": "Force SmartPI calibration",
+      "description": "Force a SmartPI calibration cycle for a thermostat."
+    },
+    "reset_smartpi_integral": {
+      "name": "Reset SmartPI integral",
+      "description": "Reset the SmartPI integral accumulator for a thermostat."
     }
   },
   "selector": {
@@ -635,6 +643,11 @@
     "thermostat_entries_created": {
       "title": "SmartPI created an entry of its own for some thermostats",
       "description": "The \"SmartPI defaults\" entry no longer holds the settings that belong to one thermostat (heating type, activation delays, valve curve, PWM cycle restart). These thermostats ran with such settings from the defaults, so each one now has its own SmartPI entry with them: {entries}. They use the shared settings of the defaults as before. Check each entry's options if a thermostat needs other values."
+    }
+  },
+  "exceptions": {
+    "no_smartpi_target": {
+      "message": "None of the targeted entities is a Versatile Thermostat using SmartPI."
     }
   }
 }

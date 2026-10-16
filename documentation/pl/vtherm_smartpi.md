@@ -412,7 +412,7 @@ Zainstaluj Equinox z jego repozytorium albo przez HACS. Ustaw go dla tej samej e
 
 ## Usługi
 
-SmartPI udostępnia cztery usługi (akcje Home Assistant) w domenie `vtherm_smartpi`.
+SmartPI udostępnia cztery usługi (akcje Home Assistant) w domenie `vtherm_smartpi`. Każda działa na encjach climate Versatile Thermostat, wybranych jako cel usługi albo podanych w `entity_id` w jej danych. Termostaty na innym algorytmie są pomijane; gdy żadna ze wskazanych encji nie jest termostatem na SmartPI, wywołanie kończy się błędem widocznym w Home Assistant.
 
 ### `set_smartpi_learning`
 
