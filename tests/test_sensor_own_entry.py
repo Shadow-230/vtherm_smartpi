@@ -42,7 +42,6 @@ async def test_a_thermostat_s_own_entry_takes_over_its_diagnostic_sensor(hass, c
 
     # Versatile Thermostat itself is not needed: its thermostats are not reloaded here.
     hass.config.components.add(VT_DOMAIN)
-    monkeypatch.setattr(smartpi_init, "_reload_smartpi_vtherms", AsyncMock())
     monkeypatch.setattr(smartpi_init, "_reload_smartpi_vtherms_for_target", AsyncMock())
     monkeypatch.setattr(smartpi_init, "_reload_smartpi_vtherms_using_defaults", AsyncMock())
     assert await async_setup_component(hass, "sensor", {})
@@ -88,7 +87,6 @@ async def test_an_own_entry_that_uses_the_defaults_records_as_the_defaults_say(h
     from custom_components.vtherm_smartpi.sensor import SmartPIRecordedDiagnosticSensor
 
     hass.config.components.add(VT_DOMAIN)
-    monkeypatch.setattr(smartpi_init, "_reload_smartpi_vtherms", AsyncMock())
     monkeypatch.setattr(smartpi_init, "_reload_smartpi_vtherms_for_target", AsyncMock())
     using_defaults = AsyncMock()
     monkeypatch.setattr(smartpi_init, "_reload_smartpi_vtherms_using_defaults", using_defaults)

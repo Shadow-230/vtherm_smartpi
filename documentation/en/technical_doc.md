@@ -508,8 +508,23 @@ restart, valve curve), its neighbours, its zone and its water source. A "thermos
 setting that is not set is not used. The code's starting values (`DEFAULT_OPTIONS`) only fill
 the forms; a shared setting missing from an entry edited by hand takes the form's value and is
 logged once as a configuration error. Saved options replace the entry's first data as a whole,
-so a setting removed in the options stays removed. A save of the defaults entry reloads every
-thermostat that uses them.
+so a setting removed in the options stays removed.
+
+Each change reloads only the thermostats it concerns, each once (`__init__.py`, taken from the
+author's newer code):
+
+- a save of a thermostat's entry reloads that thermostat, and the main source of a zone whose
+  additional source it is;
+- a save of the defaults entry reloads the thermostats without an entry of their own, and the
+  entries that use the defaults (their setup reloads their thermostat);
+- a new entry reloads its thermostat;
+- a removed entry reloads, once it has left Home Assistant's list of entries, the thermostats that
+  used it;
+- unloading an entry (Home Assistant stopping, an entry disabled) reloads nothing.
+
+The SmartPI algorithm and the four services are registered once, when the integration starts,
+and stay registered: reloading or removing an entry does not leave Versatile Thermostat without
+its algorithm.
 
 ### 5.2 `smartpi/` modules effectively used
 

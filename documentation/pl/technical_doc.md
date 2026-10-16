@@ -511,8 +511,22 @@ i źródło danych o wodzie. Nieustawione ustawienie „tylko ten termostat” n
 startowe z kodu (`DEFAULT_OPTIONS`) służą tylko do wypełnienia formularzy; ustawienie wspólne,
 którego brakuje we wpisie zmienionym ręcznie, dostaje wartość z formularza i jest raz zapisane w
 dzienniku jako błąd konfiguracji. Zapisane opcje zastępują w całości pierwsze dane wpisu, więc
-ustawienie usunięte w opcjach zostaje usunięte. Zapis wpisu wartości domyślnych przeładowuje każdy
-termostat, który z nich korzysta.
+ustawienie usunięte w opcjach zostaje usunięte.
+
+Każda zmiana przeładowuje tylko termostaty, których dotyczy, każdy raz (`__init__.py`, przejęte z
+nowszego kodu autora):
+
+- zapis wpisu termostatu przeładowuje ten termostat i główne źródło strefy, której jest on
+  dodatkowym źródłem;
+- zapis wpisu wartości domyślnych przeładowuje termostaty bez własnego wpisu oraz wpisy, które
+  korzystają z wartości domyślnych (ich uruchomienie przeładowuje ich termostat);
+- nowy wpis przeładowuje swój termostat;
+- usunięty wpis przeładowuje, gdy już zniknie z listy wpisów Home Assistant, termostaty, które go
+  używały;
+- wyładowanie wpisu (zatrzymanie Home Assistant, wyłączenie wpisu) niczego nie przeładowuje.
+
+Algorytm SmartPI i cztery usługi są rejestrowane raz, przy starcie integracji, i zostają
+zarejestrowane: przeładowanie albo usunięcie wpisu nie zostawia Versatile Thermostat bez algorytmu.
 
 ### 5.2 Moduły `smartpi/` faktycznie używane
 

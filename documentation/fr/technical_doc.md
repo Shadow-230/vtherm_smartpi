@@ -513,8 +513,23 @@ zone et sa source d'eau. Un réglage « ce thermostat seulement » non défini n
 valeurs de départ du code (`DEFAULT_OPTIONS`) ne servent qu'à remplir les formulaires ; un réglage
 partagé absent d'une entrée modifiée à la main prend la valeur du formulaire et est journalisé une
 fois comme erreur de configuration. Les options enregistrées remplacent en bloc les premières données
-de l'entrée, donc un réglage retiré dans les options reste retiré. Un enregistrement de l'entrée des
-valeurs par défaut recharge chaque thermostat qui les utilise.
+de l'entrée, donc un réglage retiré dans les options reste retiré.
+
+Chaque changement ne recharge que les thermostats qu'il concerne, chacun une fois (`__init__.py`,
+repris du code plus récent de l'auteur) :
+
+- un enregistrement de l'entrée d'un thermostat recharge ce thermostat, et la source principale
+  d'une zone dont il est la source additionnelle ;
+- un enregistrement de l'entrée des valeurs par défaut recharge les thermostats sans entrée propre,
+  et les entrées qui utilisent les valeurs par défaut (leur mise en place recharge leur thermostat) ;
+- une nouvelle entrée recharge son thermostat ;
+- une entrée supprimée recharge, une fois sortie de la liste des entrées de Home Assistant, les
+  thermostats qui l'utilisaient ;
+- le déchargement d'une entrée (arrêt de Home Assistant, entrée désactivée) ne recharge rien.
+
+L'algorithme SmartPI et les quatre services sont enregistrés une fois, au démarrage de
+l'intégration, et le restent : recharger ou supprimer une entrée ne laisse pas Versatile Thermostat
+sans son algorithme.
 
 ### 5.2 Modules `smartpi/` réellement utilisés
 
