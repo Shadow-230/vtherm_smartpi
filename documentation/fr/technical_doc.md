@@ -164,6 +164,14 @@ En pratique, la décision de soumettre ou d'étendre la fenêtre dépend de la r
 - nombre minimal de changements de niveau : `OLS_MIN_JUMPS = 3`,
 - significativité statistique : `OLS_T_MIN = 2.5`.
 
+La pente est calculée sur `dt_est.tin_history`, qui contient la température mesurée **brute** (un
+nouvel échantillon quand la lecture change, ou toutes les 60 s). Les garde-fous comptent les
+changements de niveau, ils s'appuient donc sur les pas du capteur : la température filtrée par EMA
+`t_int_lp` transformerait un pas de 0.1 °C en plusieurs petits niveaux, et une pente lente serait
+acceptée trop tôt et trop faible (environ la moitié de la vraie vitesse de refroidissement). Les
+échantillons filtrés sont gardés à part (`_tin_lp_history`) et ne servent qu'à la détection du
+temps mort (section 3.5).
+
 Les pentes validées alimentent ensuite `ABEstimator.learn()` qui :
 
 - rejette les outliers physiques (`max_abs_dT_per_min = 0.35`),
@@ -188,6 +196,13 @@ Les historiques sont filtrés par median/MAD. La magnitude publiée de `a` est
 bornée tout en conservant le signe du mode ; `b` reste strictement positif.
 
 Avec un chauffage à eau, `u` est la puissance pour l'eau de référence (la commande multipliée par `φ`).
+
+Quand les mesures de `a` ou de `b` changent durablement (une dérive), `ab_drift.py` recentre cet
+historique. Il n'accepte que des candidats de dérive qui se suivent de près (numéros de séquence
+écartés de trois au plus). Chaque canal numérote ses propres candidats (`learn_seq_a`,
+`learn_seq_b`), si bien que des mesures en chauffe entre deux mesures en refroidissement ne cachent
+pas une vraie dérive de `b` (et inversement). Un état enregistré avec l'ancien compteur commun
+`learn_seq` initialise les deux compteurs.
 
 ### 3.5 Estimation du temps mort
 

@@ -3995,6 +3995,7 @@ class SmartPI:
             self.dt_est.update(
                 now=now,
                 tin=t_int_lp,
+                tin_raw=current_temp,
                 sp=target_temp_filt,
                 u_applied=self._deadtime_input(),
                 max_on_percent=self._max_on_percent if self._max_on_percent is not None else 1.0,
@@ -4067,6 +4068,7 @@ class SmartPI:
                 self.dt_est.update(
                     now=now,
                     tin=t_int_lp,
+                    tin_raw=current_temp,
                     sp=target_temp_filt,
                     u_applied=self._deadtime_input(),
                     max_on_percent=self._max_on_percent if self._max_on_percent is not None else 1.0,

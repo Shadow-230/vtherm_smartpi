@@ -93,9 +93,19 @@ async def test_substitution_reaches_every_control_component(monkeypatch) -> None
     provider.inputs = _exchange()
     algo = sim.algo
     seen: dict[str, list] = {}
+    # The model is composed once per calculation, from the b SmartPI has at its start; a
+    # learning step later in the same calculation changes est.b for the next one only.
+    tick_b = [algo.est.b]
+    calculate = algo.calculate
+
+    def calculating(*args, **kwargs):
+        tick_b[0] = algo.est.b
+        return calculate(*args, **kwargs)
+
+    monkeypatch.setattr(algo, "calculate", calculating)
 
     def expected():
-        return compose(algo.est.b, sim.thermostat.current_outdoor_temperature, provider.inputs)
+        return compose(tick_b[0], sim.thermostat.current_outdoor_temperature, provider.inputs)
 
     def spy(name, original, extract):
         def wrapper(*args, **kwargs):
@@ -122,12 +132,18 @@ async def test_substitution_reaches_every_control_component(monkeypatch) -> None
         for (b, ext), model, _tau in seen[name]:
             assert b == pytest.approx(model.b)
             assert ext == pytest.approx(model.ext_temp)
-    for (k_ff, ext), model, _tau in seen["ff1"]:
+    # FF1 is off (k_ff 0) while SmartPI's time constant is not reliable yet.
+    active_ff1 = [entry for entry in seen["ff1"] if entry[0][0] != 0.0]
+    assert active_ff1
+    for (k_ff, ext), model, _tau in active_ff1:
         assert k_ff == pytest.approx(clamp(model.b / algo.est.a, -3.0, 3.0))
         assert ext == pytest.approx(model.ext_temp)
     for (b, _none), model, _tau in seen["fftrim"]:
         assert b == pytest.approx(model.b)
-    for (tau_min, _none), _model, tau_base in seen["gains"]:
+    # An unreliable time constant is passed on as is (9999 min), with or without inputs.
+    reliable_gains = [entry for entry in seen["gains"] if entry[2] < 9999.0]
+    assert reliable_gains
+    for (tau_min, _none), _model, tau_base in reliable_gains:
         # The learned time constant gains the exchange conductance.
         assert tau_min == pytest.approx(1.0 / (1.0 / tau_base + K))
     for (known_rate, ext), _model, _tau in seen["learning"]:
@@ -159,6 +175,7 @@ async def test_learning_gate_pauses_learning_and_dead_times(monkeypatch) -> None
     assert not algo.learn_win.active
     assert algo.dt_est.state == "OFF"
     assert not algo.dt_est.tin_history
+    assert not algo.dt_est._tin_lp_history
     assert build_published_diagnostics(algo)["dependencies"]["learning_gate"] == "door_open"
 
     provider.inputs = KnownInputs(status=STATUS)

@@ -4,14 +4,31 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
-- The exchange with a neighbour is learned also during a guard cut, when the zone gets no heat
-  (a known power). Stopping for each guard cut kept an always-connected neighbour from being
-  learned in the simulator, or left its `k` far off; now it is learned within 3 % of the truth.
 - After a restart into the other HVAC mode, the PI state is reset on the first calculation, from
   the saved model's mode; a missing sensor and a guard cut restart the time tracking, so the next
   calculation does not integrate the error over the whole gap (taken from the author's newer
   code). The same now holds for a thermostat leaving the additional source's role: two hours in
   that role raised its integral from 1.0 to 11.0 on its first own calculation; now it stays at 1.0.
+
+- Separate drift sequence counters for `a` and `b` (taken from the author's newer code). With one
+  shared counter, three or more heating measurements between two cooling measurements kept a real
+  drift of `b` from ever recentring its history (and the other way round). A saved state with the
+  old shared counter, such as the QAS pack's learned room, starts both counters from it; histories
+  seeded from a zone's joint fit do not hold a drift back.
+
+- The exchange with a neighbour is learned also during a guard cut, when the zone gets no heat:
+  with learning slopes from the raw reading guard cuts come more often, and an always-connected
+  neighbour was never learned in the simulator. Now its `k` is learned within 3 % of the truth.
+
+- Learning slopes come from the raw measured temperature (taken from the author's newer code).
+  The learning windows used the EMA-filtered temperature, which turns one step of a 0.1 °C sensor
+  into several small levels: slow slopes passed too early and came out too flat. In
+  the simulator, with a 0.1 °C sensor and four nights with a setback, the learned `a` and `b` were
+  at 0.44–1.15 of the truth and are now at 0.95–1.04; the first learning phase takes longer (about
+  15 h instead of 6 h in the short test). The fork's parts keep working on the raw history: the
+  known inputs' rate is removed from the raw slope, a zone held by a boiler that is not called keeps
+  recording raw samples, and a learning gate or a change of the boiler's call empties both
+  histories.
 
 - `testing.md` gets a section "Coverage": the code coverage per file against the baseline, the
   fork's own lines (99.2 % of the lines, 98.0 % of the branches) with the reason for each line left

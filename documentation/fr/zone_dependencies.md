@@ -582,9 +582,13 @@ de toutes les valeurs ensemble, section 5.4). L'ajustement donne les déperditio
 retard de la source principale, le `a_f` et l'échelle de temps de la source additionnelle, et les
 `k` des voisins. SmartPI part de ce modèle et le garde. La première conception apprenait chaque
 source à part, l'une après l'autre. Elle a été abandonnée (section 5.8). Avec des capteurs au pas
-de 0.1 degC, les propres fenêtres d'apprentissage de SmartPI mesurent un refroidissement lent
-environ deux fois moins rapide qu'il ne l'est vraiment. Chaque valeur apprise par-dessus le modèle
-de SmartPI reprenait ses erreurs.
+de 0.1 degC, les propres fenêtres d'apprentissage de SmartPI mesuraient alors un refroidissement
+lent environ deux fois moins rapide qu'il ne l'est vraiment, car elles lisaient la température
+filtrée. Chaque valeur apprise par-dessus le modèle de SmartPI reprenait ses erreurs. SmartPI
+calcule désormais ses pentes d'apprentissage sur la lecture brute
+([documentation technique, §3.3](technical_doc.md#33-estimation-robuste-de-pente)), ce qui supprime
+l'essentiel de cette erreur ; l'ajustement conjoint reste, car il sépare aussi les deux sources et
+les voisins.
 
 ```mermaid
 flowchart LR
