@@ -140,3 +140,14 @@ async def test_unloading_reloads_nothing(hass, reloads) -> None:
     assert await smartpi_init.async_unload_entry(hass, floor)
 
     assert reloads == []
+
+
+async def test_recreated_defaults_reload_the_thermostats_that_use_them(hass, reloads) -> None:
+    """The defaults entry created again (B2) while thermostats' entries remain."""
+    _entry(hass, "Kitchen", "vt-kitchen", **{CONF_SMART_PI_USE_DEFAULTS: True})
+    _entry(hass, "Office", "vt-office", **{CONF_SMART_PI_USE_DEFAULTS: False})
+    defaults = _entry(hass, "SmartPI defaults")
+
+    assert await smartpi_init.async_setup_entry(hass, defaults)
+
+    assert reloads == ["entry:Kitchen", "vt:vt-kitchen", "defaults-users"]

@@ -103,7 +103,7 @@ def _neighbour(entity_id: str) -> dict:
 
 
 def _targets(hass) -> list[str]:
-    return sorted(e.data.get(CONF_TARGET_VTHERM) for e in hass.config_entries.async_entries(DOMAIN))
+    return sorted(e.data[CONF_TARGET_VTHERM] for e in hass.config_entries.async_entries(DOMAIN) if e.data.get(CONF_TARGET_VTHERM))
 
 
 def _stairs(hass):
@@ -379,6 +379,8 @@ async def test_a_main_source_entry_that_cannot_be_created_ends_the_save(hass) ->
     """The zone moves to the floor, which has no entry yet, while a window creating the floor's entry is
     open: SmartPI cannot create it, so the radiator's entry is not written either."""
     _radiator, floor, master, entry, _ = _zone(hass, floor_entry=False)
+    # With a defaults entry, adding the integration opens a thermostat's entry.
+    MockConfigEntry(domain=DOMAIN, unique_id=DOMAIN, title="SmartPI defaults", data={}).add_to_hass(hass)
     stored = dict(entry.options)
     creating = await hass.config_entries.flow.async_init(DOMAIN, context={"source": SOURCE_USER})
     creating = await configure(hass, creating, {CONF_TARGET_VTHERM: floor.entity_id})

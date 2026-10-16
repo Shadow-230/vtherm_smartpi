@@ -8,6 +8,10 @@ All notable changes to this project will be documented in this file.
   that names no thermostat on SmartPI now fails with an error instead of doing nothing; a call with
   `entity_id` in its data still works (taken from the author's newer code).
 
+- The "SmartPI defaults" entry can be created again after it was removed, also while thermostats
+  keep their own entries; an older defaults entry without its unique ID is not duplicated. The
+  unused `global` step of the setup is removed (taken from the author's newer code).
+
 - Each change of the SmartPI entries reloads only the thermostats it concerns, each once (taken
   from the author's newer code, with the fork's zones and entries that use the defaults): a save
   reloads its thermostat and, for a zone's additional source, the zone's main source; a save of the
@@ -15,6 +19,67 @@ All notable changes to this project will be documented in this file.
   thermostats that used it; unloading an entry reloads nothing. The SmartPI algorithm and its
   services are registered once when the integration starts and are no longer removed, so a reload
   of the last entry does not leave Versatile Thermostat without its algorithm.
+
+- In a zone with two heat sources, the main source's recovery boost starts only in a recovery: when
+  the zone is more than 0.5 °C below its setpoint (after a setback or a cold start), until it reaches
+  the setpoint. A dip of a steady zone no longer starts it: in the fastest simulated room in cold
+  weather, with the control call later in its cycle, each dip switched the main source's
+  feed-forward between two shares and drained its integral, and the zone kept swinging 0.17–0.20 °C
+  around its setpoint; it now holds it within 0.05–0.06 °C.
+
+- A zone with two heat sources gets the setting "Recovery after a setback": Fast (the default) or
+  Economical. It is a shared setting of the "SmartPI defaults" entry, and each zone may override it
+  in its form. With Fast, during a setback (a setpoint at least 0.5 °C below the highest of the last
+  24 h) the additional source carries at least the zone's load at the lower setpoint, from the zone's
+  fit, capped by the brake. The recovery boost of the main source now ends two of its cycles ahead
+  instead of one, so a zone whose floor is warm does not overshoot. In the simulator the zone is then
+  back at its setpoint after a night at 17 °C sooner on average than two independent SmartPI (1.9 h
+  against 2.5 h; 3.0 h with Economical; later in 2 of 15 cases, by up to 0.8 h), with less overshoot
+  in every case, for up to 2.7 % more heat than Economical. The entries move to minor version 3,
+  which adds the setting.
+
+- SmartPI's events are fired with Home Assistant's loop-safe `bus.async_fire`; a branch in the
+  cancellation of a calibration that could never run is removed, and the manifest declares its
+  `vtherm_api` requirement (taken from the author's newer code).
+
+- A thermostat switched off during the off phase of its PWM cycle cancels the running cycle, so
+  the scheduler does not switch the device on again later; a main source still sends its 0 to
+  its additional source first. An additional source that stops working (its thermostat off, or
+  a command for another HVAC mode) cancels its running cycle the same way. Remove the setters of `guard_cut_active` and `guard_kick_active`,
+  which could only raise an error and were not used (both taken from the author's newer code).
+
+- SmartPI writes its state at most once every five minutes from the control loop instead of at
+  each control call, about once a minute per thermostat (taken from the author's newer code, with
+  its `state_store.py`). The services, the removal of a thermostat and a cancelled calibration
+  still write at once, and so does a reset of the learned model asked by the zone's form, so that
+  a restart within the five minutes does not reset the model again. The fork's parts of the state
+  (dependencies, the zone's reset token, the water input) are written as before.
+
+- After a restart into the other HVAC mode, the PI state is reset on the first calculation, from
+  the saved model's mode; a missing sensor and a guard cut restart the time tracking, so the next
+  calculation does not integrate the error over the whole gap (taken from the author's newer
+  code). The same now holds for a thermostat leaving the additional source's role: two hours in
+  that role raised its integral from 1.0 to 11.0 on its first own calculation; now it stays at 1.0.
+
+- Separate drift sequence counters for `a` and `b` (taken from the author's newer code). With one
+  shared counter, three or more heating measurements between two cooling measurements kept a real
+  drift of `b` from ever recentring its history (and the other way round). A saved state with the
+  old shared counter, such as the QAS pack's learned room, starts both counters from it; histories
+  seeded from a zone's joint fit do not hold a drift back.
+
+- The exchange with a neighbour is learned also during a guard cut, when the zone gets no heat:
+  with learning slopes from the raw reading guard cuts come more often, and an always-connected
+  neighbour was never learned in the simulator. Now its `k` is learned within 3 % of the truth.
+
+- Learning slopes come from the raw measured temperature (taken from the author's newer code).
+  The learning windows used the EMA-filtered temperature, which turns one step of a 0.1 °C sensor
+  into several small levels: slow slopes passed too early and came out too flat. In
+  the simulator, with a 0.1 °C sensor and four nights with a setback, the learned `a` and `b` were
+  at 0.44–1.15 of the truth and are now at 0.95–1.04; the first learning phase takes longer (about
+  15 h instead of 6 h in the short test). The fork's parts keep working on the raw history: the
+  known inputs' rate is removed from the raw slope, a zone held by a boiler that is not called keeps
+  recording raw samples, and a learning gate or a change of the boiler's call empties both
+  histories.
 
 - `testing.md` gets a section "Coverage": the code coverage per file against the baseline, the
   fork's own lines (99.2 % of the lines, 98.0 % of the branches) with the reason for each line left

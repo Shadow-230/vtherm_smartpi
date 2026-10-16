@@ -150,7 +150,10 @@ flowchart TD
 - **Parameter.** This step shows the rule's parameter and what it means for these two thermostats
   (`together` 10 to 1000 %, `source_first` and `lead_band` 0 to 100 %). It warns when the main
   source's heating type responds more slowly than the other one's. If the user asked for them, it
-  also asks for the additional source's delay and lag (0 to 600 min).
+  also asks for the additional source's delay and lag (0 to 600 min). The same step sets the zone's
+  **recovery after a setback** (section 5.6): *As in the SmartPI defaults* (the default), *Fast* or
+  *Economical*. The form shows a short description of each option. The zone keeps its own choice when
+  its sources or rule change.
 - **Where it is saved.** The zone is saved in the main source's entry, as its `source` item, which
   also names the master (`zone_master`). The zone's neighbours and doors are in the same entry.
   The other thermostat's entry stores nothing about the zone. That thermostat finds its role in the
@@ -222,6 +225,8 @@ identifier), `mode`, `door_sensors` and `neighbour_window_action`. The zone's so
 (`split_ratio`, `source_alone_percent` or `lead_band_percent`). It also holds `lead_emitter` (the
 main entry's heating type) and `source_emitter` (the additional entry's heating type, read again
 at start, or `custom`). For a custom response, it holds `source_lag_min` and `source_tau_min`. A
+zone with its own recovery after a setback holds `recovery` (`fast` or `economy`); without it, the
+zone follows the shared setting `smart_pi_zone_recovery` of the main source's regulator settings. A
 zone saved by an earlier version may also hold `lead_lag_min` and `lead_tau_min`, which nothing
 uses.
 
@@ -393,9 +398,11 @@ stateDiagram-v2
   colder all the time, it paused SmartPI's learning most of the time, and it still gave no correct
   `k`.
 - `k` is learned only when SmartPI itself could learn. This needs: learning enabled and not
-  paused; the zone heating or cooling; no power shedding, guard cut or calibration; SmartPI past
-  its learning phase; a reliable dead time; no neighbour window; and no door change within the
-  last `DOOR_SETTLING_S`.
+  paused; the zone heating or cooling; no power shedding or calibration; SmartPI past its learning
+  phase; a reliable dead time; no neighbour window; and no door change within the last
+  `DOOR_SETTLING_S`. A guard cut does not stop it: the zone then gets no heat, which is a known
+  power. Since SmartPI learns its slopes from the raw reading, guard cuts come often enough that
+  stopping for them kept an always-connected neighbour from ever being learned in the tests.
 
 ### 4.3 Measurement windows
 
@@ -560,8 +567,11 @@ sources working, by a joint fit of the zone (one fit of all the values together,
 fit gives the losses `b`, the main source's `a` and delay, the additional source's `a_f` and time
 scale, and the neighbours' `k`. SmartPI starts from that model and keeps it. The first design
 learned each source on its own, one after the other. It was dropped (section 5.8). With 0.1 degC
-sensors, SmartPI's own windows measure a slow cooling as about half as fast as it really is. Every
-value learned on top of SmartPI's model took on its errors.
+sensors, SmartPI's own windows then measured a slow cooling as about half as fast as it really is,
+because they read the filtered temperature. Every value learned on top of SmartPI's model took on
+its errors. SmartPI now computes its learning slopes on the raw reading
+([technical documentation, §3.3](technical_doc.md#33-robust-slope-estimation)), which removes most
+of that error; the joint fit stays, because it also separates the two sources and the neighbours.
 
 ```mermaid
 flowchart LR
@@ -841,9 +851,10 @@ flowchart LR
         dZ/dt = clamp((avg(D) − f(Z_applied)) / T_I, ±1 / max(SPLIT_MIN_FULL_RANGE_S, L_f + tau_f))
         T_I = max(SPLIT_MIN_TIME_S, SPLIT_SETTLE_FACTOR·(L_f + tau_f))·r
         T_avg = max(SPLIT_AVERAGE_MIN_S, SPLIT_AVERAGE_FRACTION·T_I)
-        Z = clamp(min(Z_loop + SPLIT_ERROR_GAIN·e / r, Z_brake), 0, 1)
+        Z = clamp(min(max(Z_loop + SPLIT_ERROR_GAIN·e / r, Z_setback), Z_brake), 0, 1)
 
-  Here `e` is the zone's error, `Z_brake` the brake's cap (see below), and `r = max(1, a_f/a)` from
+  Here `e` is the zone's error, `Z_setback` the fast recovery's floor (see **Recovery after a
+  setback** below; none otherwise), `Z_brake` the brake's cap (see below), and `r = max(1, a_f/a)` from
   the fit (1 before the fit; `r` follows the fit with a 20 % hysteresis). The loop does not move up
   while the zone is warm or the brake holds (`hold_up`). It does not move down while the zone is
   cold (`hold_down`).
@@ -861,28 +872,59 @@ flowchart LR
 - **Calibration.** While SmartPI calibrates the main source's dead times, it drives the main source
   to 100 % and 0 % on purpose. The additional source keeps its command, and the loop pauses.
 
-**Recovery.** After a night setback (a lower setpoint at night), the zone needs more than its
-steady load. The main source's feed-forward counts the additional source's known heat. As a result,
-when a floor at full power warms up, the main source hands over its share while the zone is still
-a degree or two cold. Only its proportional part then drives the rest of the recovery, and SmartPI
-keeps that part gentle (its integral is held after a setpoint change). Two independent SmartPI
-recover faster, because each one counts the whole load. So while the zone is colder than its
-setpoint by more than `SOURCE_BOOST_ERROR_C`, the main source's known inputs leave out the
-additional source's heat. This applies to the feed-forward, `T_ref` and the learning correction
-alike. The main source then works as if it were alone (`recovery_boost` in the diagnostics). The
-boost needs a published fit and the allocation mode; without them it is off. The boost ends early
-once the fitted model says that the zone will reach that band within the main source's fitted
-delay plus one of its cycles, at the present powers. The heat that the main source has already
-sent then brings the zone into the band instead of overshooting it. Without the early end, fast
-rooms overshot by up to 0.66 degC (section 5.8).
+**Recovery.** After a night setback (a lower setpoint at night), the zone needs more than its steady
+load. The main source's feed-forward counts the additional source's known heat. As a result, when a
+floor at full power warms up, the main source hands over its share while the zone is still a degree
+or two cold. Only its proportional part then drives the rest of the recovery, and SmartPI keeps that
+part gentle (its integral is held after a setpoint change). Two independent SmartPI recover faster,
+because each one counts the whole load. So while the zone recovers and is colder than its setpoint
+by more than `SOURCE_BOOST_ERROR_C`, the main source's known inputs leave out the additional
+source's heat. This applies to the feed-forward, `T_ref` and the learning correction alike. The main
+source then works as if it were alone (`recovery_boost` in the diagnostics). A recovery starts when
+the zone is more than `SOURCE_BOOST_ARM_C` below its setpoint (after a setback or a cold start) and
+lasts until the zone reaches its setpoint. A dip of a steady zone is not a recovery: there the boost
+switched the main source's feed-forward between the share with and without the source's heat, and
+the fastest room swung around its setpoint (section 5.8). The boost needs a published fit and the
+allocation mode; without them it is off. The boost ends early once the fitted model says that the
+zone will reach that band within the main source's fitted delay plus `SOURCE_BOOST_END_CYCLES` (two)
+of its cycles, at the present powers: the cycle under way, and the next one, where the main source
+still answers the error that is left. The heat that the main source has already sent then brings the
+zone into the band instead of overshooting it. Without the early end, fast rooms overshot by up to
+0.66 degC; with one cycle instead of two, a fast room whose floor was kept warm by the fast recovery
+overshot by 0.57 degC against 0.45 with two independent SmartPI (section 5.8).
 
 ```mermaid
 stateDiagram-v2
     state "the main source counts the additional source's heat" as Counted
     state "recovery: the main source works as if alone" as Boost
-    Counted --> Boost: fit published, allocation mode, zone colder than the setpoint by more than SOURCE_BOOST_ERROR_C, and not predicted to reach the band within the main source's delay plus a cycle
-    Boost --> Counted: predicted to reach the band within the main source's delay plus a cycle, within the band, or no fit or allocation
+    Counted --> Boost: fit published, allocation mode, a recovery (armed SOURCE_BOOST_ARM_C below the setpoint, until the setpoint is reached), zone colder than the setpoint by more than SOURCE_BOOST_ERROR_C, and not predicted to reach the band within the main source's delay plus two cycles
+    Boost --> Counted: predicted to reach the band within the main source's delay plus two cycles, within the band, or no fit or allocation
 ```
+
+**Recovery after a setback.** During a night setback, two independent SmartPI let the zone drop
+below the lower setpoint and keep the floor warm. The zone with two sources holds the lower setpoint
+closely, so the slow floor cools down, and in the morning the zone waits for it. The zone's
+**recovery after a setback** setting chooses what happens:
+
+- *Fast* (the default): during a setback, the additional source carries at least the zone's whole
+  load at the lower setpoint, from the zone's fit:
+
+        Z_setback = clamp(sign · (b·(T_sp − T_ext) + Σ k_j·(T_sp − T_j)) / a_f, 0, 1)
+
+  `sign` is −1 in cooling. The brake still caps the command, so the zone is not driven above its
+  setback. The floor stays warm and the zone is back at its setpoint sooner, with about 1–2 % more
+  energy (section 5.8).
+- *Economical*: the allocation loop alone, as before. The setback is the deepest, the energy the
+  lowest, and the zone takes longer to come back.
+
+A setback is a setpoint at least `SOURCE_SETBACK_MIN_C` below the reference, in heating (above it,
+in cooling). The reference is the highest setpoint (the lowest, in cooling) held within the last
+`SOURCE_SETBACK_MEMORY_S`. A higher setpoint, a change between heating and cooling, or a setback
+held for longer than that memory starts a new reference. The reference keeps its age across a
+restart. The fast recovery needs a published fit and the outdoor temperature. A setpoint lowered by
+a neighbour's open window (section 4.5) counts as a setback too. The setting is shared: it is set
+in the "SmartPI defaults" entry (or in a thermostat's own regulator settings), and each zone may
+override it in its form.
 
 **Predictive brake.** A floor reacts hours late: the heat already on its way keeps coming after the
 zone has reached its setpoint. The brake limits the command to what the fitted model says the zone
@@ -976,6 +1018,10 @@ sequenceDiagram
   the zone stayed within 19.4 to 20.6 degC. A main source removed from Home Assistant (or reloaded)
   detaches the link at once. The additional source then regulates on its own right away, with an
   information message in the log, until it is attached again.
+- **Back to its own regulation.** While it applies the main source's command, the additional
+  source's own SmartPI regulates nothing. When it leaves that role (the main source is silent or
+  detached, or the zone is removed), its time tracking starts again: its first own calculation
+  integrates nothing for the time spent in the role.
 - **Water.** The main source's command is a power at the reference water. The additional source
   reads its own water data at each control call and gives its emitter `power / factor` (at most 1),
   as its own SmartPI would. It publishes its **power cap**: the most power that a full command gives
@@ -1010,33 +1056,42 @@ and the outdoor temperature is 3 degC (mild) or −8 degC (cold), with a daily s
 Day 1 starts 1 degC below the setpoint. The steady error is
 the mean over days 3–4. Then come three nights with the setpoint lowered to 17 degC (for 6, 8 and 10 h).
 
-**Twelve rooms** (`b` 0.0005 to 0.002 /min, `a` 0.015 to 0.06 degC/min):
+**Twelve rooms** (`b` 0.0005 to 0.002 /min, `a` 0.015 to 0.06 degC/min). The zone runs with the
+fast recovery after a setback (the default, section 5.6); the economical column is the same zone
+with the allocation loop alone:
 
-| Measure | Zone with two sources | Two independent SmartPI |
-|---|---|---|
-| Steady error, mean of the 12 rooms | 0.030 degC | 0.065 degC |
-| Steady error, range | 0.018–0.052 degC | 0.032–0.113 degC |
-| Overshoot after the night, worst room / mean | 0.30 / 0.13 degC | 0.53 / 0.40 degC |
-| Time to reach 0.2 degC below the setpoint after the night, mean | 2.94 h | 2.86 h |
-| Same, slowest room (`b` 0.0005, `a` 0.015, cold) | 4.8 h | 4.1 h |
-| Day 1 error, mean | 0.43 degC | 0.33 degC |
-| Fit published | after 19.5 h in every room | — |
-| Fitted `a`, `b`, `a_f` against the truth | 0.99–1.03, one `a_f` 1.10 | SmartPI's own, one thermostat: `a` 0.55–1.34, `b` 0.53–1.16 |
-| Main source's delay | 10 min, the truth, in every room | — |
+| Measure | Zone, fast recovery | Zone, economical | Two independent SmartPI |
+|---|---|---|---|
+| Steady error, mean of the 12 rooms | 0.029 degC | 0.029 degC | 0.099 degC |
+| Steady error, range | 0.018–0.052 degC | 0.018–0.052 degC | 0.053–0.253 degC |
+| Overshoot after the night, worst room / mean | 0.35 / 0.15 degC | 0.27 / 0.11 degC | 0.84 / 0.42 degC |
+| Time to reach 0.2 degC below the setpoint after the night, mean | 1.91 h | 2.97 h | 2.53 h |
+| Same, slowest room (`b` 0.001, `a` 0.02, cold) | 4.2 h | 6.1 h | 4.7 h |
+| Day 1 error, mean | 0.43 degC | 0.43 degC | 0.40 degC |
+| Fit published | after 19.5 h in every room | after 19.5 h in every room | — |
+| Fitted `a`, `b`, `a_f` against the truth | 0.99–1.06 | — | — |
+| Main source's delay | 10 min, the truth, in every room | — | — |
 
-**Installations** (room `b` 0.001, `a` 0.03, mild):
+**Installations** (room `b` 0.001, `a` 0.03, mild; fast recovery):
 
 | Case | Zone | Independent | Fit |
 |---|---|---|---|
-| floor behind a valve | 0.020 degC | 0.050 degC | 1.03/1.02/1.03 |
-| slab warming through its depth (two lags in series) | 0.035 degC | 0.056 degC | `a` 0.95, `b` 1.06, `a_f` 1.18 |
-| water on heating curves, water data from entities (recovery 6.7 h against 5.9 h) | 0.053 degC | 0.094 degC | 0.99/0.97/0.94 |
-| two zones, door open 6–23 h | 0.034 / 0.029 degC | 0.072 / 0.055 degC | `k` 0.89 / 0.94 |
-| two zones, always open | 0.021 / 0.018 degC | 0.055 / 0.042 degC | `k` 1.04 / 0.96 |
+| floor behind a valve | 0.020 degC | 0.089 degC | 1.01/1.01/1.01 |
+| slab warming through its depth (two lags in series) | 0.035 degC | 0.092 degC | `a` 0.97, `b` 1.10, `a_f` 1.20 |
+| water on heating curves, water data from entities (recovery 3.7 h; economical 7.2 h; independent 6.0 h) | 0.053 degC | 0.128 degC | 0.98/0.96/0.93 |
+| two zones, door open 6–23 h | 0.034 / 0.029 degC | 0.124 / 0.066 degC | `k` 0.89 / 0.94 |
+| two zones, always open | 0.024 / 0.019 degC | 0.089 / 0.092 degC | `k` 0.97 / 0.95 |
+
+**Heat used** over the three nights and days, in the 12 rooms and the three installations above
+(the room's heat balance, both sources, the boiler's efficiency taken as constant): against two
+independent SmartPI, −0.7 to +2.0 % with the fast recovery and −1.3 to +0.4 % with the economical
+one. The fast recovery uses up to 2.7 % more heat than the economical one: the night is 0.2 to
+0.6 degC warmer on average, the setback shallower.
 
 Scenarios of `tests/test_smartpi_sim_second_source.py`: with a second radiator as the additional
 source (Z4), 0.037 degC against 0.053; cooling with two sources, 0.024 degC; the curves of
-`source_first` and `together` are reached.
+`source_first` and `together` are reached; after an 8 h night at 17 degC, the fast recovery
+reaches 19.8 degC in 0.85 h, the economical one in 2.2 h.
 
 **Decisions taken on these results:**
 
@@ -1058,6 +1113,35 @@ source (Z4), 0.037 degC against 0.053; cooling with two sources, 0.024 degC; the
     ends early;
   - a smooth fade between 0.5 and 0.1 degC instead of a threshold: no faster, and a zone on water
     settled 0.15 degC low.
+- **Fast recovery after a setback as the default** (section 5.6). The zone with the allocation loop
+  alone held the night's setpoint closely, with the floor at 25–60 %. Two independent SmartPI let
+  the zone drop 0.3–0.6 degC below it and then caught up with both sources, so their floor was warm
+  in the morning. Variants tried, out of 15 cases where the zone had to be back no later than with
+  two independent SmartPI and overshoot less:
+  - the floor carrying at least the night's whole load, capped by the brake (kept): 14;
+  - the same only once the zone has cooled to the night's setpoint, above the brake: 8, because
+    it loses the floor's charge while the zone cools;
+  - both together: 10 of the 12 rooms;
+  - half of the night's load: 10, with 0.0–0.6 h missing in 5 cases.
+
+  The economical recovery stays available for those who prefer the deepest setback. Run again
+  with the control call at 170 and 340 s into its cycle, the fastest room (`b` 0.002, `a` 0.06,
+  mild) overshot by 0.53–0.57 degC against 0.45 with two independent SmartPI: the warm floor made
+  the zone rise faster, and the main source's answer in the cycle after the boost carried it over.
+  The boost now ends two cycles ahead instead of one. Over the three phases, the overshoot is then
+  below two independent SmartPI's in every case; the mornings are 0.1–0.3 h longer in a few rooms,
+  still shorter than with two independent SmartPI except in the room with `b` 0.002 and `a` 0.04 in cold
+  weather (see the limits below) and in the fastest room in cold weather.
+- **A recovery, not every dip, starts the boost** (section 5.6). In the fastest room in cold weather
+  with the control call at 170 or 340 s, the zone kept swinging around its setpoint (steady error
+  0.17–0.20 degC; the same on the code before the fast recovery): each dip of 0.2–0.3 degC started
+  a boost, which switched the main source's feed-forward from about 0.4 to 1.0. That jump also
+  drained its integral, through the anti-windup that compares a finished cycle with the model's
+  latest output. With the boost started only from `SOURCE_BOOST_ARM_C` below the setpoint and
+  held until the setpoint is reached, the steady error there is 0.05–0.06 degC; over 12 rooms × 3
+  phases every case meets the criteria. Measuring the anti-windup against the model's output when
+  the cycle started also helped there, but slowed another room by 0.17 h; the author's anti-windup
+  is kept as it is.
 - **What did not work, and why the design is what it is:**
   - *Learning the additional source on top of SmartPI's model* (the first design): `a_f` came out
     0.61–1.64 times the truth with 0.1 degC sensors, or was never published.
@@ -1090,13 +1174,15 @@ source (Z4), 0.037 degC against 0.053; cooling with two sources, 0.024 degC; the
 
 **Limits:**
 
-- **Morning recovery after a night setback** is on average as fast as with two independent SmartPI.
-  It is faster in 4 of 12 rooms and up to 0.9 h slower in the others: 4.8 h against 4.1 h in the
-  slowest room, 6.0 h against 5.1 h in another slow room in cold weather, and 6.7 h against 5.9 h
-  with water. The remaining gap comes from the night: the zone's floor stays almost idle until the
-  setpoint rises (its heat is 0.11 in the morning, against 0.36 with two independent SmartPI). Only
-  an early start before a known schedule would close this gap.
-- **Day 1** is worse than with two independent SmartPI (0.43 against 0.33 degC): the learning blocks
+- **Morning recovery after a night setback.** With the fast recovery, the zone is back at its
+  setpoint no later than with two independent SmartPI in 14 of 15 cases (the fastest room in cold
+  weather within 8 min of them), and overshoots less in all
+  of them. In the room with `b` 0.002 and `a` 0.04 in cold weather it takes 3.6 h against 2.9 h:
+  the night's load there is above the floor's full power, so the floor cannot be charged more. The
+  economical recovery is slower by design: 2.97 h against 2.53 h on average, 6.1 h against 4.7 h in
+  the slowest room, and 7.2 h against 6.0 h with water. Its floor stays almost idle through the
+  night.
+- **Day 1** is worse than with two independent SmartPI (0.43 against 0.40 degC): the learning blocks
   make the zone swing until the fit is published.
 - **A slab warming through its depth** does not match the shape of any candidate. Its fit has errors
   of up to 18 % (`a_f`), but regulation is still better than with two independent SmartPI.
@@ -1213,6 +1299,7 @@ In the main source's state, the zone's source item keeps:
 | `response` | the candidate time scale in use (`lag_s`, `tau_s`) |
 | `allocation`, `x_f` | the allocation loop's command and the source's heat |
 | `learn_elapsed_s` | the learning clock of each HVAC mode (`heat`, `cool`; section 5.5) |
+| `setback_ref` | the setback's reference (section 5.6): HVAC mode, setpoint (negative in cooling) and age in seconds |
 | `k_history`, `cool` | the estimate of the source's heat made in the neighbours' own windows; it is used only to keep that heat out of their `k` |
 
 After a restart, the zone continues from where it was. A fit published before the restart is fully in
@@ -1257,6 +1344,7 @@ With a second source, the block also has `second_source`:
 | `command`, `x_f` | the command given and the source's heat now (0..1) |
 | `power_cap` | the most power a full command gives now (its water factor, at least `WATER_NO_HEAT`; 1 without water data or while the source is not observed) |
 | `recovery_boost` | the zone recovers: the main source's known inputs leave the source's heat out (section 5.6) |
+| `recovery`, `setback` | the zone's recovery after a setback (`fast` or `economy`) and whether a setback runs now (section 5.6) |
 | `a_f`, `a_f_reliable` | the fitted effect for the current HVAC mode |
 | `lead_emitter`, `source_emitter`, `lag_min`, `tau_min` | the emitters and the time scale in use |
 | `lead_demand_avg` | the main source's average steady demand followed by the loop |
@@ -1332,4 +1420,8 @@ simulator itself, and the scenarios N1–N7 and Z1–Z7 with their criteria. The
 | `SPLIT_PREDICTED_SHARE` | 1 | share of the predicted error the source may correct |
 | `SOURCE_BRAKE_STEPS` | 8 | halvings that find the brake's cap |
 | `SOURCE_BOOST_ERROR_C` | 0.2 degC | a zone colder than this recovers with the main source working as if alone |
+| `SOURCE_BOOST_ARM_C` | 0.5 degC | a recovery starts this far below the setpoint and lasts until the zone reaches it; only then may the boost start |
+| `SOURCE_BOOST_END_CYCLES` | 2 | the boost ends when the zone is predicted in the band within the main source's delay plus this many of its cycles |
+| `SOURCE_SETBACK_MIN_C` | 0.5 degC | a setpoint this far below the reference is a setback (section 5.6) |
+| `SOURCE_SETBACK_MEMORY_S` | 24 h | how long the reference of a setback is kept |
 | `WATER_NO_HEAT` | 0.05 | lowest power cap of a source on water ([Water and boiler inputs, §10](water_input.md#10-constants-limits-and-open-points)) |

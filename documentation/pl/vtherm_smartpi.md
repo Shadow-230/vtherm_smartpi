@@ -84,7 +84,7 @@ Po ponownym uruchomieniu potrzebne są dwa kroki: dodanie integracji SmartPI w H
 
 Wejdź w **Ustawienia → Integracje → Dodaj integrację** (Settings → Integrations → Add integration) i wyszukaj *SmartPI*.
 
-Przy pierwszej instalacji SmartPI sam tworzy wpis „SmartPI defaults” (wartości domyślne). Są w nim ustawienia wspólne dla termostatów (oznaczone „wspólne” w [tabeli konfiguracji](#konfiguracja)) i sygnały kotła. Możesz je później zmienić w **Ustawienia → Integracje → SmartPI → Konfiguruj** (Settings → Integrations → SmartPI → Configure).
+Przy pierwszej instalacji SmartPI sam tworzy wpis „SmartPI defaults” (wartości domyślne). Są w nim ustawienia wspólne dla termostatów (oznaczone „wspólne” w [tabeli konfiguracji](#konfiguracja)) i sygnały kotła. Możesz je później zmienić w **Ustawienia → Integracje → SmartPI → Konfiguruj** (Settings → Integrations → SmartPI → Configure). Jeśli usuniesz ten wpis, ponowne dodanie integracji SmartPI tworzy go znowu z wartościami początkowymi, także gdy termostaty mają własne wpisy; termostaty korzystające z wartości domyślnych zostają przeładowane.
 
 ### Wybór SmartPI w Versatile Thermostat
 
@@ -313,6 +313,7 @@ Kolumna „Gdzie się ustawia” mówi, do czego należy każde ustawienie. **Ws
 | **Użyj filtra nastawy** (Use setpoint filter) | Włącza kształtowanie nastawy dla części proporcjonalnej i kontrolę „lądowania” przy grzaniu blisko celu. | wspólne | `enabled` (włączone) |
 | **Użyj FF3** (Use FF3) | Włącza korektę przewidującą na krótki czas naprzód, blisko nastawy, gdy temperatura wraca do normy po zakłóceniu. | wspólne | `enabled` (włączone) |
 | **Zezwól na osłabione P przy krawędzi strefy nieczułości** (Allow damped P near deadband edge) | W strefie nieczułości zostawia słabsze działanie części proporcjonalnej blisko jej krawędzi. Gdy wyłączone, część proporcjonalna nie działa w całej strefie nieczułości. | wspólne | `disabled` (wyłączone) |
+| **Dojście po obniżeniu** (Recovery after a setback) | Strefa z dwoma źródłami ciepła: jak wraca do nastawy po niższej nastawie. Szybkie (Fast): w czasie obniżenia wolne źródło pozostaje ciepłe, więc strefa wraca szybciej, przy około 1–2 % więcej energii. Oszczędne (Economical): najgłębsze obniżenie i najmniej energii; strefa wraca dłużej. Każda strefa może je zmienić ([Zależności stref, §5.6](zone_dependencies.md#56-pętla-przydziału-i-hamowanie-z-wyprzedzeniem)). | wspólne | `Fast` (szybkie) |
 | **Zapisuj pełną diagnostykę (debug)** (Record full diagnostics (debug)) | Zapisuje pełne bieżące dane diagnostyczne do późniejszej analizy historii. | wspólne | `disabled` (wyłączone) |
 
 Minimalne czasy załączenia i wyłączenia należą do SmartPI. Versatile Thermostat ma czasy o tych samych nazwach w swoich ustawieniach TPI; dla termostatu na SmartPI nie są one używane.

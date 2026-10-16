@@ -27,6 +27,7 @@ from .const import (
     CONF_PROP_FUNCTION,
     CONF_SMART_PI_ALLOW_PWM_CYCLE_FORCE,
     CONF_SMART_PI_DEPENDENCIES,
+    CONF_SMART_PI_ZONE_RECOVERY,
     CONF_SMART_PI_ENABLE_VALVE_LINEARIZATION,
     CONF_SMART_PI_HEATING_TYPE,
     CONF_SMART_PI_SETTINGS_TO_MOVE,
@@ -329,7 +330,8 @@ def _settings_to_move(options: dict[str, Any]) -> dict[str, Any]:
 
 
 async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
-    """Minor version 1 to 2: the settings sorted into shared and "thermostat only".
+    """Minor version 1 to 2: the settings sorted into shared and "thermostat only"; 2 to 3: the
+    shared setting of a zone's recovery after a setback.
 
     A thermostat's entry keeps every value (a full copy) and does not use the defaults. The
     defaults entry gets every shared setting and loses the "thermostat only" ones; those it
@@ -355,6 +357,14 @@ async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 entry, options={**options, CONF_SMART_PI_USE_DEFAULTS: False}, minor_version=2
             )
         _LOGGER.info("SmartPI entry %s migrated to version 1.2", entry.title)
+    if entry.minor_version < 3:
+        # The new shared setting: in the defaults entry, and in a thermostat's entry that
+        # holds its own values, the value the form starts from.
+        options = entry_options(entry)
+        if is_defaults_entry(entry) or not uses_defaults(options):
+            options = {CONF_SMART_PI_ZONE_RECOVERY: DEFAULT_OPTIONS[CONF_SMART_PI_ZONE_RECOVERY], **options}
+        hass.config_entries.async_update_entry(entry, options=options, minor_version=3)
+        _LOGGER.info("SmartPI entry %s migrated to version 1.3", entry.title)
     return True
 
 

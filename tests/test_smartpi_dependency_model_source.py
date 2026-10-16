@@ -629,11 +629,12 @@ def test_a_recovering_zone_leaves_the_source_s_heat_out_of_the_lead_s_feed_forwa
 
 
 def test_the_boost_ends_before_the_lead_s_heat_on_the_way_overshoots() -> None:
-    """Rising fast, the zone reaches the band within the lead's delay plus a cycle: no boost."""
-    # a 0.03 at full, x_f 0.6 * a_f 0.03, losses 0.001 * 13.5: about 0.035 degC/min, 0.7 degC in 20 min.
-    _, fast = _recovering(zone=19.5, lead_output=1.0)
+    """Rising fast, the zone reaches the band within the lead's delay plus two cycles: no boost."""
+    # a 0.03 at full, x_f 0.43 * a_f 0.03, losses 0.001 * 14: about 0.029 degC/min, 0.87 degC in
+    # 30 min (10 min delay, two 10 min cycles). From 1 degC below, one cycle (0.58 degC) would not do.
+    _, fast = _recovering(zone=19.0, lead_output=1.0)
     assert fast.source["recovery_boost"] is False
-    _, slow = _recovering(zone=19.5, lead_output=0.0, x_f=0.0)
+    _, slow = _recovering(zone=19.0, lead_output=0.0, x_f=0.0)
     assert slow.source["recovery_boost"] is True
 
 
@@ -646,3 +647,21 @@ def test_while_the_lead_recovers_the_brake_counts_it_handing_over_afterwards() -
     model._source.boost = False
     counted = model._predicted_error(ctx, fit, (), 1.0)
     assert boosted > counted
+
+
+def test_a_dip_of_a_steady_zone_gets_no_boost() -> None:
+    """0.3 degC below the setpoint without a recovery: the lead corrects it counting the source."""
+    _, dip = _recovering(zone=19.7, lead_output=0.0, x_f=0.0)
+    assert dip.source["recovery_boost"] is False
+
+
+def test_a_recovery_holds_the_boost_until_the_zone_reaches_its_setpoint() -> None:
+    """Armed SOURCE_BOOST_ARM_C below the setpoint, a recovery keeps boosting down to the band;
+    once the zone has reached its setpoint, a later dip of the same size gets none."""
+    model, cold = _recovering(zone=19.0, lead_output=0.0, x_f=0.0)
+    assert cold.source["recovery_boost"] is True
+    near = model.update(_readings(), _ctx(now_s=120.0, zone=19.7, demand=0.3, output=0.0))
+    assert near.source["recovery_boost"] is True
+    model.update(_readings(), _ctx(now_s=180.0, zone=20.0, demand=0.3, output=0.0))
+    dip = model.update(_readings(), _ctx(now_s=240.0, zone=19.7, demand=0.3, output=0.0))
+    assert dip.source["recovery_boost"] is False

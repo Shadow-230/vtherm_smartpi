@@ -140,6 +140,7 @@ async def test_a_zone_is_set_up_from_its_master_with_the_recommended_split(hass)
     )
     assert result["step_id"] == "zone_parameter"
     assert _default(result, "lead_band_percent") == 20.0
+    assert _default(result, "recovery") == "defaults"
     assert "margin" in result["description_placeholders"]["hint"]
 
     result = await _configure(hass, result, {"lead_band_percent": 25})
@@ -153,6 +154,7 @@ async def test_a_zone_is_set_up_from_its_master_with_the_recommended_split(hass)
     assert item["zone_master"] == master.id
     assert (item["split_rule"], item["lead_band_percent"]) == ("lead_band", 25)
     assert (item["lead_emitter"], item["source_emitter"]) == ("radiator", "floor_water")
+    assert "recovery" not in item
     assert entry.options[CONF_SMART_PI_RESET_TOKEN]
 
 
@@ -688,6 +690,30 @@ async def test_a_zone_saved_again_unchanged_is_no_unsaved_change(hass) -> None:
     result = await save(hass, result)
     assert result["type"] == FlowResultType.CREATE_ENTRY
     assert dict(floor_entry.options) == floor_options
+
+
+async def test_a_zone_s_own_recovery_is_stored_and_shown_again(hass) -> None:
+    """Its own choice is kept, also when the main source changes."""
+    radiator, floor, master, entry, _floor_entry = _zone(hass)
+
+    async def choose(main, rule, parameter, recovery=None, reset=None):
+        result = await _open_zone(hass, entry)
+        if result["type"] == FlowResultType.MENU:
+            result = await _configure(hass, result, {"next_step_id": "zone_master"})
+        result = await _configure(hass, result, {"master": master.entity_id})
+        result = await _configure(hass, result, {"main_source": main.entity_id, "split_rule": rule, "custom_response": False})
+        shown = _default(result, "recovery")
+        result = await _configure(hass, result, {**parameter, **({"recovery": recovery} if recovery else {})})
+        await save(hass, result, reset=reset)
+        await hass.async_block_till_done()
+        return shown
+
+    assert await choose(radiator, "lead_band", {"lead_band_percent": 20}, "economy", reset=False) == "defaults"
+    assert _source_item(entry)["recovery"] == "economy"
+    assert await choose(floor, "source_first", {"source_alone_percent": 50}, reset=False) == "economy"
+    # The zone now lives in the floor's entry.
+    items = [_source_item(e) for e in hass.config_entries.async_entries(DOMAIN)]
+    assert [item["recovery"] for item in items if item is not None] == ["economy"]
 
 
 def _neighbour_item(item_id: str, entity: er.RegistryEntry) -> dict:
