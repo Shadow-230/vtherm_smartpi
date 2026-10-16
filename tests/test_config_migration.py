@@ -1,4 +1,5 @@
-"""The entries' migration to minor version 2: the settings sorted into shared and "thermostat only".
+"""The entries' migration to minor version 2: the settings sorted into shared and "thermostat only";
+to minor version 3: the shared setting of a zone's recovery after a setback.
 
 A thermostat's entry keeps its full copy and does not use the defaults. The defaults entry gets
 every shared setting and loses the others; those it set are given, after Home Assistant has
@@ -33,8 +34,10 @@ from custom_components.vtherm_smartpi.const import (
     CONF_SMART_PI_MIN_VALVE,
     CONF_SMART_PI_SETTINGS_TO_MOVE,
     CONF_SMART_PI_USE_DEFAULTS,
+    CONF_SMART_PI_ZONE_RECOVERY,
     CONF_TARGET_VTHERM,
     DEFAULT_OPTIONS,
+    DEFAULT_SMART_PI_ZONE_RECOVERY,
     DOMAIN,
     ISSUE_THERMOSTAT_ENTRIES_CREATED,
     PROP_FUNCTION_SMART_PI,
@@ -87,7 +90,7 @@ def _own_entries(hass) -> dict[str, MockConfigEntry]:
 
 
 def test_the_major_version_stays_1_so_the_release_still_loads_the_entries() -> None:
-    assert (SmartPIConfigFlow.VERSION, SmartPIConfigFlow.MINOR_VERSION) == (1, 2)
+    assert (SmartPIConfigFlow.VERSION, SmartPIConfigFlow.MINOR_VERSION) == (1, 3)
 
 
 async def test_a_thermostat_s_entry_keeps_its_values_and_does_not_use_the_defaults(hass) -> None:
@@ -99,7 +102,7 @@ async def test_a_thermostat_s_entry_keeps_its_values_and_does_not_use_the_defaul
 
     assert await smartpi_init.async_migrate_entry(hass, entry)
 
-    assert entry.minor_version == 2
+    assert entry.minor_version == 3
     assert entry.version == 1
     assert dict(entry.options) == {**options, CONF_SMART_PI_USE_DEFAULTS: False}
 
@@ -124,7 +127,7 @@ async def test_the_defaults_keep_the_shared_settings_only(hass) -> None:
 
     assert await smartpi_init.async_migrate_entry(hass, entry)
 
-    assert entry.minor_version == 2
+    assert entry.minor_version == 3
     stored = dict(entry.options)
     assert set(SHARED_SETTINGS) <= set(stored)
     assert stored[CONF_SMART_PI_DEBUG] is True
@@ -183,7 +186,7 @@ async def test_after_the_start_each_thermostat_on_smartpi_without_an_entry_gets_
         unique_id=f"{DOMAIN}-vt-kitchen",
         data={CONF_TARGET_VTHERM: "vt-kitchen"},
         options={CONF_TARGET_VTHERM: "vt-kitchen"},
-        minor_version=2,
+        minor_version=3,
     )
     kept.add_to_hass(hass)
     defaults = _defaults(hass, {**DEV_DEFAULTS, CONF_MINIMAL_ACTIVATION_DELAY: 20})
@@ -248,12 +251,52 @@ async def test_the_defaults_entry_moves_its_settings_once_home_assistant_has_sta
 
 async def test_an_entry_already_migrated_is_left_as_it_is(hass) -> None:
     entry = MockConfigEntry(
-        domain=DOMAIN, unique_id=DOMAIN, data={}, options=dict(RELEASE_DEFAULTS), version=1, minor_version=2
+        domain=DOMAIN, unique_id=DOMAIN, data={}, options=dict(RELEASE_DEFAULTS), version=1, minor_version=3
     )
     entry.add_to_hass(hass)
 
     assert await smartpi_init.async_migrate_entry(hass, entry)
-    assert dict(entry.options) == RELEASE_DEFAULTS and entry.minor_version == 2
+    assert dict(entry.options) == RELEASE_DEFAULTS and entry.minor_version == 3
+
+
+def _minor_2(hass, unique_id: str, options: dict) -> MockConfigEntry:
+    data = {CONF_TARGET_VTHERM: options[CONF_TARGET_VTHERM]} if CONF_TARGET_VTHERM in options else {}
+    entry = MockConfigEntry(domain=DOMAIN, unique_id=unique_id, data=data, options=options, version=1, minor_version=2)
+    entry.add_to_hass(hass)
+    return entry
+
+
+async def test_version_3_adds_the_zone_recovery_to_the_defaults(hass) -> None:
+    options = {key: value for key, value in RELEASE_DEFAULTS.items() if key != CONF_SMART_PI_ZONE_RECOVERY}
+    entry = _minor_2(hass, DOMAIN, options)
+
+    assert await smartpi_init.async_migrate_entry(hass, entry)
+
+    assert entry.minor_version == 3
+    assert dict(entry.options) == {**options, CONF_SMART_PI_ZONE_RECOVERY: DEFAULT_SMART_PI_ZONE_RECOVERY}
+
+
+async def test_version_3_adds_the_zone_recovery_to_a_thermostat_with_its_own_values(hass) -> None:
+    """A value already stored is kept."""
+    own = {CONF_TARGET_VTHERM: "vt-a", CONF_SMART_PI_USE_DEFAULTS: False, CONF_SMART_PI_DEADBAND: 0.2}
+    kept = {CONF_TARGET_VTHERM: "vt-b", CONF_SMART_PI_USE_DEFAULTS: False, CONF_SMART_PI_ZONE_RECOVERY: "economy"}
+    entry, entry_kept = _minor_2(hass, f"{DOMAIN}-vt-a", own), _minor_2(hass, f"{DOMAIN}-vt-b", kept)
+
+    assert await smartpi_init.async_migrate_entry(hass, entry)
+    assert await smartpi_init.async_migrate_entry(hass, entry_kept)
+
+    assert dict(entry.options) == {**own, CONF_SMART_PI_ZONE_RECOVERY: DEFAULT_SMART_PI_ZONE_RECOVERY}
+    assert dict(entry_kept.options) == kept and entry_kept.minor_version == 3
+
+
+async def test_version_3_leaves_a_thermostat_on_the_defaults_without_the_setting(hass) -> None:
+    """It takes the shared settings from the defaults entry."""
+    options = {CONF_TARGET_VTHERM: "vt-a", CONF_SMART_PI_USE_DEFAULTS: True}
+    entry = _minor_2(hass, f"{DOMAIN}-vt-a", options)
+
+    assert await smartpi_init.async_migrate_entry(hass, entry)
+
+    assert dict(entry.options) == options and entry.minor_version == 3
 
 
 async def test_a_thermostat_whose_entry_is_not_created_is_not_named_in_the_notice(hass) -> None:

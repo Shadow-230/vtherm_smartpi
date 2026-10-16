@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from unittest.mock import AsyncMock, patch
+
 from homeassistant.helpers import entity_registry as er
 
 from pytest_homeassistant_custom_component.common import MockConfigEntry
@@ -14,6 +16,7 @@ from custom_components.vtherm_smartpi.const import (
     SHARED_SETTINGS,
 )
 from custom_components.vtherm_smartpi.handler import SmartPIHandler
+from custom_components.vtherm_smartpi.hvac_mode import VThermHvacMode_OFF
 from custom_components.vtherm_smartpi.settings import own_entry
 
 from fakes.fake_thermostat_runtime import FakeThermostatRuntime
@@ -418,6 +421,20 @@ async def test_a_second_source_turned_off_turns_its_device_off(hass) -> None:
     assert thermostat._on_time_sec == 0
 
 
+async def test_a_second_source_turned_off_in_its_off_phase_cancels_its_cycle(hass) -> None:
+    """Off between two pulses: the cycle still running is cancelled, so it turns nothing on later."""
+    handler, thermostat = _handler(hass, [])
+    thermostat.vtherm_hvac_mode = "off"
+    thermostat.is_device_active = False
+    thermostat.cycle_scheduler.is_cycle_running = True
+
+    await handler._control_as_source(False)
+
+    thermostat.cycle_scheduler.cancel_cycle.assert_awaited_once()
+    thermostat.async_underlying_entity_turn_off.assert_not_awaited()
+    assert thermostat._on_time_sec == 0
+
+
 async def test_a_source_that_cannot_be_resolved_has_no_heating_type(hass, monkeypatch) -> None:
     handler, _ = _handler(hass, [])
 
@@ -437,3 +454,54 @@ async def test_a_zone_whose_master_was_deleted_is_reported(hass, caplog) -> None
     _handler(hass, [{**_source_item(floor.id), "zone_master": "0123456789abcdef"}])
 
     assert "The zone's master thermostat cannot be found" in caplog.text
+
+
+async def test_the_zone_s_recovery_follows_the_regulator_settings_unless_it_has_its_own(hass) -> None:
+    """The thermostat's shared settings (here its own) give the recovery; the zone's own wins."""
+    from custom_components.vtherm_smartpi.const import CONF_SMART_PI_ZONE_RECOVERY
+
+    registry = er.async_get(hass)
+    floor = registry.async_get_or_create("climate", VT_DOMAIN, "vt-floor", suggested_object_id="floor")
+    thermostat = FakeThermostatRuntime()
+    thermostat.hass = hass
+    _set_options(hass, thermostat, {CONF_SMART_PI_DEPENDENCIES: [_source_item(floor.id)], CONF_SMART_PI_ZONE_RECOVERY: "economy"})
+    handler = SmartPIHandler(thermostat)
+    handler.init_algorithm()
+    assert handler._source_settings.recovery == "economy"
+
+    own = {**_source_item(floor.id), "recovery": "fast"}
+    _set_options(hass, thermostat, {CONF_SMART_PI_DEPENDENCIES: [own], CONF_SMART_PI_ZONE_RECOVERY: "economy"})
+    handler.init_algorithm()
+    assert handler._source_settings.recovery == "fast"
+
+
+async def test_a_main_source_switched_off_in_the_off_phase_still_tells_its_additional_source(
+    hass, monkeypatch
+) -> None:
+    """Switched off between two pulses, the main source cancels its cycle and still sends its 0."""
+    registry = er.async_get(hass)
+    floor = registry.async_get_or_create("climate", VT_DOMAIN, "vt-floor", suggested_object_id="floor")
+    handler, thermostat = _handler(hass, [_source_item(floor.id)])
+    link = handler._source_link()
+    thermostat.vtherm_hvac_mode = "heat"
+    monkeypatch.setattr(type(thermostat.prop_algorithm), "source_command", property(lambda _: 0.4))
+    handler._publish_source_command()
+    monkeypatch.undo()
+
+    thermostat.vtherm_hvac_mode = VThermHvacMode_OFF
+    thermostat.cycle_min = 5
+    thermostat.is_device_active = False
+    thermostat.cycle_scheduler.is_cycle_running = True
+    with (
+        patch.object(handler, "_async_save", new_callable=AsyncMock),
+        patch("custom_components.vtherm_smartpi.handler.async_dispatcher_send"),
+    ):
+        await handler.control_heating(force=False)
+
+    thermostat.cycle_scheduler.cancel_cycle.assert_awaited_once()
+    thermostat.async_underlying_entity_turn_off.assert_not_awaited()
+    now_s = __import__("time").monotonic()
+    # The source's last command is the main source's 0, for the off mode: it applies 0 in any mode.
+    assert link.command_for("vt-floor", now_s, 900.0, str(VThermHvacMode_OFF)) == 0.0
+    assert link.command_for("vt-floor", now_s, 900.0, "heat") == 0.0
+    assert not link.lead_silent("vt-floor", now_s, 900.0)

@@ -47,6 +47,9 @@ KEY_SOURCE_LAG_MIN = "source_lag_min"
 KEY_SOURCE_TAU_MIN = "source_tau_min"
 # The zone's master thermostat (registry id), whose devices are the two sources.
 KEY_ZONE_MASTER = "zone_master"
+# How the zone comes back after a setback: fast or economy. Without it the zone follows
+# the shared setting of the regulator settings (smart_pi_zone_recovery).
+KEY_ZONE_RECOVERY = "recovery"
 
 ERROR_MISSING_ID = "missing_id"
 ERROR_DUPLICATE_ID = "duplicate_id"

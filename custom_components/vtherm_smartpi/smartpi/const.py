@@ -601,8 +601,27 @@ SPLIT_PREDICTED_SHARE = 1.0
 SOURCE_BRAKE_STEPS = 8
 # A zone colder than its setpoint by more than this recovers: the lead's
 # feed-forward leaves the source's heat out, until the zone is predicted to reach
-# the band within the lead's delay plus one cycle.
+# the band within the lead's delay plus SOURCE_BOOST_END_CYCLES of its cycles: the
+# cycle under way, and the one its own answer to the remaining error still gives.
 SOURCE_BOOST_ERROR_C = 0.2
+# The boost starts only from this far below the setpoint: a recovery after a setback or
+# a cold start, not a dip of a steady zone, where switching the lead's feed-forward
+# between the shares with and without the source made a fast room swing.
+SOURCE_BOOST_ARM_C = 0.5
+SOURCE_BOOST_END_CYCLES = 2
+# How a zone comes back after a setback (a setpoint lower than the day's, a night
+# setback for example). Fast: during the setback the additional source carries at
+# least the zone's load at the lower setpoint, so a slow emitter is warm when the
+# setpoint rises again. Economical: the deepest setback, as before. "defaults" is the
+# zone form's choice to follow the shared setting; it is not stored.
+ZONE_RECOVERY_FAST = "fast"
+ZONE_RECOVERY_ECONOMY = "economy"
+ZONE_RECOVERY_DEFAULTS = "defaults"
+ZONE_RECOVERY_MODES = (ZONE_RECOVERY_FAST, ZONE_RECOVERY_ECONOMY)
+# A setback: the setpoint lower (higher in cooling) than the highest (lowest) one of
+# the last SOURCE_SETBACK_MEMORY_S by at least SOURCE_SETBACK_MIN_C.
+SOURCE_SETBACK_MIN_C = 0.5
+SOURCE_SETBACK_MEMORY_S = 24 * 3600.0
 # The allocation loop follows the lead's steady demand (feed-forward plus
 # integral), not its answer to the current error: a setpoint change does not
 # move the source. When the lead is stuck at a limit, the loop gets the end of

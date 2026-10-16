@@ -36,6 +36,7 @@ from .const import (
     CONF_SMART_PI_RESET_TOKEN,
     CONF_SMART_PI_USE_FF3,
     CONF_SMART_PI_USE_SETPOINT_FILTER,
+    CONF_SMART_PI_ZONE_RECOVERY,
     CONF_TARGET_VTHERM,
     CONF_SMART_PI_USE_DEFAULTS,
     DATA_SAVE_GROUP,
@@ -73,7 +74,12 @@ from .heating_inputs import (
 )
 from .settings import defaults_entry, entry_options, heating_type_of, uses_defaults
 from .smartpi.boiler_call import SOURCE_VTHERM
-from .smartpi.const import HEATING_TYPES, WATER_EMITTERS
+from .smartpi.const import (
+    HEATING_TYPES,
+    WATER_EMITTERS,
+    ZONE_RECOVERY_DEFAULTS,
+    ZONE_RECOVERY_MODES,
+)
 from .smartpi.dependencies import (
     KEY_LEAD_BAND,
     KEY_LEAD_EMITTER,
@@ -84,6 +90,7 @@ from .smartpi.dependencies import (
     KEY_SPLIT_RATIO,
     KEY_SPLIT_RULE,
     KEY_ZONE_MASTER,
+    KEY_ZONE_RECOVERY,
     KIND_NEIGHBOUR,
     KIND_SOURCE,
     MODE_ALWAYS,
@@ -273,6 +280,13 @@ def build_shared_settings_schema(defaults: dict[str, Any]) -> vol.Schema:
             vol.Optional(CONF_SMART_PI_USE_SETPOINT_FILTER, default=default(CONF_SMART_PI_USE_SETPOINT_FILTER)): bool,
             vol.Optional(CONF_SMART_PI_USE_FF3, default=default(CONF_SMART_PI_USE_FF3)): bool,
             vol.Optional(CONF_SMART_PI_DEADBAND_ALLOW_P, default=default(CONF_SMART_PI_DEADBAND_ALLOW_P)): bool,
+            vol.Optional(CONF_SMART_PI_ZONE_RECOVERY, default=default(CONF_SMART_PI_ZONE_RECOVERY)): selector.SelectSelector(
+                selector.SelectSelectorConfig(
+                    options=list(ZONE_RECOVERY_MODES),
+                    mode=selector.SelectSelectorMode.LIST,
+                    translation_key="zone_recovery",
+                )
+            ),
             vol.Optional(CONF_SMART_PI_DEBUG, default=default(CONF_SMART_PI_DEBUG)): bool,
         }
     )
@@ -1466,6 +1480,19 @@ class SmartPIFlowSections:
         )
         stored = current.extra.get(key) if same_pair else None
         schema: dict[Any, Any] = {vol.Required(key, default=pending.get(key, stored if stored is not None else default)): percent}
+        # The zone's own recovery, kept when its sources change; none follows the defaults.
+        stored_recovery = current.extra.get(KEY_ZONE_RECOVERY) if current is not None else None
+        if stored_recovery not in ZONE_RECOVERY_MODES:
+            stored_recovery = ZONE_RECOVERY_DEFAULTS
+        schema[vol.Required(KEY_ZONE_RECOVERY, default=pending.get(KEY_ZONE_RECOVERY, stored_recovery))] = (
+            selector.SelectSelector(
+                selector.SelectSelectorConfig(
+                    options=[ZONE_RECOVERY_DEFAULTS, *ZONE_RECOVERY_MODES],
+                    mode=selector.SelectSelectorMode.LIST,
+                    translation_key="zone_recovery_item",
+                )
+            )
+        )
         if pending.get(FIELD_CUSTOM_RESPONSE):
             minutes = selector.NumberSelector(
                 selector.NumberSelectorConfig(
@@ -1498,6 +1525,10 @@ class SmartPIFlowSections:
             KEY_SPLIT_RULE: rule,
             parameter: pending[parameter],
         }
+        # How the zone comes back after a setback: only its own choice is stored, without one
+        # the zone follows the regulator settings (SourceSettings.from_item).
+        if pending.get(KEY_ZONE_RECOVERY) in ZONE_RECOVERY_MODES:
+            extra[KEY_ZONE_RECOVERY] = pending[KEY_ZONE_RECOVERY]
         # The heating types of the thermostats' entries; the handler reads them again at
         # start. Only the additional source's response may be custom: it starts the
         # candidates of its time scale, while the main source's delay comes from the fit.
@@ -1946,7 +1977,8 @@ class SmartPIConfigFlow(SmartPIFlowSections, ConfigFlow, domain=DOMAIN):
 
     VERSION = 1
     # 2: the settings sorted into shared and "thermostat only" (__init__.async_migrate_entry).
-    MINOR_VERSION = 2
+    # 3: the shared setting of a zone's recovery after a setback.
+    MINOR_VERSION = 3
     _source_entry = False
     _title: str | None = None
 
