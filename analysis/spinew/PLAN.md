@@ -6,18 +6,47 @@ styku) i §16 (decyzje). Nazwy w kodzie, commitach i dokumentacji tylko ze słow
 
 Numery linii dotyczą `dev@34c1440`; szukaj po nazwie funkcji albo po cytowanym kodzie.
 
-Stan na: 2026-10-15.
+Stan na: 2026-10-16.
 
 ---
+
+## Stan prac (dla kolejnej sesji)
+
+**Gałąź integracyjna: `dev2`** (= `dev@34c1440`, w forku). Każdy etap na własnej gałęzi od `dev2`,
+**osobny PR na etap** do `dev2`. Na `dev`, `qas`, `master` nic nie wypychamy (decyzja D10).
+
+| Etap | Gałąź | Commity (od `dev2`) | Stan |
+|---|---|---|---|
+| A0 | – | – | zrobione: wzorzec `dev2` w `ANALIZA.md` §3 |
+| A1 | `feat/spinew-a1-raw-slopes` | `46a323b` (autor), `d39df98`, `013f292`, `74016f7` (D11) | kod, testy, dokumentacja gotowe; CI zielone; lokalnie pada tylko `test_rooms[base-slowheat-cold]` → naprawia Z1 |
+| A2 | `feat/spinew-a2-drift-counters` | `e0903e6` (autor), `b3e3e05` | gotowe, wszystko zielone |
+| A3 | `fix/spinew-a3-regulation-gaps` | `2d5ce1c` (port autora), `154230d`, `077e091` (D11, ta sama zmiana co w A1) | CI zielone; lokalnie pada tylko `test_rooms[fastcool-midheat-cold]` → naprawia Z1 |
+| A4 | `feat/spinew-a4-state-store` | `d04c21f` (autor), `fab5e37` (D9) | gotowe, wszystko zielone |
+| A5 | `fix/spinew-a5-off-cycle` | `e4a0a49`, `c750ac3` (autor), `823f2e4`, `5c11903` (D12) | gotowe, wszystko zielone |
+| Z1 | `feat/zone-recovery` (od A1) | jeszcze bez własnych commitów | plan zatwierdzony do D16 (niżej, „Etap Z1”); kod nie zaczęty |
+
+**Uwaga:** gałęzie etapów istnieją tylko lokalnie w kontenerze sesji z 2026-10-16, dopóki
+właściciel nie zgodzi się na push. Jeśli ich nie ma w forku, kolejna sesja odtwarza je według
+opisów etapów niżej (cherry-pick commitów autora + nasze zmiany opisane w `ANALIZA.md` §19).
+
+**Następne kroki:**
+1. Za „tak” właściciela: push gałęzi etapów A1–A5 i PR-y do `dev2` (każdy osobno). Przy
+   scalaniu kolejnych PR-ów spodziewane konflikty tylko w `CHANGELOG.md` (`[Unreleased]`) i w
+   `testing.md` §4.9 (EN/FR/PL; każda gałąź dodaje tę sekcję) – łączyć wpisy. Zmiana D11 jest w
+   A1 i A3 jako ten sam kod: przy drugim scaleniu zostaje jedna kopia i jeden wpis CHANGELOG.
+2. Etap Z1 (niżej), po decyzji D16; PR po scaleniu A1.
+3. Faza B, potem C (opisy niżej).
+
+Odtworzenie środowiska i pomiarów: `ANALIZA.md` §3, `tools/` (skrypty), `results/` (wyniki).
 
 ## 0. Zasady wykonania
 
 1. Przed kodem każdego etapu krótki plan (co, gdzie, testy, dokumentacja) do akceptacji
    właściciela. Rekomendacje i odstępstwa tylko po jego zgodzie.
-2. **Branch wybiera właściciel.** Domyślnie: gałąź robocza od aktualnego `dev`
-   (`git fetch origin` przed pracą), commity lokalne, PR do `dev`. Propozycja nazwy w raporcie.
-3. Push, PR i scalenie tylko za „tak” właściciela. `dev`, `qas`, `master` nie zmieniamy sami;
-   do `qas` tylko z `dev` na wniosek właściciela. Do `KipK/vtherm_smartpi` nic.
+2. **Branch wybiera właściciel.** Od 2026-10-16: gałąź robocza od aktualnego `dev2`
+   (`git fetch origin` przed pracą), commity lokalne, osobny PR na etap do `dev2`.
+3. Push, PR i scalenie tylko za „tak” właściciela. Na `dev`, `qas`, `master` nic nie wypychamy;
+   `qas` na razie nie dotykamy. Do `KipK/vtherm_smartpi` nic.
 4. Zmiany autora przenosimy pojedynczo: `git cherry-pick -x <sha>` tam, gdzie plan tak mówi,
    w pozostałych miejscach ręcznie. Bez merge całego `SPINew`.
 5. Autor commitów: `git config user.name "Shadow-230"` i
@@ -104,8 +133,10 @@ Stan na: 2026-10-15.
 **Kolejność:** A0 → A1–A5 → B1 → B2, B3 (B4 w dowolnym momencie) → C1 → C2. Każdy etap zaczyna
 krótki plan do akceptacji właściciela (§0.1); push i PR tylko za jego „tak” (§0.3).
 
-Etapy A są od siebie niezależne. Każdy etap to gałąź robocza od aktualnego `dev` (albo wskazana
-przez właściciela) i PR do `dev`. Commity `b3c8939` i `b00384a` przenosimy ręcznie (logika
+**Etap Z1** (dojście strefy po obniżeniu, nasza logika) po A1, przed B; opis niżej.
+
+Etapy A są od siebie niezależne. Każdy etap to gałąź robocza od aktualnego `dev2` i osobny PR
+do `dev2`. Commity `b3c8939` i `b00384a` przenosimy ręcznie (logika
 przepisana w B). Commity z fazy A nie są powtarzane w fazie C. Dokumentacja jest częścią każdego
 etapu (bez osobnego etapu dokumentacji).
 
@@ -123,7 +154,8 @@ SMARTPI_SIM_LOCAL=1 SMARTPI_QAS_LOCAL=1 PYTHONPATH=$S/vt:$PWD $S/venv/bin/python
 ```
 
 Zapisz liczby (passed, failed, skipped, lista failed) i pokrycie per plik. Każdy etap porównuj z
-nimi.
+nimi. **Zrobione 2026-10-16:** `dev2` 1322 passed + 75 skipped (CI), 1397 passed lokalnie, pokrycie
+93,16 % (`ANALIZA.md` §3, `results/phase-a/cov_dev2.json`).
 
 ---
 
@@ -305,6 +337,56 @@ Kryterium: termostat przełączony na OFF w fazie wyłączenia PWM nie przełąc
   (cykl anulowany, dodatkowe źródło dostaje sygnał i polecenie 0).
 
 **Dokumentacja A5:** CHANGELOG (oba błędy były zapisane w `PLAN_ROZWOJU.md` §6).
+
+---
+
+## Etap Z1 – dojście strefy po obniżeniu (nasza logika; decyzje D13–D16)
+
+Kontekst i pomiary: `ANALIZA.md` §20. Gałąź `feat/zone-recovery` od A1 (porównanie dotyczy kodu
+po A1), PR do `dev2` po scaleniu A1. Wariant V1: łatka próbna
+`results/zone-recovery/experiment-v1.patch` (do przepisania czysto, bez zmiennych `ZR_*`).
+
+**Ustawienie „Dojście po obniżeniu” (D14).**
+- Klucz wspólny we wpisie „SmartPI defaults” (propozycja nazwy: `smart_pi_zone_recovery`,
+  wartości `fast` (domyślnie), `economy`); dopisać do `SHARED_SETTINGS`.
+- Formularz strefy (krok parametrów strefy, także przy tworzeniu wpisu): pole z opcjami
+  `defaults` („Jak w SmartPI defaults”, domyślnie), `fast`, `economy`; zapis w pozycji strefy
+  (`source`) we wpisie głównego źródła. Pojedynczy termostat bez strefy: pole nieużywane i
+  niepokazywane.
+- Wartość efektywna: pozycja strefy, a przy `defaults` wpis „SmartPI defaults”.
+- Teksty (`en.json`, `fr.json`; PL w dokumentacji), z krótkim opisem każdej opcji:
+  - pole: „How the zone comes back to its setpoint after a lower one (a night setback, for
+    example).”
+  - Fast: „during a setback the slow source keeps warm, so the zone is back at its setpoint
+    sooner, with about 1–2 % more energy”;
+  - Economical: „the deepest setback and the least energy; the zone takes longer to come back to
+    its setpoint”.
+- Migracja wpisów do wersji 1.3 (`MINOR_VERSION` 3, `VERSION` 1): wpis „SmartPI defaults” dostaje
+  `fast`; 0.4.0 nadal wczytuje wpisy.
+
+**Działanie (`smartpi/dependency_model.py`, `_drive_source`).**
+- Obniżenie: nastawa niższa o ≥ 0,5 °C od najwyższej z ostatnich 24 h (HEAT; COOL lustrzanie:
+  wyższa od najniższej). Pamięć (wartość, czas) w stanie zależności, żeby przetrwała restart.
+  Stałe w `smartpi/const.py` (np. `SOURCE_SETBACK_MIN_C = 0.5`, `SOURCE_SETBACK_MEMORY_S = 86400`).
+- `fast`: w czasie obniżenia polecenie dodatkowego źródła co najmniej równe nocnemu obciążeniu z
+  dopasowania strefy `(b·(T_sp − T_ext) + Σk·(T_sp − T_j)) / a_f`, przycięte do 1, nadal
+  ograniczone hamulcem (`_predictive_command`). Bez dopasowania strefy – bez zmian.
+- `economy`: działanie jak dziś (bit w bit, test różnicowy).
+- Diagnostyka strefy: aktywny poziom i to, czy trwa obniżenie.
+
+**Testy Z1.**
+- Jednostkowe: rozpoznanie obniżenia (próg, 24 h, restart, COOL); polecenie w nocy przy `fast`
+  (z hamulcem, bez dopasowania); `economy` identyczne z dziś; odczyt ustawienia (defaults /
+  strefa); formularz strefy i wpisu „SmartPI defaults”; migracja 1.3.
+- `test_smartpi_sim_zone_set.py` (długie): przy `fast` dojście nie wolniejsze i przegrzanie
+  mniejsze niż dwa osobne SmartPI (`ANALIZA.md` §20); przy `economy` dłuższe dojście akceptowalne
+  (D15), sprawdzamy stałą nastawę i przegrzanie; „fastcool-midheat, mróz” wg D16. Kilka faz
+  wywołań (0, 170, 340 s) albo margines (§0a.7).
+- Krótki scenariusz w CI: jedna noc, `fast` szybsze od `economy`.
+
+**Dokumentacja Z1:** `zone_dependencies.md` (sterowanie dodatkowym źródłem, nowa podsekcja o
+obniżeniu, wyniki §20 jako tabela), `vtherm_smartpi.md` (tabela ustawień, opis pola),
+`testing.md`, CHANGELOG; EN/FR/PL.
 
 ---
 

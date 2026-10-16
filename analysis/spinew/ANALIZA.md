@@ -3,7 +3,7 @@
 Dokument roboczy dla każdej sesji, która podejmuje przeniesienie zmian autora do naszej wersji.
 Plan wykonania: [`PLAN.md`](PLAN.md). Ten plik opisuje stan, ustalenia, dowody i decyzje.
 
-Stan na: 2026-10-15 (po decyzjach właściciela i po pomiarze z §13).
+Stan na: 2026-10-16 (po fazie A: §19; po pomiarach dojścia strefy po obniżeniu: §20).
 
 ---
 
@@ -21,9 +21,9 @@ Zasady łączą dokumenty procesu właściciela (`CLAUDE.md` i `PLAN_ROZWOJU.md`
 3. **Rekomendacje i odstępstwa tylko po zgodzie właściciela** (2026-10-15). Odstępstwo od ustaleń
    zgłaszamy przed kodem i czekamy na „tak”.
 4. **Push, PR i scalenie tylko za „tak” właściciela; branch wybiera właściciel** (2026-10-15).
-   Domyślnie: gałąź robocza od aktualnego `dev`, potem PR do `dev`, chyba że właściciel wskaże
-   inaczej. `dev`, `qas` i `master` nie zmieniamy sami. Do `qas` tylko z `dev`, na wniosek
-   właściciela.
+   **Od 2026-10-16 gałęzią integracyjną tej pracy jest `dev2`** (kopia `dev@34c1440`): każda
+   gałąź robocza od `dev2`, **osobny PR na każdy etap** do `dev2`. Na `dev`, `qas` i `master` nie
+   wypychamy nic (`dev` zostaje na `34c1440` jako zapas). `qas` na razie nie dotykamy.
 5. Bez merge całego `SPINew` i bez próbnych merge do istniejących gałęzi. Testy i próby tylko na
    nowych gałęziach.
 6. **Dokumentacja we wszystkich językach** (2026-10-15): EN jest źródłem, FR i PL to tłumaczenia,
@@ -51,7 +51,9 @@ Zasady łączą dokumenty procesu właściciela (`CLAUDE.md` i `PLAN_ROZWOJU.md`
 | `SPINew` | `770c444` | Kopia `KipK/vtherm_smartpi@trajectoryv2` (13 commitów od `master`). |
 | `qas` | `9be2e2f` | Stabilny kod do testów (pełne scenariusze na GitHubie). |
 | `process-docs` | `823810f` | Osobna gałąź (bez wspólnej historii) z dokumentami procesu: `CLAUDE.md`, `PLAN_ROZWOJU.md`, `specs/`. |
-| `analysis/spinew-vs-dev` | od `34c1440` | Ta analiza, plan i skrypty pomiaru. |
+| `dev2` | `34c1440` | **Gałąź integracyjna tej pracy** (od 2026-10-16), kopia `dev`. PR-y etapów trafiają tutaj. |
+| `analysis/spinew-vs-dev` | od `34c1440` | Ta analiza, plan, skrypty pomiaru (`tools/`) i wyniki (`results/`). |
+| gałęzie etapów | od `dev2` | Stan w `PLAN.md` „Stan prac”. |
 | `measure/governor-water` | lokalna, niewypchnięta | `dev` + `c6f9f88`, `b2b0249`, `15fc13f` do pomiaru z §13. Odtworzenie: §13.6. |
 
 Porównania robimy trójstronnie: `master → SPINew` to zmiany autora, `master → dev` to nasze.
@@ -88,7 +90,10 @@ COVERAGE_FILE=$S/.coverage SMARTPI_SIM_LOCAL=1 SMARTPI_QAS_LOCAL=1 PYTHONPATH=$S
 
 Wzorce:
 - `dev@f73e7d0`: 1174 passed + 75 skipped (zakres CI), lokalnie 1249 passed.
-- `dev@34c1440` (po PR #16): zmierzyć przed pierwszym etapem.
+- `dev@34c1440` = `dev2` (zmierzone 2026-10-16, A0): **1322 passed + 75 skipped** (zakres CI),
+  **1397 passed** lokalnie, pokrycie 93,16 % (linie 94,7 %, gałęzie 88,0 %); dane:
+  `results/phase-a/cov_dev2.json`. Skrypt: `tools/run_suite.sh`, porównanie pokrycia:
+  `tools/covcmp.py`, kontrola dokumentacji: `tools/doccheck.py`.
 - Pokrycie (`process-docs: specs/2026-10-15-coverage-5e9f853.json`): 93,16 % ogółem.
 - Cele: kod forka ≥ 95 % linii i ≥ 90 % gałęzi; pliki autora bez spadku pokrycia.
 
@@ -423,7 +428,7 @@ się parsują.
 |---|---|---|
 | D0 | Dopasowanie do nowego kodu autora (`trajectoryv2`) | przyjęte 2026-10-15 |
 | D1 | Serwisy: walidacja celu i błąd, gdy brak termostatu SmartPI (autor) albo ciche ignorowanie (dev) | przyjęte 2026-10-15: wersja autora (wywołania z `entity_id` w danych, np. pakiet QAS, nadal działają) |
-| D2 | Po A1: czy `_apply_zone_fit` nadal nadpisuje a/b strefy | przyjęte 2026-10-15: decyzja po pomiarze na symulatorze po A1 |
+| D2 | Po A1: czy `_apply_zone_fit` nadal nadpisuje a/b strefy | przyjęte 2026-10-15: decyzja po pomiarze na symulatorze po A1. Dane z A1 (§19.1): własne a/b SmartPI 0,95–1,04 prawdy, dopasowanie strefy 0,99–1,03; do rozstrzygnięcia przy Z1 |
 | D3 | Zmiany tylko dla COOL (C2) | przyjęte (D0) |
 | D4 | Nasze sekcje (znane wejścia, woda, kocioł) w kartach diagnostycznych | przyjęte 2026-10-15: dodajemy (C1); nowa karta PL `cards/smartpi_diags-pl.md` |
 | D5 | Dokumentacja EN/FR/PL razem z kodem | przyjęte 2026-10-15 |
@@ -431,6 +436,14 @@ się parsują.
 | D7 | Korekta reference governora przy wodzie | pomiar 2026-10-15: niepotrzebna, opcja D (§13.4) |
 | D8 | „Drganie” capa reference governora (§13.5) | przyjęte 2026-10-15: obserwujemy w C1; ewentualna zmiana (kod autora) po pomiarze i za zgodą właściciela |
 | D9 | Zapis stanu od razu po resecie strefy (`_apply_reset_request`, etap A4) | przyjęte 2026-10-15: zapis natychmiastowy, jak przy serwisie `reset_smartpi_learning` u autora |
+| D10 | Gałąź integracyjna `dev2`, osobny PR na etap; nic na `dev`, `qas`, `master` | przyjęte 2026-10-16 |
+| D11 | Okna nauki wymiany z sąsiadem nie przepadają przy „guard cut” (`_dependency_learning_allowed`), §19.3 | przyjęte 2026-10-16; w A1 i A3 (ta sama zmiana) |
+| D12 | Dodatkowe źródło, które przestaje pracować, anuluje trwający cykl (jak poprawka autora dla OFF), §19.5 | przyjęte 2026-10-16; w A5 |
+| D13 | Optymalizacja dojścia strefy po obniżeniu: cel „dojście nie wolniejsze i mniejsze przegrzanie niż dwa osobne SmartPI”, §20 | przyjęte 2026-10-16 (cel właściciela) |
+| D14 | Ustawienie „Dojście po obniżeniu”: Szybkie (V1, domyślne) / Oszczędne (jak dziś); wartość we wpisie „SmartPI defaults”, nadpisanie w formularzu strefy („Jak w SmartPI defaults” domyślnie); krótki opis każdej opcji w oknie wyboru | przyjęte 2026-10-16 (rekomendacja: 2 poziomy, wariant pośredni odrzucony) |
+| D15 | Kryterium testu dla „Oszczędne”: dłuższe dojście akceptowalne (właściciel: celowo wolniej) | przyjęte 2026-10-16 |
+| D16 | Pokój „fastcool-midheat, mróz” przy „Szybkie” +0,7 h: opisany wyjątek w teście | otwarte (propozycja: wyjątek z liczbami w docstringu) |
+| D17 | Poranne podbicie krzywej grzewczej (strona kotła, nie SmartPI), §20.5 | informacyjnie; ewentualnie osobna funkcja smart boilera |
 
 ## 17. Testy – stan i wpływ
 
@@ -496,3 +509,119 @@ właściciela. Konflikty: `__init__.py`, `algo.py` (2: import `Callable`, parame
 `learn_win.update`), `const.py`, `handler.py`, `learning_window.py`, `translations/en.json`,
 `documentation/{en,fr}/{technical_doc,vtherm_smartpi}.md` (na `dev@34c1440` także
 `config_flow.py`). Wynik testów po rozwiązaniu: 1468 passed, 10 failed (lista w §17.2).
+
+## 19. Faza A – wyniki i znaleziska (2026-10-16)
+
+Wszystkie etapy A na osobnych gałęziach od `dev2`, commity lokalne (stan i SHA: `PLAN.md`
+„Stan prac”). Pełne testy (zakres CI i lokalny z pokryciem) po każdym etapie; nic nie
+wypchnięte.
+
+| Etap | Zakres CI | Pełny lokalny | Pokrycie | Uwagi |
+|---|---|---|---|---|
+| A1 | 1342 passed | 1 failed (`test_rooms[base-slowheat-cold]`) | 93,18 %; kod forka 99,2 % / 97,7 % | porażka to temat Z1 (§20) |
+| A2 | zielony | zielony | bez spadków | – |
+| A3 | 1328 passed | 1 failed (`test_rooms[fastcool-midheat-cold]`) | 93,18 % | porażka to temat Z1 (§20) |
+| A4 | zielony | zielony | 93,17 % | – |
+| A5 | 1327 passed | 1402 passed | bez spadków | – |
+
+Drobne spadki pokrycia w plikach autora (0,2–1,7 pkt: `ff3.py`, `diagnostics.py`, `ff_trim.py`)
+wynikają z innego przebiegu symulacji, nie z nowego kodu.
+
+### 19.1 A1 – nachylenia z surowych pomiarów (pomiar `tools/a1_measure.py`)
+
+Jedna strefa, czujnik 0,1 °C, 48 h uczenia, potem 4 doby z obniżeniem 17 °C nocą, 3 pokoje × 3
+fazy (`results/phase-a/a1_*.json`):
+- nauczone a/b na końcu: `dev2` a 0,51–1,15, b 0,44–1,11; **A1 a 0,95–1,04, b 0,98–1,02**;
+- regulacja (średni |uchyb| w dzień): bez zmian w pokoju typowym i wolnym, lepsza w szybkim
+  (0,07–0,10 zamiast 0,13–0,16 °C);
+- **koszt: dłuższa pierwsza faza uczenia** – test z czujnikiem 0,1 °C 6,1 → 14,9 h, scenariusz z
+  wodą 6,9 → 28,7 h (więcej zmian poziomu potrzeba na wiarygodne nachylenie);
+- wcześniejsza obawa z `PLAN_ROZWOJU.md` §9.2 p. 23 (dokładny model → gorsza regulacja) w tym
+  pomiarze się nie potwierdziła.
+
+Testy poprawione z powodu dłuższej fazy uczenia (commit `013f292`): zawór
+(`test_valve_cycle_starts_report_the_applied_opening` trwa do końca fazy uczenia), woda
+(`test_an_unavailable_supply_sensor_is_a_gap_lasting_after_a_day` – przerwa od 36 h), test
+podstawienia (porównanie z `b` z początku ticku; pomija wywołania, gdy FF1 i wzmocnienia czekają
+na wiarygodną stałą czasową).
+
+### 19.2 A3 – przerwa w roli wykonawczej (potwierdzenie §12)
+
+Przed poprawką: 2 h w roli dodatkowego źródła podniosły całkę z 1,0 do 11,0 w pierwszym własnym
+ticku; po poprawce zostaje 1,0 (`tests/test_smartpi_regulation_gaps.py`).
+
+### 19.3 N3/N7 – nauka `k` sąsiada i „guard cut” (decyzja D11)
+
+Po A1 „guard cut” działa ok. 3,5× częściej (w N3 1604 wobec 459 ticków w 30–66 h), a okna nauki
+`k` przy nim przepadały: sąsiad „always” nie dostawał `k` (N3, także `dev2` przy fazie 170 s),
+w A3 `k` w N7 +49 %. Sama regulacja SmartPI w N3 bez pogorszenia (36–66 h: 0,10 / 0,22 °C wobec
+0,10 / 0,27 °C). Poprawka D11: okna nie przepadają przy „guard cut” (wysterowanie 0 jest znane);
+wynik `k` 0,00154 przy prawdzie 0,0015, także przy fazie 170 s; testy sąsiadów zielone.
+Dopasowanie strefy już wcześniej nie zatrzymywało się przy „guard cut”.
+
+### 19.4 Porównanie z dwoma osobnymi SmartPI w `test_smartpi_sim_zone_set.py`
+
+Nasza strefa po A1/A3 działa tak samo; zmienia się punkt odniesienia (kod autora):
+- A1, „base-slowheat, mróz”: osobne dochodzą szybciej (5,1 → 4,7 h), strefa 6,0 h (próg +1 h);
+- A3, „fastcool-midheat, mróz”: dwa osobne SmartPI (ich a i b to 0,7 i 0,36 prawdy, częste
+  „guard cut”) nie dochodzą do nastawy po 2. i 3. nocy; porównanie przegrzania traci sens.
+Decyzja właściciela: nie zmieniamy progu, tylko poprawiamy logikę strefy (§20, etap Z1).
+
+### 19.5 A5 – ten sam błąd w ścieżce dodatkowego źródła (decyzja D12)
+
+`handler._control_as_source`, gdy źródło przestaje pracować: wyłączało urządzenie, ale nie
+anulowało trwającego cyklu w fazie wyłączenia. Poprawione jak u autora (`cancel_cycle`), test
+padał przed poprawką.
+
+## 20. Dojście strefy po obniżeniu (2026-10-16, etap Z1)
+
+Pomiar: `tools/zr_measure.py`, `tools/gas_measure.py`, tabele `tools/zr_table.py`,
+`tools/m_table.py`; wyniki: `results/zone-recovery/`; wariant próbny jako łatka
+`results/zone-recovery/experiment-v1.patch` (na `feat/zone-recovery`, sterowany zmienną
+`ZR_VARIANT`, `ZR_NIGHT_SHARE`). 12 pokoi × (łagodnie 3 °C, mróz −8 °C) i 3 instalacje (zawór,
+wylewka dwustopniowa, woda na krzywej), czujnik 0,1 °C, 3 noce (6, 8, 10 h) z 17 °C.
+
+### 20.1 Stan wyjściowy (kod po A1)
+
+Strefa dochodzi wolniej niż dwa osobne SmartPI w 14 z 15 przypadków (+0,1…+1,3 h), ale ma dużo
+mniejsze przegrzanie (0,05–0,3 wobec 0,25–0,84 °C) i 2–5× lepszą stałą nastawę.
+
+### 20.2 Przyczyna
+
+Nie poranne sterowanie (od zmiany nastawy oba źródła w obu wersjach na 100 %), tylko noc: dwa
+osobne SmartPI schodzą poniżej 17 °C (0,3–0,6 °C) i nadrabiają oboma źródłami (~70–100 %), więc
+rano wolna podłoga jest rozgrzana. Nasza strefa trzyma 17 °C dokładnie, z kaloryferem na 60–90 %
+i podłogą na 25–60 % (hamulec zakłada oddanie obciążenia przez kaloryfer). W szybkich pokojach
+dodatkowo hamulec wyłącza podłogę rano o kilkadziesiąt minut za wcześnie.
+
+### 20.3 Warianty
+
+- **V1:** w czasie obniżenia (nastawa niższa o ≥ 0,5 °C od najwyższej z 24 h) polecenie podłogi
+  co najmniej równe nocnemu obciążeniu z dopasowania strefy
+  `(b·(T_sp − T_ext) + Σk·(T_sp − T_j)) / a_f`, ograniczone hamulcem.
+- **V1b:** to samo, ale dopiero po wystygnięciu do nocnej nastawy i ponad hamulcem.
+- **V1c:** V1 + V1b. **Pośredni:** V1 z połową nocnego obciążenia.
+
+| wariant | spełnia cel (z 15) | uwagi |
+|---|---|---|
+| dziś | 1 | – |
+| V1 | **14** | wyjątek: fastcool-midheat mróz 3,6 h wobec 2,9 h |
+| V1b | 8 | traci zysk z ładowania podłogi w czasie stygnięcia |
+| V1c | 10 z 12 pokoi | – |
+| pośredni | 10 | brakuje 0,0–0,6 h w 5 przypadkach |
+
+Przykłady V1 (dojście osobne / dziś / V1): base-slowheat mróz 4,7 / 6,0 / 4,2 h; base mróz 2,5 /
+2,8 / 1,5 h; woda 6,0 / 6,7 / 3,6 h; przegrzanie zawsze mniejsze niż u osobnych. Noc średnio
+cieplejsza o 0,2–0,6 °C (płytsze obniżenie).
+
+### 20.4 Zużycie (bilans ciepła pokoju, stała sprawność kotła)
+
+Względem dwóch osobnych SmartPI: strefa dziś −1,4…+0,5 %; pośredni −0,8…+1,6 %; V1 −0,6…+2,0 %.
+V1 względem dziś: +0,1…+2,6 %.
+
+### 20.5 Poranne podbicie krzywej grzewczej (strona kotła)
+
+Woda na krzywej, przesunięcie +5 K do dojścia (najwyżej 3 h): osobne 6,1 → 3,9 h (+1,7 % ciepła),
+V1 3,6 → 1,9 h (+2,4 % ciepła względem osobnych). Działa niezależnie od sterowania strefy, tylko z
+kotłem sterowanym krzywą; nie uwzględnia spadku sprawności na gorętszej wodzie. Nie w SmartPI
+(D17).

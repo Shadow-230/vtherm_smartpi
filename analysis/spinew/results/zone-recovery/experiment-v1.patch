@@ -1,0 +1,37 @@
+diff --git a/custom_components/vtherm_smartpi/smartpi/dependency_model.py b/custom_components/vtherm_smartpi/smartpi/dependency_model.py
+index 587e07b..471ff7c 100644
+--- a/custom_components/vtherm_smartpi/smartpi/dependency_model.py
++++ b/custom_components/vtherm_smartpi/smartpi/dependency_model.py
+@@ -787,7 +787,31 @@ class DependencyModel:
+         correction = SPLIT_ERROR_GAIN * error / source.gain_ratio if error is not None else 0.0
+         braked = self._predictive_command(ctx, fit, exchanges, source.loop.command)
+         source.braked = braked < source.loop.command
+-        source.command = min(max(min(source.loop.command + correction, braked), 0.0), 1.0)
++        wanted = source.loop.command + correction
++        import os as _os
++        variant = _os.environ.get("ZR_VARIANT", "off")
++        night = self._setback_load(ctx, fit, exchanges) if variant != "off" else None
++        if night is not None and variant in ("v1", "v1c"):
++            wanted = max(wanted, night)
++        command = min(wanted, braked)
++        if night is not None and variant in ("v1b", "v1c") and error is not None and error >= -0.1:
++            command = max(command, night)
++        source.command = min(max(command, 0.0), 1.0)
++
++    def _setback_load(self, ctx, fit, exchanges):
++        """EXPERIMENT V1: during a setback the source carries the zone's whole load."""
++        if ctx.target_temp is None or ctx.ext_temp is None or fit is None or ctx.hvac_mode != VThermHvacMode_HEAT:
++            return None
++        day = getattr(self, "_day_target", None)
++        if day is None or ctx.target_temp >= day[0] or ctx.now_s - day[1] > 86400.0:
++            self._day_target = (ctx.target_temp, ctx.now_s)
++            return None
++        if ctx.target_temp > day[0] - 0.5:
++            return None
++        exchange = sum(item.conductance * (ctx.target_temp - item.temperature) for item in exchanges)
++        import os as _os
++        share = float(_os.environ.get("ZR_NIGHT_SHARE", "1.0"))
++        return share * (fit.b * (ctx.target_temp - ctx.ext_temp) + exchange) / fit.a_f
+ 
+     def _pause_loop(self) -> None:
+         source = self._source
