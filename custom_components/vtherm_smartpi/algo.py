@@ -94,6 +94,7 @@ from .smartpi.ab_estimator import ABEstimator
 from .smartpi.thermal_twin_1r1c import ThermalTwin1R1C
 from .smartpi.water_input import SOURCE_LIVE, WaterInput, WaterReading, WaterState
 from .smartpi.const import BOILER_CALL_GRACE_S
+from .smartpi.humidity_event import GATE_HUMIDITY_EVENT, HumidityEvent
 from .smartpi.boiler_call import (
     GATE_BOILER_SETTLING,
     MODE_COOLING,
@@ -435,6 +436,10 @@ class SmartPI:
         self._known_inputs: KnownInputs | None = None
         self._effective_model: EffectiveModel | None = None
         self._learning_gate: str | None = None
+        # A shower or cooking seen in the room's humidity (Versatile Thermostat's humidity
+        # feature): heat SmartPI does not know (smartpi/humidity_event.py).
+        self.humidity_event = HumidityEvent()
+        self._humidity: float | None = None
         self.dependency_state = DependencyState()
         self.dependency_model = DependencyModel(self.dependency_state)
         # Working as another thermostat's second source: its lead and command.
@@ -1328,6 +1333,9 @@ class SmartPI:
         allow_bumpless: bool = False,
     ) -> bool:
         """Route an observer result through the persistent trim safeguards."""
+        if result.admissible and self.humidity_event.active:
+            # A window with a humidity event's heat in it says nothing about the load.
+            result = replace(result, admissible=False, reason=GATE_HUMIDITY_EVENT)
         observation_mode = result.observation_mode
         self._fftrim_observation_mode = observation_mode
         self._last_fftrim_cycle_admissible = result.admissible
@@ -1850,6 +1858,7 @@ class SmartPI:
         dead-time observation in progress. A failing provider leaves the learned
         model unchanged.
         """
+        self.humidity_event.update(now_monotonic, self._humidity)
         # A calling zone whose boiler is not called gets no heat: learning sees the
         # power 0. The zone calls when its device gets a command (with cold water its
         # power is near 0).
@@ -1907,6 +1916,8 @@ class SmartPI:
         gate = inputs.learning_gate if inputs is not None else None
         if gate is None and boiler_mode in (MODE_COOLING, MODE_WARMING):
             gate = GATE_BOILER_SETTLING
+        if gate is None and self.humidity_event.active:
+            gate = GATE_HUMIDITY_EVENT
         if boiler_mode != self._boiler_mode:
             # The boiler's call changing for the zone: the learning window closes, and
             # the dead-time estimator starts again from the input it will now get: it
@@ -2057,6 +2068,7 @@ class SmartPI:
             and not power_shedding
             and not self.calibration_mgr.is_calibrating
             and (resume_ts is None or now_monotonic >= resume_ts)
+            and not self.humidity_event.active
         )
 
     def _apply_neighbour_window_action(
@@ -2182,6 +2194,17 @@ class SmartPI:
         self.boiler.configure(heating_type)
         if not self.water.uses_water:
             self._apply_water_state(WaterState())
+
+    def update_humidity(self, humidity: float | None) -> None:
+        """The room's relative humidity from Versatile Thermostat (None without a sensor)."""
+        self._humidity = humidity
+
+    def humidity_diagnostics(self) -> dict | None:
+        """The humidity events' state, once a humidity reading has been seen."""
+        event = self.humidity_event
+        if event.humidity is None and event.count == 0 and not event.active:
+            return None
+        return event.diagnostics()
 
     def update_boiler(
         self,
@@ -4167,6 +4190,13 @@ class SmartPI:
                     f"governance_{gov_freeze_reason_g.value}"
                 )
         integrator_hold = integrator_hold or gov_hold
+        if self.humidity_event.active and not integrator_hold:
+            # The event's heat would teach the integral a smaller need (or, in cooling,
+            # a larger one), and the room would miss its setpoint for hours after it. A
+            # directional guard would still let the held need unwind: the integral is
+            # held (smartpi/humidity_event.py).
+            integrator_hold = True
+            integrator_hold_source = GATE_HUMIDITY_EVENT
 
         # Deadband ENTRY: no bumpless transfer. The integral keeps its
         # naturally accumulated value and is simply frozen by compute_pwm.

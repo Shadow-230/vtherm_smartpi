@@ -190,3 +190,12 @@ async def test_an_electric_or_no_heating_type_does_not_read_the_boiler(
     await _control(handler)
     assert fake_handler_runtime.prop_algorithm.boiler.reading is None
     assert fake_handler_runtime.prop_algorithm.boiler_diagnostics() is None
+
+
+@pytest.mark.parametrize("humidity", [62.0, None])
+async def test_control_hands_the_room_s_humidity_to_the_algorithm(fake_handler_runtime, no_registry, humidity):
+    """Versatile Thermostat's humidity feature; a thermostat without a sensor gives None."""
+    fake_handler_runtime.current_humidity = humidity
+    handler = _handler(fake_handler_runtime, heating_type="electric_fast")
+    await _control(handler)
+    assert fake_handler_runtime.prop_algorithm._humidity == humidity

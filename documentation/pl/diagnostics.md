@@ -117,6 +117,15 @@ pochodzi każdy sygnał. Jego pola opisuje
 [Wejścia wody i kotła, §8](water_input.md#8-diagnostyka), a wyjaśnia
 [§4](water_input.md#4-kocioł-który-nie-jest-wezwany-do-grzania).
 
+### `humidity`
+
+Gdy Versatile Thermostat podaje wilgotność pomieszczenia, w `live` pojawia się blok `humidity`,
+gdy tylko pojawi się pierwszy odczyt. Zawiera wilgotność (`humidity`), stan zdarzenia wilgotności
+(`idle`, `event`, `settling`), poziom bazowy (`baseline`) i szczyt (`peak`) zdarzenia oraz
+`events`, liczbę zdarzeń od startu. W czasie zdarzenia i uspokajania `learning_gate` ma wartość
+`humidity_event`. Wyjaśnia je
+[dokumentacja techniczna, §4.7](technical_doc.md#47-zdarzenia-wilgotności).
+
 ## Częstotliwość publikacji
 
 Czujnik diagnostyczny odświeża się przy istotnych zmianach danych wejściowych regulacji, na

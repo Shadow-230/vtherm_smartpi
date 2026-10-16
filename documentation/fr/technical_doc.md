@@ -147,7 +147,7 @@ Le code n'utilise plus de constante `WINDOW_MIN_MINUTES`. L'apprentissage repose
 - se met en pause tant qu'un verrou d'apprentissage est actif (porte d'un voisin ouverte ou en
   stabilisation, fenêtre ouverte chez un voisin, chaleur de la deuxième source pas encore connue,
   émetteur qui refroidit parce que la chaudière n'est pas appelée, ou qui se réchauffe une fois
-  qu'elle démarre), et abandonne la
+  qu'elle démarre, événement d'humidité : une douche ou une cuisson, §4.7), et abandonne la
   fenêtre d'apprentissage en cours chaque fois qu'un verrou commence ou se termine,
 - retire de la variation de température mesurée la part causée par les entrées connues : leur
   vitesse `known_rate = Σ g_i·(T_i − T) + Σ q_j`, intégrée sur la fenêtre,
@@ -464,6 +464,7 @@ Les protections complémentaires actuellement présentes sont :
 - `I:HOLD` explicite pendant la phase post-reprise liée à `deadtime_heat` pour `window_resume` et `power_shedding_resume` en chauffage,
 - logique de maintien dans la deadband,
 - avec un chauffage à eau, le maintien `no_heat` : la commande et l'intégrale sont maintenues pendant la production d'eau chaude sanitaire, et seule l'intégrale est maintenue tant que l'eau n'apporte presque pas de chaleur ([Entrées eau et chaudière, §3.4](water_input.md#34-utilisation-dans-smartpi)),
+- un événement d'humidité (une douche ou une cuisson) : l'apprentissage est en pause et l'intégrale est maintenue (section 4.7),
 - fenêtre ouverte chez un voisin, tant que la connexion avec ce voisin est active : la réaction choisie pour ce voisin. C'est soit l'arrêt, par le même chemin que l'arrêt sur fenêtre ouverte, avec sa reprise protégée, soit le preset hors-gel ou éco de la zone, et elle ne demande jamais plus de chauffage ou de refroidissement que la consigne ([Dépendances entre zones, §4.5](zone_dependencies.md#45-une-fenêtre-chez-un-voisin-connecté)).
 
 Le calcul distingue aussi deux zones autour de la consigne :
@@ -512,6 +513,47 @@ Les décisions du superviseur sont publiées sous forme d'événements Home Assi
 Avant ce format, les événements portaient le nom du thermostat dans `entity_id`, et le Recorder de
 Home Assistant le rejetait. Une automatisation qui cherchait le nom dans `entity_id` doit maintenant
 le chercher dans `name`.
+
+### 4.7 Événements d'humidité
+
+Une douche ou une cuisson chauffe la pièce avec une chaleur que SmartPI ne connaît pas, et
+l'humidité de la pièce le montre. Quand Versatile Thermostat publie l'humidité de la pièce (sa
+fonction humidité, `current_humidity`, depuis un capteur configuré ou trouvé), `HumidityEvent` la
+suit à chaque calcul. Rien n'est à configurer : sans capteur d'humidité rien ne change.
+
+- Un événement commence quand l'humidité monte d'au moins `HUMIDITY_EVENT_RISE` en
+  `HUMIDITY_EVENT_WINDOW_S` ; le niveau le plus bas de cette fenêtre est la base de l'événement.
+- Il se termine quand l'humidité redescend sous la base plus `HUMIDITY_EVENT_END_SHARE` de la
+  montée (depuis le pic de l'événement), et au plus tard après `HUMIDITY_EVENT_MAX_S`.
+- Suivent `HUMIDITY_EVENT_SETTLE_S` de stabilisation ; les niveaux d'après commencent un nouvel
+  historique, la lente fin de l'événement n'est donc pas une nouvelle montée.
+- Une lecture absente ou non numérique ne démarre rien ; un événement en cours se termine par son
+  horloge.
+
+Pendant un événement et sa stabilisation :
+
+- le verrou d'apprentissage `humidity_event` met en pause l'apprentissage de `a`, `b` et des temps
+  morts, comme les autres verrous (section 3.2), et les dépendances de la zone n'apprennent pas,
+- l'intégrale est maintenue (`I:HOLD`, source du maintien `humidity_event`) : la chaleur de
+  l'événement lui apprendrait un besoin de chauffage plus faible (de refroidissement plus fort),
+  et la pièce manquerait sa consigne pendant des heures après l'événement. Une garde dans un seul
+  sens ne suffit pas : elle laisse encore le besoin mémorisé par l'intégrale se défaire vers zéro,
+- le trim du feed-forward ne prend aucune fenêtre.
+
+La régulation elle-même continue : le terme proportionnel et les gardes répondent à la chaleur de
+l'événement.
+
+| Constante                  | Valeur | Pourquoi |
+| -------------------------- | ------ | -------- |
+| `HUMIDITY_EVENT_RISE`      | 5 %HR | une douche monte de 20–30 %HR, une cuisson d'environ 10 %HR ; la météo bouge l'humidité bien moins en 10 min |
+| `HUMIDITY_EVENT_WINDOW_S`  | 600 s | une douche atteint son pic en 2–16 min |
+| `HUMIDITY_EVENT_END_SHARE` | 0,25  | l'humidité redescend au quart de la montée 40–90 min après le pic |
+| `HUMIDITY_EVENT_MAX_S`     | 3 h   | une humidité qui reste haute (du linge qui sèche) ne met pas l'apprentissage en pause pour de bon |
+| `HUMIDITY_EVENT_SETTLE_S`  | 30 min | les murs et l'air rendent la chaleur de l'événement |
+
+Les valeurs viennent de huit semaines de deux salles de bains et d'une cuisine : un événement par
+jour dans une salle de bains (0,4 dans la cuisine), apprentissage en pause 1,6–1,7 h par jour dans
+une salle de bains et 0,6 h dans la cuisine.
 
 ---
 
@@ -595,6 +637,7 @@ sans son algorithme.
 | `split.py`, `source_settings.py`, `source_link.py` | règles de répartition et boucle d'allocation, réglages de la source, lien entre les sources |
 | `water_input.py`       | le facteur d'eau `φ` à partir des données d'eau            |
 | `boiler_call.py`       | si la chaudière chauffe une zone qui l'appelle           |
+| `humidity_event.py`    | événements d'humidité (douche, cuisson) depuis l'humidité de la pièce |
 
 Les modules des extensions sont décrits dans
 [Dépendances entre zones, §6](zone_dependencies.md#6-composants-et-interfaces) et
@@ -741,7 +784,10 @@ publics sont exposés sous `analysis.twin`.
 - `boiler` : si la chaudière est appelée, la source choisie (`entities`, `provider:<name>`,
   `vtherm_central_boiler`) et ses signaux (`inputs`), la raison et la demande, et le mode
   d'apprentissage qui en découle ; affiché quand une source de l'appel est choisie
-  ([Entrées eau et chaudière, §8](water_input.md#8-diagnostics)).
+  ([Entrées eau et chaudière, §8](water_input.md#8-diagnostics)) ;
+- `humidity` : l'humidité de la pièce, l'état de l'événement (`idle`, `event`, `settling`), sa
+  base et son pic, et le nombre d'événements depuis le démarrage ; affiché dès qu'une lecture
+  d'humidité a été vue (section 4.7).
 
 Avec des données d'eau, les valeurs `power` sont des puissances pour l'eau de référence, tandis que
 `current_cycle_percent` et `next_cycle_percent` sont la commande envoyée à l'émetteur.

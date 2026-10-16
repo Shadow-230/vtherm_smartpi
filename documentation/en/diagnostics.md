@@ -116,6 +116,14 @@ signal comes from. Its fields are listed in
 [Water and boiler inputs, §8](water_input.md#8-diagnostics) and explained in
 [§4](water_input.md#4-a-boiler-that-is-not-called).
 
+### `humidity`
+
+When Versatile Thermostat gives the room's humidity, `live` gains a `humidity` block once a
+reading has been seen. It holds the humidity (`humidity`), the state of a humidity event (`idle`,
+`event`, `settling`), the event's `baseline` and `peak`, and `events`, the number of events since
+the start. During an event and its settling `learning_gate` is `humidity_event`. They are explained
+in [the technical documentation, §4.7](technical_doc.md#47-humidity-events).
+
 ## Publication cadence
 
 The diagnostic sensor is refreshed for meaningful control inputs, cycle

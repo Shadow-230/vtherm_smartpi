@@ -4,6 +4,14 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+- SmartPI uses the room's humidity when Versatile Thermostat gives it (its humidity feature), with
+  no setting: a quick rise of at least 5 %RH within 10 minutes (a shower, cooking) starts a
+  humidity event. Until the humidity falls back to a quarter of the rise (at most 3 hours), and for
+  30 minutes after, learning pauses (gate `humidity_event`), the zone's dependencies do not learn,
+  the integral is held and the feed-forward trim takes no window. The diagnostics show a `humidity`
+  block. The thresholds come from eight weeks of two bathrooms and a kitchen (one event a day in a
+  bathroom, learning paused about 1.7 hours a day).
+
 - SmartPI's services take a standard target of Versatile Thermostat climate entities, and a call
   that names no thermostat on SmartPI now fails with an error instead of doing nothing; a call with
   `entity_id` in its data still works (taken from the author's newer code).

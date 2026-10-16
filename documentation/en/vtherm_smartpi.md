@@ -277,6 +277,14 @@ Useful points to know:
 - if cooling dead time cannot be learned for a long time, SmartPI can still continue with a partial snapshot,
 - after repeated unsuccessful recalibration attempts, SmartPI continues to run and reports a degraded model in diagnostics.
 
+### Showers and cooking
+
+When Versatile Thermostat has a humidity sensor for the room, SmartPI uses it without any
+setting: a quick humidity rise (a shower, cooking) marks heat that does not come from the
+heating. While it lasts and for a while after, SmartPI does not learn from the room and does not
+let that heat lower its heating need. Details:
+[technical documentation, §4.7](technical_doc.md#47-humidity-events).
+
 ## Recommended settings
 
 Default settings are suitable for most installations.

@@ -622,6 +622,15 @@ ZONE_RECOVERY_MODES = (ZONE_RECOVERY_FAST, ZONE_RECOVERY_ECONOMY)
 # the last SOURCE_SETBACK_MEMORY_S by at least SOURCE_SETBACK_MIN_C.
 SOURCE_SETBACK_MIN_C = 0.5
 SOURCE_SETBACK_MEMORY_S = 24 * 3600.0
+# A humidity event (humidity_event.py): a shower or cooking heats the room. It starts at
+# a rise of HUMIDITY_EVENT_RISE %RH within HUMIDITY_EVENT_WINDOW_S, ends when the humidity
+# is back below its level before the rise plus HUMIDITY_EVENT_END_SHARE of the rise (at
+# the latest after HUMIDITY_EVENT_MAX_S), and HUMIDITY_EVENT_SETTLE_S of settling follow.
+HUMIDITY_EVENT_RISE = 5.0
+HUMIDITY_EVENT_WINDOW_S = 10 * 60.0
+HUMIDITY_EVENT_END_SHARE = 0.25
+HUMIDITY_EVENT_MAX_S = 3 * 3600.0
+HUMIDITY_EVENT_SETTLE_S = 30 * 60.0
 # The allocation loop follows the lead's steady demand (feed-forward plus
 # integral), not its answer to the current error: a setpoint change does not
 # move the source. When the lead is stuck at a limit, the loop gets the end of

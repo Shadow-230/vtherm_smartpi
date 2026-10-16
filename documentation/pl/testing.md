@@ -291,6 +291,19 @@ przychodzą z każdą zmianą; testy poniżej sprawdzają, że dodatki forka nad
 | `test_smartpi_ab_drift.py` (dwa dodane testy) | stan nauczonego pomieszczenia z pakietu QAS, zapisany z jednym wspólnym `learn_seq`, ustawia oba liczniki dryfu; historie zasiane ze wspólnego dopasowania strefy nadal pozwalają `b` iść za dryfem |
 | `test_smartpi_raw_slopes.py` | nachylenia do uczenia pochodzą z surowej zmierzonej temperatury: powolna zmiana odczytywana przez czujnik 0.1 °C daje prawdziwe nachylenie pomniejszone o tempo znanych wejść; strefa wstrzymana przez kocioł, który nie jest wezwany, dalej zapisuje surowe próbki; zmiana wezwania kotła czyści historię surową i historię po filtrze |
 
+### 4.10 Zdarzenia wilgotności
+
+| Plik | Co sprawdza |
+|---|---|
+| `test_smartpi_humidity_event.py` | zdarzenie zaczyna się przy szybkim wzroście wilgotności, a nie przy powolnym, kończy się przy ćwierci wzrostu albo po najdłuższym czasie, potem się uspokaja; poziom po uspokojeniu nie jest nowym wzrostem; brak odczytu, odczyt nieliczbowy albo logiczny niczego nie zaczyna; w czasie zdarzenia i uspokajania uczenie czeka (bramka `humidity_event`), zależności strefy się nie uczą, całka jest wstrzymana przy grzaniu i chłodzeniu, trym feed-forward nie bierze okna; blok `humidity` w diagnostyce |
+| `test_smartpi_boiler_handler.py` (dodany jeden test) | handler przekazuje algorytmowi `current_humidity` z Versatile Thermostat, None bez czujnika |
+
+W symulatorze łazienka z codziennym prysznicem (15–60 min ciepła, wzrost wilgotności o 25 %RH)
+reguluje tak samo z wilgotnością i bez niej (z dokładnością do 0,01 °C): zabezpieczenia i strefa
+nieczułości już wstrzymują całkę, gdy prysznic przegrzewa pomieszczenie; przy słabszym cieple
+całka jest teraz wstrzymana, zamiast schodzić w dół. Scenariusz to sonda
+(`analysis/spinew/tools/h1_probe.py` na gałęzi analizy), a nie test zestawu.
+
 ## 5. Ograniczenia
 
 - **Symulator jest łagodniejszy niż dom.** Nie ma szumu czujników poza zaokrąglaniem; nie ma
@@ -765,6 +778,14 @@ ważne; ostatnia kolumna mówi, co zostaje nieprzetestowane i dlaczego.
 | Kalibracja w czasie wstrzymania | `test_smartpi_boiler_algo.py::test_a_calibration_is_cancelled_while_the_boiler_is_not_called` | — | — | pokryty | — |
 | Dodatkowe źródło | `test_smartpi_boiler_algo.py::test_working_as_another_thermostat_s_source_clears_the_boiler_s_mode` | B2 | QW6 | pokryty | — |
 | Każde źródło i powód | `test_smartpi_boiler_handler.py::test_a_provider_says_why_it_does_not_call_the_boiler`, `test_smartpi_heating_inputs.py::test_a_provider_says_why_it_does_not_call_the_boiler` | B2 | QC2, QW5 | pokryty | — |
+
+**Zdarzenia wilgotności**
+
+| Wariant / przypadek użycia | Test w procesie | Symulacja | QAS | Stan | Działanie |
+|---|---|---|---|---|---|
+| Początek, koniec, najdłuższe zdarzenie, uspokajanie, nieużyteczne odczyty | `test_smartpi_humidity_event.py::test_a_shower_s_rise_starts_an_event`, `::test_the_event_ends_at_a_quarter_of_its_rise_then_settles`, `::test_without_a_usable_reading_nothing_starts` | — | — | pokryty | — |
+| Uczenie, zależności, całka (grzanie i chłodzenie), trym feed-forward | `test_smartpi_humidity_event.py::test_learning_waits_during_an_event_and_its_settling`, `::test_the_integral_is_held_during_an_event`, `::test_the_feed_forward_trim_takes_no_window_from_an_event` | sonda (sekcja 4.10) | — | pokryty | przebieg na stanowisku z prawdziwym czujnikiem wilgotności |
+| Bez czujnika wilgotności | `test_smartpi_humidity_event.py::test_without_a_humidity_sensor_nothing_changes`, `test_smartpi_boiler_handler.py::test_control_hands_the_room_s_humidity_to_the_algorithm` | — | — | pokryty | — |
 
 **Wtyczka wokół nich**
 

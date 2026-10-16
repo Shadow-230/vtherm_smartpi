@@ -277,6 +277,14 @@ Warto wiedzieć:
 - jeśli przez długi czas nie da się nauczyć czasu martwego stygnięcia, SmartPI może dalej pracować z częściową migawką,
 - po kilku nieudanych próbach ponownej kalibracji SmartPI nadal działa i w diagnostyce zgłasza model o obniżonej jakości (degraded).
 
+### Prysznic i gotowanie
+
+Gdy Versatile Thermostat ma czujnik wilgotności dla pomieszczenia, SmartPI używa go bez żadnych
+ustawień: szybki wzrost wilgotności (prysznic, gotowanie) oznacza ciepło, które nie pochodzi
+z ogrzewania. Póki trwa i jeszcze chwilę potem, SmartPI nie uczy się z pomieszczenia i nie
+pozwala, by to ciepło obniżyło jego potrzebę grzania. Szczegóły:
+[dokumentacja techniczna, §4.7](technical_doc.md#47-zdarzenia-wilgotności).
+
 ## Zalecane ustawienia
 
 Ustawienia domyślne pasują do większości instalacji.
