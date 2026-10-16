@@ -415,7 +415,7 @@ Installez Equinox depuis son dépôt ou HACS, configurez-le sur la même entité
 
 ## Services
 
-SmartPI expose quatre services dans le domaine `vtherm_smartpi`.
+SmartPI expose quatre services dans le domaine `vtherm_smartpi`. Chacun vise des entités climate de Versatile Thermostat, choisies comme cible du service ou données dans `entity_id` de ses données. Les thermostats sur un autre algorithme sont ignorés ; quand aucune des entités visées n'est un thermostat sur SmartPI, l'appel échoue avec une erreur affichée dans Home Assistant.
 
 ### `set_smartpi_learning`
 
