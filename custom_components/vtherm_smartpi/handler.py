@@ -43,6 +43,8 @@ from .const import (
     CONF_SMART_PI_MAX_VALVE,
     VALVE_CURVE_POINTS,
     CONF_SMART_PI_DEPENDENCIES,
+    CONF_SMART_PI_ZONE_RECOVERY,
+    DEFAULT_SMART_PI_ZONE_RECOVERY,
     CONF_SMART_PI_RESET_TOKEN,
     CONF_SMART_PI_MODEL_KEPT_FOR_WATER,
     CONF_SMART_PI_WATER_SOURCE,
@@ -239,7 +241,13 @@ class SmartPIHandler:
         self._zone_master_id = source_item.extra.get(KEY_ZONE_MASTER) if source_item is not None else None
         if source_item is not None:
             source_item = self._with_heating_types(source_item, entry)
-        self._source_settings = SourceSettings.from_item(source_item) if source_item else None
+        self._source_settings = (
+            SourceSettings.from_item(
+                source_item, entry.get(CONF_SMART_PI_ZONE_RECOVERY, DEFAULT_SMART_PI_ZONE_RECOVERY)
+            )
+            if source_item
+            else None
+        )
         t.prop_algorithm.configure_source(self._source_settings)
         self._attach_source()
 

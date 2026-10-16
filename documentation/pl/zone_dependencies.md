@@ -154,7 +154,10 @@ flowchart TD
 - **Parametr.** Ten krok pokazuje parametr reguły i to, co on oznacza dla tych dwóch termostatów
   (`together` 10 do 1000 %, `source_first` i `lead_band` 0 do 100 %). Ostrzega, gdy rodzaj
   ogrzewania głównego źródła reaguje wolniej niż rodzaj ogrzewania drugiego. Jeśli użytkownik o
-  to poprosił, pyta też o opóźnienie i bezwładność dodatkowego źródła (0 do 600 min).
+  to poprosił, pyta też o opóźnienie i bezwładność dodatkowego źródła (0 do 600 min). Ten sam
+  krok ustawia **dojście po obniżeniu** strefy (sekcja 5.6): *As in the SmartPI defaults* (jak w
+  SmartPI defaults, domyślnie), *Fast* (szybkie) albo *Economical* (oszczędne). Formularz krótko
+  opisuje każdą opcję. Strefa zachowuje własny wybór, gdy zmieniają się jej źródła albo reguła.
 - **Gdzie jest zapisana.** Strefa jest zapisana we wpisie głównego źródła jako jego pozycja
   `source`, który wskazuje też termostat nadrzędny (`zone_master`). Sąsiedzi i drzwi strefy są w
   tym samym wpisie. Wpis drugiego termostatu nie przechowuje nic o strefie. Ten termostat
@@ -230,7 +233,9 @@ strefy zawiera `id`, `kind` (`source`), `entity`, `zone_master` oraz `split_rule
 parametrem (`split_ratio`, `source_alone_percent` lub `lead_band_percent`). Zawiera też
 `lead_emitter` (rodzaj ogrzewania z wpisu głównego źródła) i `source_emitter` (rodzaj ogrzewania
 z wpisu dodatkowego źródła, odczytywany ponownie przy starcie, albo `custom`). Przy własnej
-odpowiedzi zawiera `source_lag_min` i `source_tau_min`. Strefa zapisana przez wcześniejszą
+odpowiedzi zawiera `source_lag_min` i `source_tau_min`. Strefa z własnym dojściem po obniżeniu
+zawiera `recovery` (`fast` albo `economy`); bez niego strefa idzie za wspólnym ustawieniem
+`smart_pi_zone_recovery` z ustawień regulatora głównego źródła. Strefa zapisana przez wcześniejszą
 wersję może też zawierać `lead_lag_min` i `lead_tau_min`, których nic nie używa.
 
 ### 2.2 Reset nauczonego modelu
@@ -869,9 +874,10 @@ flowchart LR
         dZ/dt = clamp((avg(D) − f(Z_applied)) / T_I, ±1 / max(SPLIT_MIN_FULL_RANGE_S, L_f + tau_f))
         T_I = max(SPLIT_MIN_TIME_S, SPLIT_SETTLE_FACTOR·(L_f + tau_f))·r
         T_avg = max(SPLIT_AVERAGE_MIN_S, SPLIT_AVERAGE_FRACTION·T_I)
-        Z = clamp(min(Z_loop + SPLIT_ERROR_GAIN·e / r, Z_brake), 0, 1)
+        Z = clamp(min(max(Z_loop + SPLIT_ERROR_GAIN·e / r, Z_setback), Z_brake), 0, 1)
 
-  Tu `e` to błąd strefy, `Z_brake` to limit z hamowania (opis niżej), a `r = max(1, a_f/a)` pochodzi
+  Tu `e` to błąd strefy, `Z_setback` to dolna granica szybkiego dojścia (opis w **Dojście po
+  obniżeniu** niżej; poza nim brak), `Z_brake` to limit z hamowania (opis niżej), a `r = max(1, a_f/a)` pochodzi
   z dopasowania (1 przed dopasowaniem; `r` idzie za dopasowaniem z histerezą 20 %). Pętla nie
   rośnie, gdy strefa jest ciepła albo gdy trzyma hamowanie (`hold_up`). Nie maleje, gdy strefa jest
   zimna (`hold_down`).
@@ -900,18 +906,46 @@ ciepło dodatkowego źródła. Dotyczy to tak samo części wyprzedzającej, `T_
 Główne źródło pracuje wtedy tak, jakby było samo (`recovery_boost` w diagnostyce). To
 przyspieszenie powrotu wymaga opublikowanego dopasowania i trybu przydziału; bez nich jest
 wyłączone. Przyspieszenie kończy się wcześniej, gdy dopasowany model mówi, że przy obecnych mocach
-strefa dojdzie do tego pasma w czasie dopasowanego opóźnienia głównego źródła plus jednego jego
-cyklu. Ciepło, które główne źródło już wysłało, wprowadza wtedy strefę w pasmo, zamiast ją
-przeregulować. Bez wcześniejszego końca szybkie pokoje przeregulowywały się nawet o 0.66 degC
+strefa dojdzie do tego pasma w czasie dopasowanego opóźnienia głównego źródła plus
+`SOURCE_BOOST_END_CYCLES` (dwóch) jego cykli: cyklu, który trwa, i następnego, w którym główne
+źródło nadal odpowiada na pozostały błąd. Ciepło, które główne źródło już wysłało, wprowadza wtedy
+strefę w pasmo, zamiast ją przeregulować. Bez wcześniejszego końca szybkie pokoje przeregulowywały
+się nawet o 0.66 degC; z jednym cyklem zamiast dwóch szybki pokój, którego podłogę szybkie dojście
+utrzymało ciepłą, przeregulowywał się o 0.57 degC wobec 0.45 przy dwóch niezależnych SmartPI
 (sekcja 5.8).
 
 ```mermaid
 stateDiagram-v2
     state "główne źródło liczy ciepło dodatkowego źródła" as Counted
     state "powrót do nastawy: główne źródło pracuje, jakby było samo" as Boost
-    Counted --> Boost: dopasowanie opublikowane, tryb przydziału, strefa zimniejsza od nastawy o więcej niż SOURCE_BOOST_ERROR_C i prognoza nie daje dojścia do pasma w czasie opóźnienia głównego źródła plus jeden cykl
-    Boost --> Counted: prognoza daje dojście do pasma w czasie opóźnienia głównego źródła plus jeden cykl, strefa w paśmie albo brak dopasowania lub przydziału
+    Counted --> Boost: dopasowanie opublikowane, tryb przydziału, strefa zimniejsza od nastawy o więcej niż SOURCE_BOOST_ERROR_C i prognoza nie daje dojścia do pasma w czasie opóźnienia głównego źródła plus dwa cykle
+    Boost --> Counted: prognoza daje dojście do pasma w czasie opóźnienia głównego źródła plus dwa cykle, strefa w paśmie albo brak dopasowania lub przydziału
 ```
+
+**Dojście po obniżeniu.** W czasie nocnego obniżenia dwa niezależne SmartPI pozwalają strefie
+zejść poniżej niższej nastawy i utrzymują ciepłą podłogę. Strefa z dwoma źródłami trzyma niższą
+nastawę dokładnie, więc wolna podłoga stygnie, a rano strefa na nią czeka. Ustawienie **dojście po
+obniżeniu** strefy wybiera, co się dzieje:
+
+- *Fast* (szybkie, domyślnie): w czasie obniżenia dodatkowe źródło niesie co najmniej całe
+  obciążenie strefy przy niższej nastawie, według dopasowania strefy:
+
+        Z_setback = clamp(znak · (b·(T_sp − T_ext) + Σ k_j·(T_sp − T_j)) / a_f, 0, 1)
+
+  `znak` wynosi −1 przy chłodzeniu. Hamowanie nadal ogranicza polecenie, więc strefa nie jest
+  pchana powyżej obniżenia. Podłoga pozostaje ciepła i strefa wcześniej wraca do nastawy, przy
+  około 1–2 % więcej energii (sekcja 5.8).
+- *Economical* (oszczędne): sama pętla przydziału, jak wcześniej. Obniżenie jest najgłębsze,
+  energia najniższa, a strefa wraca dłużej.
+
+Obniżenie to nastawa niższa od odniesienia co najmniej o `SOURCE_SETBACK_MIN_C` przy grzaniu
+(wyższa przy chłodzeniu). Odniesienie to najwyższa nastawa (najniższa przy chłodzeniu) utrzymana w
+ciągu ostatnich `SOURCE_SETBACK_MEMORY_S`. Wyższa nastawa, zmiana między grzaniem a chłodzeniem
+albo obniżenie trwające dłużej niż ta pamięć zaczyna nowe odniesienie. Odniesienie zachowuje swój
+wiek po restarcie. Szybkie dojście wymaga opublikowanego dopasowania i temperatury zewnętrznej.
+Nastawa obniżona przez otwarte okno sąsiada (sekcja 4.5) też liczy się jako obniżenie. Ustawienie
+jest wspólne: ustawia się je we wpisie „SmartPI defaults” (albo we własnych ustawieniach regulatora
+termostatu), a każda strefa może je zmienić w swoim formularzu.
 
 **Hamowanie z wyprzedzeniem.** Podłogówka reaguje z opóźnieniem wielu godzin: ciepło, które jest
 już w drodze, płynie dalej, gdy strefa osiągnęła nastawę. Hamowanie ogranicza wysterowanie do tego,
@@ -1047,33 +1081,42 @@ z dobowym wahaniem ±3 degC. Dzień 1 zaczyna się 1 degC poniżej nastawy. Bł�
 nastawy, gdy wszystko się uspokoi) to średnia z dni 3–4. Potem przychodzą trzy noce z nastawą obniżoną
 do 17 degC (na 6, 8 i 10 h).
 
-**Dwanaście pomieszczeń** (`b` od 0.0005 do 0.002 /min, `a` od 0.015 do 0.06 degC/min):
+**Dwanaście pomieszczeń** (`b` od 0.0005 do 0.002 /min, `a` od 0.015 do 0.06 degC/min). Strefa
+pracuje z szybkim dojściem po obniżeniu (domyślnym, sekcja 5.6); kolumna „oszczędne” to ta sama
+strefa z samą pętlą przydziału:
 
-| Miara | Strefa z dwoma źródłami | Dwa niezależne SmartPI |
-|---|---|---|
-| Błąd ustalony, średnia z 12 pomieszczeń | 0.030 degC | 0.065 degC |
-| Błąd ustalony, zakres | 0.018–0.052 degC | 0.032–0.113 degC |
-| Przeregulowanie po nocy, najgorsze pomieszczenie / średnia | 0.30 / 0.13 degC | 0.53 / 0.40 degC |
-| Czas dojścia do 0.2 degC poniżej nastawy po nocy, średnio | 2.94 h | 2.86 h |
-| To samo, najwolniejsze pomieszczenie (`b` 0.0005, `a` 0.015, zimno) | 4.8 h | 4.1 h |
-| Błąd w dniu 1, średnio | 0.43 degC | 0.33 degC |
-| Publikacja dopasowania | po 19.5 h w każdym pomieszczeniu | — |
-| Dopasowane `a`, `b`, `a_f` względem prawdziwych wartości | 0.99–1.03, jedno `a_f` 1.10 | własne wartości SmartPI, jeden termostat: `a` 0.55–1.34, `b` 0.53–1.16 |
-| Opóźnienie głównego źródła | 10 min, prawdziwe, w każdym pomieszczeniu | — |
+| Miara | Strefa, szybkie dojście | Strefa, oszczędne | Dwa niezależne SmartPI |
+|---|---|---|---|
+| Błąd ustalony, średnia z 12 pomieszczeń | 0.030 degC | 0.030 degC | 0.099 degC |
+| Błąd ustalony, zakres | 0.018–0.052 degC | 0.018–0.052 degC | 0.053–0.253 degC |
+| Przeregulowanie po nocy, najgorsze pomieszczenie / średnia | 0.35 / 0.14 degC | 0.24 / 0.10 degC | 0.84 / 0.42 degC |
+| Czas dojścia do 0.2 degC poniżej nastawy po nocy, średnio | 1.90 h | 2.96 h | 2.53 h |
+| To samo, najwolniejsze pomieszczenie (`b` 0.001, `a` 0.02, zimno) | 4.2 h | 6.1 h | 4.7 h |
+| Błąd w dniu 1, średnio | 0.43 degC | 0.43 degC | 0.40 degC |
+| Publikacja dopasowania | po 19.5 h w każdym pomieszczeniu | po 19.5 h w każdym pomieszczeniu | — |
+| Dopasowane `a`, `b`, `a_f` względem prawdziwych wartości | 0.99–1.06 | — | — |
+| Opóźnienie głównego źródła | 10 min, prawdziwe, w każdym pomieszczeniu | — | — |
 
-**Instalacje** (pomieszczenie `b` 0.001, `a` 0.03, łagodnie):
+**Instalacje** (pomieszczenie `b` 0.001, `a` 0.03, łagodnie; szybkie dojście):
 
 | Przypadek | Strefa | Niezależne | Dopasowanie |
 |---|---|---|---|
-| podłogówka za zaworem | 0.020 degC | 0.050 degC | 1.03/1.02/1.03 |
-| płyta nagrzewająca się w głąb (dwie bezwładności jedna po drugiej) | 0.035 degC | 0.056 degC | `a` 0.95, `b` 1.06, `a_f` 1.18 |
-| woda na krzywych grzewczych, dane o wodzie z encji (powrót do nastawy 6.7 h wobec 5.9 h) | 0.053 degC | 0.094 degC | 0.99/0.97/0.94 |
-| dwie strefy, drzwi otwarte 6–23 h | 0.034 / 0.029 degC | 0.072 / 0.055 degC | `k` 0.89 / 0.94 |
-| dwie strefy, zawsze otwarte | 0.021 / 0.018 degC | 0.055 / 0.042 degC | `k` 1.04 / 0.96 |
+| podłogówka za zaworem | 0.020 degC | 0.089 degC | 1.01/1.01/1.01 |
+| płyta nagrzewająca się w głąb (dwie bezwładności jedna po drugiej) | 0.035 degC | 0.092 degC | `a` 0.97, `b` 1.10, `a_f` 1.20 |
+| woda na krzywych grzewczych, dane o wodzie z encji (powrót do nastawy 3.7 h; oszczędne 7.2 h; niezależne 6.0 h) | 0.053 degC | 0.128 degC | 0.98/0.96/0.93 |
+| dwie strefy, drzwi otwarte 6–23 h | 0.034 / 0.029 degC | 0.124 / 0.066 degC | `k` 0.89 / 0.94 |
+| dwie strefy, zawsze otwarte | 0.024 / 0.019 degC | 0.089 / 0.092 degC | `k` 0.97 / 0.95 |
+
+**Zużyte ciepło** przez trzy noce i dni, w 12 pomieszczeniach i trzech instalacjach powyżej (bilans
+ciepła pomieszczenia, oba źródła, stała sprawność kotła): względem dwóch niezależnych SmartPI
+−0.6 do +2.0 % przy szybkim dojściu i −1.3 do +0.4 % przy oszczędnym. Szybkie dojście zużywa
+do 2.7 % ciepła więcej niż oszczędne: noc jest średnio cieplejsza o 0.2 do 0.6 degC, obniżenie
+płytsze.
 
 Scenariusze z `tests/test_smartpi_sim_second_source.py`: z drugim grzejnikiem jako dodatkowym
 źródłem (Z4) 0.037 degC wobec 0.053; chłodzenie z dwoma źródłami: 0.024 degC; krzywe `source_first`
-i `together` są osiągane.
+i `together` są osiągane; po 8-godzinnej nocy w 17 degC szybkie dojście osiąga 19.8 degC po
+0.85 h, oszczędne po 2.2 h.
 
 **Decyzje podjęte na podstawie tych wyników:**
 
@@ -1096,6 +1139,27 @@ i `together` są osiągane.
     przyspieszenie kończy się wcześniej;
   - płynne wygaszanie między 0.5 a 0.1 degC zamiast progu: nie szybciej, a strefa na wodzie
     ustaliła się 0.15 degC za nisko.
+- **Szybkie dojście po obniżeniu jako domyślne** (sekcja 5.6). Strefa z samą pętlą przydziału
+  trzymała nocną nastawę dokładnie, z podłogówką na 25–60 %. Dwa niezależne SmartPI pozwalały
+  strefie zejść 0.3–0.6 degC poniżej niej, a potem nadrabiały oboma źródłami, więc rano ich
+  podłogówka była ciepła. Sprawdzone warianty, na 15 przypadków, w których strefa miała wrócić nie
+  później niż przy dwóch niezależnych SmartPI i z mniejszym przeregulowaniem:
+  - podłogówka niesie co najmniej całe nocne obciążenie, ograniczona hamowaniem (wybrany): 14;
+  - to samo dopiero po wystygnięciu strefy do nocnej nastawy, ponad hamowaniem: 8, bo traci
+    ładowanie podłogi w czasie stygnięcia;
+  - oba razem: 10 z 12 pomieszczeń;
+  - połowa nocnego obciążenia: 10, z brakiem 0.0–0.6 h w 5 przypadkach.
+
+  Oszczędne dojście zostaje do wyboru dla tych, którzy wolą najgłębsze obniżenie. Po ponownym
+  uruchomieniu z wywołaniem regulacji 170 i 340 s po początku cyklu najszybszy pokój (`b` 0.002,
+  `a` 0.06, łagodnie) przeregulowywał się o 0.53–0.57 degC wobec 0.45 przy dwóch niezależnych
+  SmartPI: ciepła podłoga przyspieszała wzrost, a odpowiedź głównego źródła w cyklu po
+  przyspieszeniu wynosiła strefę ponad nastawę. Przyspieszenie kończy się teraz dwa cykle wcześniej
+  zamiast jednego. W trzech fazach przeregulowanie jest wtedy we wszystkich przypadkach mniejsze niż
+  przy dwóch niezależnych SmartPI; poranki są o 0.1–0.3 h dłuższe w kilku pomieszczeniach, nadal
+  krótsze niż przy dwóch niezależnych SmartPI, poza pomieszczeniem `b` 0.002, `a` 0.04 przy
+  zimnej pogodzie (ograniczenia niżej) i najszybszym pomieszczeniem przy zimnej pogodzie (do 0.16 h dłużej; w tych fazach oba układy wahają się wokół
+  nastawy).
 - **Co nie zadziałało i dlaczego projekt jest taki, jaki jest:**
   - *Uczenie dodatkowego źródła na podstawie modelu SmartPI* (pierwszy projekt): `a_f` wychodziło
     od 0.61 do 1.64 prawdziwej wartości przy czujnikach 0.1 degC albo wcale nie było publikowane.
@@ -1130,13 +1194,15 @@ i `together` są osiągane.
 
 **Ograniczenia:**
 
-- **Poranny powrót po nocnym obniżeniu** jest średnio tak samo szybki jak przy dwóch niezależnych
-  SmartPI. W 4 z 12 pomieszczeń jest szybszy, a w pozostałych wolniejszy o najwyżej 0.9 h: 4.8 h
-  wobec 4.1 h w najwolniejszym pomieszczeniu, 6.0 h wobec 5.1 h w innym wolnym pomieszczeniu przy
-  zimnej pogodzie i 6.7 h wobec 5.9 h z wodą. Pozostała różnica bierze się z nocy: podłogówka strefy
-  prawie nie pracuje, dopóki nastawa nie wzrośnie (jej ciepło rano to 0.11, wobec 0.36 przy dwóch
-  niezależnych SmartPI). Tę różnicę zamknąłby tylko wcześniejszy start przed znanym harmonogramem.
-- **Dzień 1** jest gorszy niż przy dwóch niezależnych SmartPI (0.43 wobec 0.33 degC): bloki uczenia
+- **Poranny powrót po nocnym obniżeniu.** Przy szybkim dojściu strefa wraca do nastawy nie później
+  niż przy dwóch niezależnych SmartPI w 14 z 15 przypadków (najszybsze pomieszczenie przy zimnej
+  pogodzie z dokładnością do 2 min), a przeregulowanie jest mniejsze we
+  wszystkich. W pomieszczeniu `b` 0.002, `a` 0.04 przy zimnej pogodzie trwa to 3.6 h wobec 2.9 h:
+  nocne obciążenie jest tam większe niż pełna moc podłogówki, więc nie da się jej naładować
+  bardziej. Oszczędne dojście jest wolniejsze z założenia: 2.96 h wobec 2.53 h średnio, 6.1 h wobec
+  4.7 h w najwolniejszym pomieszczeniu i 7.2 h wobec 6.0 h z wodą. Jego podłogówka prawie nie
+  pracuje w nocy.
+- **Dzień 1** jest gorszy niż przy dwóch niezależnych SmartPI (0.43 wobec 0.40 degC): bloki uczenia
   powodują wahania temperatury w strefie, dopóki dopasowanie nie zostanie opublikowane.
 - **Płyta nagrzewająca się w głąb** nie pasuje kształtem do żadnego kandydata. Jej dopasowanie ma
   błędy do 18 % (`a_f`), ale regulacja i tak jest lepsza niż przy dwóch niezależnych SmartPI.
@@ -1252,6 +1318,7 @@ W stanie głównego źródła pozycja źródła strefy przechowuje:
 | `response` | używana kandydująca skala czasu (`lag_s`, `tau_s`) |
 | `allocation`, `x_f` | wysterowanie pętli przydziału i ciepło źródła |
 | `learn_elapsed_s` | zegar uczenia każdego trybu HVAC (`heat`, `cool`; sekcja 5.5) |
+| `setback_ref` | odniesienie obniżenia (sekcja 5.6): tryb HVAC, nastawa (ujemna przy chłodzeniu) i wiek w sekundach |
 | `k_history`, `cool` | oszacowanie ciepła źródła zrobione we własnych oknach sąsiadów; służy tylko do tego, żeby to ciepło nie trafiło do ich `k` |
 
 Po restarcie strefa działa dalej od miejsca, w którym była. Dopasowanie opublikowane przed
@@ -1296,6 +1363,7 @@ Przy drugim źródle blok ma też `second_source`:
 | `command`, `x_f` | wydane wysterowanie i obecne ciepło źródła (0..1) |
 | `power_cap` | największa moc, jaką daje teraz pełne wysterowanie (jego współczynnik wody, co najmniej `WATER_NO_HEAT`; 1 bez danych o wodzie albo gdy źródło nie jest obserwowane) |
 | `recovery_boost` | strefa wraca do nastawy: znane wejścia głównego źródła pomijają ciepło źródła (sekcja 5.6) |
+| `recovery`, `setback` | dojście strefy po obniżeniu (`fast` albo `economy`) i czy obniżenie trwa teraz (sekcja 5.6) |
 | `a_f`, `a_f_reliable` | dopasowany wpływ dla bieżącego trybu HVAC |
 | `lead_emitter`, `source_emitter`, `lag_min`, `tau_min` | emitery i używana skala czasu |
 | `lead_demand_avg` | średnie ustalone zapotrzebowanie głównego źródła, za którym idzie pętla |
@@ -1371,4 +1439,7 @@ i symulacji, sam symulator oraz scenariusze N1–N7 i Z1–Z7 z ich kryteriami. 
 | `SPLIT_PREDICTED_SHARE` | 1 | część prognozowanego błędu, którą źródło może poprawić |
 | `SOURCE_BRAKE_STEPS` | 8 | liczba połowień, które wyznaczają limit hamowania |
 | `SOURCE_BOOST_ERROR_C` | 0.2 degC | strefa zimniejsza o więcej wraca do nastawy z głównym źródłem pracującym tak, jakby było samo |
+| `SOURCE_BOOST_END_CYCLES` | 2 | przyspieszenie kończy się, gdy prognoza daje strefę w paśmie w czasie opóźnienia głównego źródła plus tylu jego cykli |
+| `SOURCE_SETBACK_MIN_C` | 0.5 degC | nastawa o tyle niższa od odniesienia jest obniżeniem (sekcja 5.6) |
+| `SOURCE_SETBACK_MEMORY_S` | 24 h | jak długo odniesienie obniżenia jest pamiętane |
 | `WATER_NO_HEAT` | 0.05 | najniższy limit mocy źródła na wodzie ([Wejścia wody i kotła, §10](water_input.md#10-stałe-ograniczenia-i-otwarte-kwestie)) |

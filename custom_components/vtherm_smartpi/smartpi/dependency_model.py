@@ -58,6 +58,7 @@ from .const import (
     DOOR_SETTLING_S,
     COUPLING_K_MAX,
     KNOWN_INPUT_FADE_S,
+    SOURCE_BOOST_END_CYCLES,
     SOURCE_BOOST_ERROR_C,
     SOURCE_BRAKE_STEPS,
     SOURCE_LEARN_BLOCK_MIN_S,
@@ -68,6 +69,8 @@ from .const import (
     SOURCE_PREDICTION_MIN_S,
     SOURCE_PREDICTION_STEP_S,
     SOURCE_SENSITIVITY_MIN_C,
+    SOURCE_SETBACK_MEMORY_S,
+    SOURCE_SETBACK_MIN_C,
     SOURCE_TRAJECTORY_MIN,
     SOURCE_X_MIN,
     SOURCE_X_OFF,
@@ -83,6 +86,7 @@ from .const import (
     ZONE_FIT_MAX_GAP_S,
     ZONE_FIT_MAX_REL_SE,
     ZONE_FIT_TIMEOUT_S,
+    ZONE_RECOVERY_FAST,
 )
 from .coupling_estimator import CouplingEstimator, CouplingTick
 from .dependencies import MODE_ALWAYS, MODE_DOOR, DependencyState
@@ -126,6 +130,16 @@ def _usable_preset(value: float | None, temp_range: tuple[float, float] | None) 
     if value is None or value <= 0.0:
         return False
     return temp_range is None or temp_range[0] <= value <= temp_range[1]
+
+
+def _load_setback_ref(saved: Any, now_s: float) -> tuple[str, float, float] | None:
+    """The saved reference of a setback (its age kept, not its monotonic time)."""
+    if not isinstance(saved, dict):
+        return None
+    mode, setpoint, age_s = saved.get("mode"), saved.get("setpoint"), saved.get("age_s")
+    if not isinstance(mode, str) or not isinstance(setpoint, (int, float)) or not isinstance(age_s, (int, float)):
+        return None
+    return mode, float(setpoint), now_s - max(float(age_s), 0.0)
 
 
 def _sign(hvac_mode: VThermHvacMode | None) -> float:
@@ -226,6 +240,11 @@ class _Source:
         # The source_heat gate, held between SOURCE_X_OFF and SOURCE_X_MIN.
         self.gate = False
         self.restore: dict[str, Any] | None = None
+        # The day's setpoint a setback is measured from: (HVAC mode key, setpoint signed
+        # by the mode, monotonic time it was last held), and whether a setback runs now.
+        self.setback_ref: tuple[str, float, float] | None = None
+        self.setback = False
+        self.now_s: float | None = None
 
     @property
     def heat(self):
@@ -495,8 +514,9 @@ class DependencyModel:
         So while the zone is colder than its setpoint by more than
         SOURCE_BOOST_ERROR_C, the lead works as if it were alone. The boost ends
         early, once the fitted model says the zone reaches that band within the
-        lead's delay plus one of its cycles at the present powers: the heat the
-        lead has already sent then lands the zone instead of overshooting it.
+        lead's delay plus SOURCE_BOOST_END_CYCLES of its cycles at the present
+        powers: the heat the lead has already sent, and its answer to the error
+        left in the next cycle, then land the zone instead of overshooting it.
         """
         source = self._source
         if fit is None or source.mode != SOURCE_MODE_ALLOCATION:
@@ -508,7 +528,7 @@ class DependencyModel:
         lead = min(max(ctx.lead_output, 0.0), 1.0) * min(max(ctx.lead_power_cap, 0.0), 1.0)
         exchange = sum(item.conductance * (ctx.zone_temp - item.temperature) for item in exchanges)
         rate = sign * fit.a * lead + sign * fit.a_f * source.x_f - fit.b * (ctx.zone_temp - ctx.ext_temp) - exchange
-        horizon_min = (fit.lead_delay_s + max(ctx.lead_cycle_s, 0.0)) / 60.0
+        horizon_min = (fit.lead_delay_s + SOURCE_BOOST_END_CYCLES * max(ctx.lead_cycle_s, 0.0)) / 60.0
         return error - sign * rate * horizon_min > SOURCE_BOOST_ERROR_C
 
     def _neighbour_k(self, item_id: str, fit: ZoneFitResult | None) -> float | None:
@@ -563,6 +583,7 @@ class DependencyModel:
             fit = self.zone_fit(ctx.hvac_mode)
             if fit is not None:
                 source.candidates.select(fit.candidate)
+            source.setback_ref = _load_setback_ref(restore.get("setback_ref"), ctx.now_s)
             # A fit known before a restart is fully in the control law: the
             # source's a_f and the neighbours' k it gives, in either HVAC mode.
             for hvac_mode in (VThermHvacMode_HEAT, VThermHvacMode_COOL):
@@ -644,6 +665,12 @@ class DependencyModel:
         item_state["zone_fit"] = source.fits[_FIT_HEAT].save_state()
         item_state["zone_fit_cool"] = source.fits[_FIT_COOL].save_state()
         item_state["learn_elapsed_s"] = {key: round(value, 1) for key, value in source.learn_elapsed_s.items()}
+        ref = source.setback_ref
+        if ref is not None and source.now_s is not None:
+            # Kept as an age: the monotonic clock starts again after a restart.
+            item_state["setback_ref"] = {"mode": ref[0], "setpoint": round(ref[1], 2), "age_s": round(source.now_s - ref[2], 1)}
+        else:
+            item_state.pop("setback_ref", None)
         cool = self._coupling.save_item(cool_key(source.settings.item_id))
         if cool.get("k_history"):
             item_state["cool"] = cool
@@ -758,6 +785,7 @@ class DependencyModel:
                 ctx = replace(ctx, target_temp=max(setpoint, ctx.target_temp))
             else:
                 ctx = replace(ctx, target_temp=min(setpoint, ctx.target_temp))
+        source.setback = self._track_setback(ctx, mode_key)
         if ctx.learning_phase:
             source.mode, source.braked = SOURCE_MODE_LEARN, False
             source.command = self._learn_command(ctx)
@@ -787,7 +815,53 @@ class DependencyModel:
         correction = SPLIT_ERROR_GAIN * error / source.gain_ratio if error is not None else 0.0
         braked = self._predictive_command(ctx, fit, exchanges, source.loop.command)
         source.braked = braked < source.loop.command
-        source.command = min(max(min(source.loop.command + correction, braked), 0.0), 1.0)
+        wanted = source.loop.command + correction
+        setback_load = self._setback_load(ctx, fit, exchanges)
+        if setback_load is not None:
+            wanted = max(wanted, setback_load)
+        source.command = min(max(min(wanted, braked), 0.0), 1.0)
+
+    def _track_setback(self, ctx: ModelContext, mode_key: str) -> bool:
+        """Follow the day's setpoint; return whether the zone is in a setback now.
+
+        The reference is the highest setpoint (lowest in cooling) held within the last
+        SOURCE_SETBACK_MEMORY_S. A setpoint at least SOURCE_SETBACK_MIN_C below it is a
+        setback; one held for longer than the memory becomes the new reference.
+        """
+        source = self._source
+        source.now_s = ctx.now_s
+        if ctx.target_temp is None:
+            return False
+        value = _sign(ctx.hvac_mode) * ctx.target_temp
+        ref = source.setback_ref
+        if ref is None or ref[0] != mode_key or value >= ref[1] or ctx.now_s - ref[2] > SOURCE_SETBACK_MEMORY_S:
+            source.setback_ref = (mode_key, value, ctx.now_s)
+            return False
+        return value <= ref[1] - SOURCE_SETBACK_MIN_C
+
+    def _setback_load(
+        self, ctx: ModelContext, fit: ZoneFitResult | None, exchanges: tuple[ExchangeInput, ...]
+    ) -> float | None:
+        """Fast recovery: during a setback the source carries at least the zone's load
+        at the lower setpoint, from the zone's fit, so that a slow emitter is warm when
+        the setpoint rises again. None when this does not apply (economical recovery, no
+        setback, no fit, a temperature missing).
+
+        The brake still caps the command: the zone is not driven above its setback.
+        """
+        source = self._source
+        if (
+            source.settings.recovery != ZONE_RECOVERY_FAST
+            or not source.setback
+            or fit is None
+            or fit.a_f <= 0.0
+            or ctx.target_temp is None
+            or ctx.ext_temp is None
+        ):
+            return None
+        exchange = sum(item.conductance * (ctx.target_temp - item.temperature) for item in exchanges)
+        load = _sign(ctx.hvac_mode) * (fit.b * (ctx.target_temp - ctx.ext_temp) + exchange) / fit.a_f
+        return min(max(load, 0.0), 1.0)
 
     def _pause_loop(self) -> None:
         source = self._source
@@ -960,6 +1034,8 @@ class DependencyModel:
             "x_f": round(source.x_f, 3),
             "power_cap": round(source.power_cap, 3),
             "recovery_boost": source.boost,
+            "recovery": settings.recovery,
+            "setback": source.setback,
             "a_f": round(fit.a_f, 5) if fit is not None else None,
             "a_f_reliable": fit is not None,
             "lead_emitter": settings.lead_emitter,

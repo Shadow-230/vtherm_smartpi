@@ -155,6 +155,9 @@ flowchart TD
   thermostats (`together` 10 à 1000 %, `source_first` et `lead_band` 0 à 100 %). Elle avertit quand le
   type de chauffage de la source principale répond plus lentement que celui de l'autre. Si l'utilisateur
   les a demandés, elle demande aussi le retard et l'inertie de la source additionnelle (0 à 600 min).
+  La même étape règle le **retour après un abaissement** de la zone (section 5.6) : *Comme dans les
+  paramètres SmartPI par défaut* (par défaut), *Rapide* ou *Économique*. Le formulaire décrit
+  brièvement chaque option. La zone garde son propre choix quand ses sources ou sa règle changent.
 - **Où c'est enregistré.** La zone est enregistrée dans l'entrée de la source principale, comme son
   élément `source`, qui nomme aussi le maître (`zone_master`). Les voisins et les portes de la zone sont
   dans la même entrée. L'entrée de l'autre thermostat ne stocke rien sur la zone. Ce thermostat trouve
@@ -230,8 +233,10 @@ du registre), `mode`, `door_sensors` et `neighbour_window_action`. L'élément s
 (`split_ratio`, `source_alone_percent` ou `lead_band_percent`). Il contient aussi `lead_emitter` (le
 type de chauffage de l'entrée de la source principale) et `source_emitter` (le type de chauffage de
 l'entrée de la source additionnelle, relu au démarrage, ou `custom`). Pour une réponse personnalisée, il
-contient `source_lag_min` et `source_tau_min`. Une zone enregistrée par une version antérieure peut
-aussi contenir `lead_lag_min` et `lead_tau_min`, que rien n'utilise.
+contient `source_lag_min` et `source_tau_min`. Une zone avec son propre retour après un abaissement
+contient `recovery` (`fast` ou `economy`) ; sans lui, la zone suit le paramètre partagé
+`smart_pi_zone_recovery` des réglages du régulateur de la source principale. Une zone enregistrée
+par une version antérieure peut aussi contenir `lead_lag_min` et `lead_tau_min`, que rien n'utilise.
 
 ### 2.2 Remise à zéro du modèle appris
 
@@ -890,9 +895,10 @@ flowchart LR
         dZ/dt = clamp((avg(D) − f(Z_applied)) / T_I, ±1 / max(SPLIT_MIN_FULL_RANGE_S, L_f + tau_f))
         T_I = max(SPLIT_MIN_TIME_S, SPLIT_SETTLE_FACTOR·(L_f + tau_f))·r
         T_avg = max(SPLIT_AVERAGE_MIN_S, SPLIT_AVERAGE_FRACTION·T_I)
-        Z = clamp(min(Z_loop + SPLIT_ERROR_GAIN·e / r, Z_brake), 0, 1)
+        Z = clamp(min(max(Z_loop + SPLIT_ERROR_GAIN·e / r, Z_setback), Z_brake), 0, 1)
 
-  Ici, `e` est l'erreur de la zone, `Z_brake` le plafond du freinage (voir plus bas), et
+  Ici, `e` est l'erreur de la zone, `Z_setback` le plancher du retour rapide (voir **Retour après un
+  abaissement** plus bas ; aucun sinon), `Z_brake` le plafond du freinage (voir plus bas), et
   `r = max(1, a_f/a)` vient de l'ajustement (1 avant l'ajustement ; `r` suit l'ajustement avec une
   hystérésis de 20 %). La boucle ne monte pas tant que la zone est chaude ou que le freinage retient
   la source (`hold_up`). Elle ne descend pas tant que la zone est froide (`hold_down`).
@@ -924,17 +930,46 @@ correction de l'apprentissage. La source principale travaille alors comme si ell
 (`recovery_boost` dans les diagnostics). Le renfort de rattrapage a besoin d'un ajustement publié
 et du mode d'allocation ; sans eux, il est inactif. Le renfort s'arrête plus tôt dès que le modèle ajusté
 indique que la zone atteindra cette bande d'ici la fin du retard ajusté de la source principale
-plus un de ses cycles, aux puissances actuelles. La chaleur que la source principale a déjà envoyée
-amène alors la zone dans la bande au lieu de la lui faire dépasser. Sans cet arrêt anticipé, les
-pièces rapides dépassaient leur consigne de jusqu'à 0.66 degC (section 5.8).
+plus `SOURCE_BOOST_END_CYCLES` (deux) de ses cycles, aux puissances actuelles : le cycle en cours,
+et le suivant, où la source principale répond encore à l'erreur qui reste. La chaleur que la source
+principale a déjà envoyée amène alors la zone dans la bande au lieu de la lui faire dépasser. Sans
+cet arrêt anticipé, les pièces rapides dépassaient leur consigne de jusqu'à 0.66 degC ; avec un
+cycle au lieu de deux, une pièce rapide dont le plancher restait chaud grâce au retour rapide
+dépassait de 0.57 degC contre 0.45 avec deux SmartPI indépendants (section 5.8).
 
 ```mermaid
 stateDiagram-v2
     state "la source principale compte la chaleur de la source additionnelle" as Counted
     state "rattrapage : la source principale travaille comme si elle était seule" as Boost
-    Counted --> Boost: ajustement publié, mode d'allocation, zone plus froide que la consigne de plus de SOURCE_BOOST_ERROR_C, et zone non prévue dans la bande d'ici le retard de la source principale plus un cycle
-    Boost --> Counted: zone prévue dans la bande d'ici le retard de la source principale plus un cycle, zone dans la bande, ou pas d'ajustement ou d'allocation
+    Counted --> Boost: ajustement publié, mode d'allocation, zone plus froide que la consigne de plus de SOURCE_BOOST_ERROR_C, et zone non prévue dans la bande d'ici le retard de la source principale plus deux cycles
+    Boost --> Counted: zone prévue dans la bande d'ici le retard de la source principale plus deux cycles, zone dans la bande, ou pas d'ajustement ou d'allocation
 ```
+
+**Retour après un abaissement.** Pendant un abaissement de nuit, deux SmartPI indépendants laissent
+la zone descendre sous la consigne basse et gardent le plancher chaud. La zone à deux sources tient
+la consigne basse de près : le plancher, lent, refroidit, et le matin la zone l'attend. Le paramètre
+**retour après un abaissement** de la zone choisit ce qui se passe :
+
+- *Rapide* (par défaut) : pendant un abaissement, la source additionnelle porte au moins toute la
+  charge de la zone à la consigne basse, d'après l'ajustement de la zone :
+
+        Z_setback = clamp(signe · (b·(T_sp − T_ext) + Σ k_j·(T_sp − T_j)) / a_f, 0, 1)
+
+  `signe` vaut −1 en refroidissement. Le freinage plafonne toujours la commande : la zone n'est pas
+  poussée au-dessus de son abaissement. Le plancher reste chaud et la zone revient plus tôt à sa
+  consigne, avec environ 1 à 2 % d'énergie en plus (section 5.8).
+- *Économique* : la boucle d'allocation seule, comme avant. L'abaissement est le plus profond,
+  l'énergie la plus basse, et la zone met plus de temps à revenir.
+
+Un abaissement est une consigne inférieure d'au moins `SOURCE_SETBACK_MIN_C` à la référence, en
+chauffage (supérieure, en refroidissement). La référence est la consigne la plus haute (la plus
+basse, en refroidissement) tenue pendant les dernières `SOURCE_SETBACK_MEMORY_S`. Une consigne plus
+haute, un passage entre chauffage et refroidissement, ou un abaissement tenu plus longtemps que
+cette mémoire démarre une nouvelle référence. La référence garde son âge au redémarrage. Le retour
+rapide demande un ajustement publié et la température extérieure. Une consigne abaissée par la
+fenêtre ouverte d'un voisin (section 4.5) compte aussi comme un abaissement. Le paramètre est
+partagé : il se règle dans l'entrée « SmartPI defaults » (ou dans les réglages propres du
+régulateur d'un thermostat), et chaque zone peut le remplacer dans son formulaire.
 
 **Freinage anticipé.** Un plancher réagit avec des heures de retard : la chaleur déjà en route
 continue d'arriver après que la zone a atteint sa consigne. Le freinage limite la commande à ce que
@@ -1075,33 +1110,42 @@ variation quotidienne de ±3 degC. Le jour 1 commence 1 degC sous la consigne. L
 établi est la moyenne des jours 3–4. Viennent ensuite trois nuits avec la consigne abaissée à 17 degC
 (pendant 6, 8 et 10 h).
 
-**Douze pièces** (`b` de 0.0005 à 0.002 /min, `a` de 0.015 à 0.06 degC/min) :
+**Douze pièces** (`b` de 0.0005 à 0.002 /min, `a` de 0.015 à 0.06 degC/min). La zone fonctionne
+avec le retour rapide après un abaissement (par défaut, section 5.6) ; la colonne économique est la
+même zone avec la boucle d'allocation seule :
 
-| Mesure | Zone à deux sources | Deux SmartPI indépendants |
-|---|---|---|
-| Erreur en régime établi, moyenne des 12 pièces | 0.030 degC | 0.065 degC |
-| Erreur en régime établi, plage | 0.018–0.052 degC | 0.032–0.113 degC |
-| Dépassement après la nuit, pire pièce / moyenne | 0.30 / 0.13 degC | 0.53 / 0.40 degC |
-| Temps pour arriver à 0.2 degC sous la consigne après la nuit, moyenne | 2.94 h | 2.86 h |
-| Idem, pièce la plus lente (`b` 0.0005, `a` 0.015, froid) | 4.8 h | 4.1 h |
-| Erreur du jour 1, moyenne | 0.43 degC | 0.33 degC |
-| Ajustement publié | après 19.5 h dans chaque pièce | — |
-| `a`, `b`, `a_f` ajustés, rapportés aux vraies valeurs | 0.99–1.03, un `a_f` à 1.10 | ceux de SmartPI lui-même, un seul thermostat : `a` 0.55–1.34, `b` 0.53–1.16 |
-| Retard de la source principale | 10 min, la vraie valeur, dans chaque pièce | — |
+| Mesure | Zone, retour rapide | Zone, économique | Deux SmartPI indépendants |
+|---|---|---|---|
+| Erreur en régime établi, moyenne des 12 pièces | 0.030 degC | 0.030 degC | 0.099 degC |
+| Erreur en régime établi, plage | 0.018–0.052 degC | 0.018–0.052 degC | 0.053–0.253 degC |
+| Dépassement après la nuit, pire pièce / moyenne | 0.35 / 0.14 degC | 0.24 / 0.10 degC | 0.84 / 0.42 degC |
+| Temps pour arriver à 0.2 degC sous la consigne après la nuit, moyenne | 1.90 h | 2.96 h | 2.53 h |
+| Idem, pièce la plus lente (`b` 0.001, `a` 0.02, froid) | 4.2 h | 6.1 h | 4.7 h |
+| Erreur du jour 1, moyenne | 0.43 degC | 0.43 degC | 0.40 degC |
+| Ajustement publié | après 19.5 h dans chaque pièce | après 19.5 h dans chaque pièce | — |
+| `a`, `b`, `a_f` ajustés, rapportés aux vraies valeurs | 0.99–1.06 | — | — |
+| Retard de la source principale | 10 min, la vraie valeur, dans chaque pièce | — | — |
 
-**Installations** (pièce `b` 0.001, `a` 0.03, temps doux) :
+**Installations** (pièce `b` 0.001, `a` 0.03, temps doux ; retour rapide) :
 
 | Cas | Zone | Indépendants | Ajustement |
 |---|---|---|---|
-| plancher derrière une vanne | 0.020 degC | 0.050 degC | 1.03/1.02/1.03 |
-| dalle qui chauffe dans son épaisseur (deux inerties en série) | 0.035 degC | 0.056 degC | `a` 0.95, `b` 1.06, `a_f` 1.18 |
-| eau sur courbes de chauffe, données d'eau venant d'entités (rattrapage 6.7 h contre 5.9 h) | 0.053 degC | 0.094 degC | 0.99/0.97/0.94 |
-| deux zones, porte ouverte 6–23 h | 0.034 / 0.029 degC | 0.072 / 0.055 degC | `k` 0.89 / 0.94 |
-| deux zones, porte toujours ouverte | 0.021 / 0.018 degC | 0.055 / 0.042 degC | `k` 1.04 / 0.96 |
+| plancher derrière une vanne | 0.020 degC | 0.089 degC | 1.01/1.01/1.01 |
+| dalle qui chauffe dans son épaisseur (deux inerties en série) | 0.035 degC | 0.092 degC | `a` 0.97, `b` 1.10, `a_f` 1.20 |
+| eau sur courbes de chauffe, données d'eau venant d'entités (rattrapage 3.7 h ; économique 7.2 h ; indépendants 6.0 h) | 0.053 degC | 0.128 degC | 0.98/0.96/0.93 |
+| deux zones, porte ouverte 6–23 h | 0.034 / 0.029 degC | 0.124 / 0.066 degC | `k` 0.89 / 0.94 |
+| deux zones, porte toujours ouverte | 0.024 / 0.019 degC | 0.089 / 0.092 degC | `k` 0.97 / 0.95 |
+
+**Chaleur utilisée** sur les trois nuits et jours, dans les 12 pièces et les trois installations
+ci-dessus (bilan thermique de la pièce, les deux sources, rendement de la chaudière supposé
+constant) : par rapport à deux SmartPI indépendants, −0.6 à +2.0 % avec le retour rapide et −1.3 à
++0.4 % avec l'économique. Le retour rapide utilise jusqu'à 2.7 % de chaleur en plus que l'économique :
+la nuit est en moyenne 0.2 à 0.6 degC plus chaude, l'abaissement moins profond.
 
 Scénarios de `tests/test_smartpi_sim_second_source.py` : avec un second radiateur comme source
 additionnelle (Z4), 0.037 degC contre 0.053 ; refroidissement avec deux sources, 0.024 degC ; les
-courbes de `source_first` et `together` sont atteintes.
+courbes de `source_first` et `together` sont atteintes ; après une nuit de 8 h à 17 degC, le
+retour rapide atteint 19.8 degC en 0.85 h, l'économique en 2.2 h.
 
 **Décisions prises à partir de ces résultats :**
 
@@ -1125,6 +1169,27 @@ courbes de `source_first` et `together` sont atteintes.
     C'est pourquoi le renfort se termine en avance ;
   - une transition douce entre 0.5 et 0.1 degC au lieu d'un seuil : pas plus rapide, et une zone sur
     eau se stabilisait 0.15 degC trop bas.
+- **Retour rapide après un abaissement par défaut** (section 5.6). La zone avec la boucle
+  d'allocation seule tenait la consigne de nuit de près, avec le plancher à 25–60 %. Deux SmartPI
+  indépendants laissaient la zone descendre 0.3–0.6 degC en dessous puis rattrapaient avec les deux
+  sources : leur plancher était chaud le matin. Variantes essayées, sur 15 cas où la zone devait
+  revenir au plus tard comme deux SmartPI indépendants et dépasser moins :
+  - le plancher porte au moins toute la charge de la nuit, plafonné par le freinage (gardée) : 14 ;
+  - la même, seulement une fois la zone refroidie à la consigne de nuit, au-dessus du freinage : 8,
+    car elle perd la charge du plancher pendant que la zone refroidit ;
+  - les deux ensemble : 10 des 12 pièces ;
+  - la moitié de la charge de la nuit : 10, avec 0.0–0.6 h de manque dans 5 cas.
+
+  Le retour économique reste disponible pour qui préfère l'abaissement le plus profond. Relancée
+  avec l'appel de régulation à 170 et 340 s dans son cycle, la pièce la plus rapide (`b` 0.002,
+  `a` 0.06, temps doux) dépassait de 0.53–0.57 degC contre 0.45 avec deux SmartPI indépendants : le
+  plancher chaud faisait monter la zone plus vite, et la réponse de la source principale dans le
+  cycle qui suit le renfort la faisait passer au-dessus. Le renfort s'arrête maintenant deux cycles
+  en avance au lieu d'un. Sur les trois phases, le dépassement est alors inférieur à celui de deux
+  SmartPI indépendants dans tous les cas ; les matins durent 0.1–0.3 h de plus dans quelques pièces,
+  toujours moins qu'avec deux SmartPI indépendants, sauf dans la pièce `b` 0.002, `a` 0.04 par temps
+  froid (voir les limites plus bas) et dans la pièce la plus rapide par temps froid (jusqu'à 0.16 h de plus, où les deux installations oscillent autour
+  de la consigne à ces phases).
 - **Ce qui n'a pas marché, et pourquoi la conception est ce qu'elle est :**
   - *Apprendre la source additionnelle par-dessus le modèle de SmartPI* (la première conception) :
     `a_f` sortait à 0.61–1.64 fois la vraie valeur avec des capteurs au pas de 0.1 degC, ou n'était
@@ -1161,14 +1226,15 @@ courbes de `source_first` et `together` sont atteintes.
 
 **Limites :**
 
-- **Le rattrapage du matin après un abaissement de nuit** est en moyenne aussi rapide qu'avec deux
-  SmartPI indépendants. Il est plus rapide dans 4 pièces sur 12 et jusqu'à 0.9 h plus lent dans les
-  autres : 4.8 h contre 4.1 h dans la pièce la plus lente, 6.0 h contre 5.1 h dans une autre pièce
-  lente par temps froid, et 6.7 h contre 5.9 h avec l'eau. L'écart qui reste vient de la nuit : le
-  plancher de la zone reste presque inactif jusqu'à la hausse de la consigne (sa chaleur vaut 0.11 le
-  matin, contre 0.36 avec deux SmartPI indépendants). Seul un démarrage anticipé avant un horaire
-  connu comblerait cet écart.
-- **Le jour 1** est moins bon qu'avec deux SmartPI indépendants (0.43 contre 0.33 degC) : les blocs
+- **Rattrapage du matin après un abaissement de nuit.** Avec le retour rapide, la zone revient à sa
+  consigne au plus tard comme avec deux SmartPI indépendants dans 14 cas sur 15 (la pièce la plus
+  rapide par temps froid à 2 min près), et dépasse moins
+  dans tous. Dans la pièce `b` 0.002, `a` 0.04 par temps froid, elle met 3.6 h contre 2.9 h : la
+  charge de la nuit y dépasse la pleine puissance du plancher, qui ne peut donc pas être chargé
+  davantage. Le retour économique est plus lent par conception : 2.96 h contre 2.53 h en moyenne,
+  6.1 h contre 4.7 h dans la pièce la plus lente, et 7.2 h contre 6.0 h avec l'eau. Son plancher
+  reste presque inactif pendant la nuit.
+- **Le jour 1** est moins bon qu'avec deux SmartPI indépendants (0.43 contre 0.40 degC) : les blocs
   d'apprentissage font osciller la zone jusqu'à la publication de l'ajustement.
 - **Une dalle qui chauffe dans son épaisseur** ne correspond à la forme d'aucun candidat. Son
   ajustement a des erreurs jusqu'à 18 % (`a_f`), mais la régulation reste meilleure qu'avec deux
@@ -1288,6 +1354,7 @@ Dans l'état de la source principale, l'élément source de la zone garde :
 | `response` | l'échelle de temps candidate utilisée (`lag_s`, `tau_s`) |
 | `allocation`, `x_f` | la commande de la boucle d'allocation et la chaleur de la source |
 | `learn_elapsed_s` | l'horloge d'apprentissage de chaque mode HVAC (`heat`, `cool` ; section 5.5) |
+| `setback_ref` | la référence de l'abaissement (section 5.6) : mode HVAC, consigne (négative en refroidissement) et âge en secondes |
 | `k_history`, `cool` | l'estimation de la chaleur de la source faite dans les fenêtres propres des voisins ; elle sert seulement à tenir cette chaleur hors de leur `k` |
 
 Après un redémarrage, la zone reprend là où elle en était. Un ajustement publié avant le redémarrage
@@ -1332,6 +1399,7 @@ Avec une deuxième source, le bloc contient aussi `second_source` :
 | `command`, `x_f` | la commande donnée et la chaleur de la source en ce moment (0..1) |
 | `power_cap` | la plus grande puissance qu'une commande pleine donne en ce moment (son facteur d'eau, au moins `WATER_NO_HEAT` ; 1 sans données d'eau ou tant que la source n'est pas observée) |
 | `recovery_boost` | la zone est en rattrapage : les entrées connues de la source principale laissent de côté la chaleur de la source (section 5.6) |
+| `recovery`, `setback` | le retour après un abaissement de la zone (`fast` ou `economy`) et si un abaissement est en cours (section 5.6) |
 | `a_f`, `a_f_reliable` | l'effet ajusté pour le mode HVAC actuel |
 | `lead_emitter`, `source_emitter`, `lag_min`, `tau_min` | les émetteurs et l'échelle de temps utilisée |
 | `lead_demand_avg` | la demande stable moyenne de la source principale, suivie par la boucle |
@@ -1407,4 +1475,7 @@ critères. Les résultats des sections 4.6 et 5.8 viennent de ces tests.
 | `SPLIT_PREDICTED_SHARE` | 1 | part de l'erreur prévue que la source peut corriger |
 | `SOURCE_BRAKE_STEPS` | 8 | divisions par deux qui trouvent le plafond du freinage |
 | `SOURCE_BOOST_ERROR_C` | 0.2 degC | une zone plus froide que cela fait son rattrapage avec la source principale qui travaille comme si elle était seule |
+| `SOURCE_BOOST_END_CYCLES` | 2 | le renfort s'arrête quand la zone est prévue dans la bande d'ici le retard de la source principale plus ce nombre de ses cycles |
+| `SOURCE_SETBACK_MIN_C` | 0.5 degC | une consigne aussi loin sous la référence est un abaissement (section 5.6) |
+| `SOURCE_SETBACK_MEMORY_S` | 24 h | durée pendant laquelle la référence d'un abaissement est gardée |
 | `WATER_NO_HEAT` | 0.05 | plus petit plafond de puissance d'une source sur eau ([Entrées eau et chaudière, §10](water_input.md#10-constantes-limites-et-points-ouverts)) |
