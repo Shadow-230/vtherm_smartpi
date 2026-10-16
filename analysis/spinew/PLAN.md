@@ -23,11 +23,11 @@ Stan na: 2026-10-16.
 | A3 | `fix/spinew-a3-regulation-gaps` | `2d5ce1c` (port autora), `154230d`, `077e091` (D11, ta sama zmiana co w A1) | PR #19; CI zielone; lokalnie pada tylko `test_rooms[fastcool-midheat-cold]` → naprawia Z1 |
 | A4 | `feat/spinew-a4-state-store` | `d04c21f` (autor), `fab5e37` (D9) | PR #20; wszystko zielone |
 | A5 | `fix/spinew-a5-off-cycle` | `e4a0a49`, `c750ac3` (autor), `823f2e4`, `5c11903` (D12) | PR #21; wszystko zielone |
-| Z1 | `feat/zone-recovery` (od A1) | `7c7f5e6` | gotowe lokalnie: CI 1369 passed, lokalnie 1453 passed (w tym oba pokoje z A1/A3), pokrycie 93,19 → 93,22 %; wynik i odstępstwa: `ANALIZA.md` §20.6; niewypchnięte |
+| Z1 | `feat/zone-recovery` (od A1) | `7c7f5e6` | wypchnięte, PR po scaleniu #17; CI 1369 passed, lokalnie 1453 passed (w tym oba pokoje z A1/A3), pokrycie 93,19 → 93,22 %; wynik i odstępstwa: `ANALIZA.md` §20.6 |
 
 Gałęzie etapów i `feat/zone-recovery` są w forku (wypchnięte 2026-10-16 za zgodą właściciela).
-PR-y A1–A5 do `dev2`: #17–#21 (2026-10-16), nie scalone. Commit Z1 `7c7f5e6` czeka na zgodę na push;
-jego PR po scaleniu #17. Kolejna sesja: `git fetch origin` i praca na nich.
+PR-y A1–A5 do `dev2`: #17–#21 (2026-10-16), nie scalone. Z1 (`7c7f5e6`) wypchnięty; jego PR po
+scaleniu #17. PR-y #17–#21 obserwowane w sesji (CI zielone na wszystkich). Kolejna sesja: `git fetch origin` i praca na nich.
 
 **Następne kroki:**
 1. Za „tak” właściciela: PR-y gałęzi A1–A5 do `dev2` (każdy osobno). Przy
@@ -36,8 +36,8 @@ jego PR po scaleniu #17. Kolejna sesja: `git fetch origin` i praca na nich.
    A1 i A3 jako ten sam kod: przy drugim scaleniu zostaje jedna kopia i jeden wpis CHANGELOG.
 2. Z1: push i PR do `dev2` po scaleniu #17 (za „tak” właściciela).
 3. Faza B, potem C (opisy niżej) – dopiero po potwierdzeniu właściciela.
-4. D18 (`ANALIZA.md` §20.6): błąd ustalony strefy w szybkim pokoju przy innych fazach – decyzja,
-   czy osobny etap.
+4. Etap Z2 (D18, `ANALIZA.md` §20.6): błąd ustalony strefy 0,20 °C w szybkim pokoju
+   (`fastcool-fastheat`, mróz) przy fazach 170/340 s; najpierw diagnoza, potem plan do akceptacji.
 
 Odtworzenie środowiska i pomiarów: `ANALIZA.md` §3, `tools/` (skrypty), `results/` (wyniki).
 

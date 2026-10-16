@@ -442,9 +442,10 @@ się parsują.
 | D13 | Optymalizacja dojścia strefy po obniżeniu: cel „dojście nie wolniejsze i mniejsze przegrzanie niż dwa osobne SmartPI”, §20 | przyjęte 2026-10-16 (cel właściciela) |
 | D14 | Ustawienie „Dojście po obniżeniu”: Szybkie (V1, domyślne) / Oszczędne (jak dziś); wartość we wpisie „SmartPI defaults”, nadpisanie w formularzu strefy („Jak w SmartPI defaults” domyślnie); krótki opis każdej opcji w oknie wyboru | przyjęte 2026-10-16 (rekomendacja: 2 poziomy, wariant pośredni odrzucony) |
 | D15 | Kryterium testu dla „Oszczędne”: dłuższe dojście akceptowalne (właściciel: celowo wolniej) | przyjęte 2026-10-16 |
-| D16 | Pokój „fastcool-midheat, mróz” przy „Szybkie” +0,7 h: opisany wyjątek w teście | przyjęte 2026-10-16 (właściciel zlecił Z1 z tą propozycją): wyjątek 0,8 h w `RECOVERY_SLOWER_H` |
+| D16 | Pokój „fastcool-midheat, mróz” przy „Szybkie” +0,7 h: opisany wyjątek w teście | przyjęte 2026-10-16: wyjątek 0,8 h w `RECOVERY_SLOWER_H` |
+| D16a | Koniec przyspieszenia (boost) głównego źródła: opóźnienie + 2 cykle (§20.6) | przyjęte 2026-10-16 |
 | D17 | Poranne podbicie krzywej grzewczej (strona kotła, nie SmartPI), §20.5 | informacyjnie; ewentualnie osobna funkcja smart boilera |
-| D18 | Strefa `fastcool-fastheat`, mróz, fazy 170/340 s: błąd ustalony 0,20 °C także na `dev2` (§20.6) | otwarte: osobny etap po Z1? |
+| D18 | Strefa `fastcool-fastheat`, mróz, fazy 170/340 s: błąd ustalony 0,20 °C także na `dev2` (§20.6) | przyjęte 2026-10-16: osobny etap (Z2), po Z1 |
 
 ## 17. Testy – stan i wpływ
 
