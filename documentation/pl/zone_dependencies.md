@@ -1265,8 +1265,8 @@ W istniejących plikach:
   nie ma (sekcja 2.1).
 - **`__init__.py`** przeładowuje główne źródło strefy, gdy zapisuje się wpis jej dodatkowego
   źródła, chyba że ten sam zapis zapisał też wpis głównego źródła (ten przeładowuje się sam: każdy
-  wpis przeładowuje się raz). Gdy formularz strefy tworzy wpis, przeładowuje tylko termostat,
-  którego ten wpis dotyczy.
+  wpis przeładowuje się raz), oraz gdy ten wpis zostanie usunięty. Gdy formularz strefy tworzy
+  wpis, przeładowuje tylko termostat, którego ten wpis dotyczy.
 
 **Dane czytane z Versatile Thermostat.** Odczyty pochodzą z atrybutów stanu, które publikuje
 VTherm. Te atrybuty mogą się zmienić razem z gałęzią `master` VTherm:

@@ -13,7 +13,6 @@ import pytest
 
 import custom_components.vtherm_smartpi as smartpi_init
 from custom_components.vtherm_smartpi.const import (
-    DATA_SERVICES_REGISTERED,
     DOMAIN,
     PROP_FUNCTION_SMART_PI,
     SERVICE_FORCE_SMARTPI_CALIBRATION,
@@ -112,14 +111,10 @@ async def test_without_the_climate_component_or_a_target_nothing_is_called(monke
     methods[METHODS[SERVICE_RESET_SMARTPI_LEARNING]].assert_not_awaited()
 
 
-def test_services_are_registered_once_and_removed() -> None:
+def test_the_services_are_registered_with_the_integration_and_never_removed() -> None:
+    """async_setup registers them once; an entry's unload or removal leaves them in place."""
     hass = MagicMock()
     hass.data = {}
     smartpi_init._register_services(hass)
-    smartpi_init._register_services(hass)
-    assert hass.services.async_register.call_count == 4
-    assert hass.data[DOMAIN][DATA_SERVICES_REGISTERED] is True
-
-    smartpi_init._unregister_services(hass)
-    assert {call.args[1] for call in hass.services.async_remove.call_args_list} == set(METHODS)
-    assert hass.data[DOMAIN][DATA_SERVICES_REGISTERED] is False
+    assert {call.args[1] for call in hass.services.async_register.call_args_list} == set(METHODS)
+    assert not hasattr(smartpi_init, "_unregister_services")

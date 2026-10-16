@@ -239,7 +239,7 @@ async def test_the_defaults_entry_moves_its_settings_once_home_assistant_has_sta
     defaults = _defaults(hass, dict(DEV_DEFAULTS))
     assert await smartpi_init.async_migrate_entry(hass, defaults)
     with (
-        patch.object(smartpi_init, "_reload_smartpi_vtherms", AsyncMock()),
+        patch.object(smartpi_init, "_reload_smartpi_vtherms_using_defaults", AsyncMock()),
         patch.object(hass.config_entries, "async_forward_entry_setups", AsyncMock()),
     ):
         assert await REAL_SETUP_ENTRY(hass, defaults)

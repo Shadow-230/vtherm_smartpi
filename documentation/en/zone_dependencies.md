@@ -1229,8 +1229,8 @@ In the existing files:
   entry of a zone member that has none (section 2.1).
 - **`__init__.py`** reloads the zone's main source when the entry of its additional source is
   saved, unless the same save wrote the main source's entry too (that one reloads by itself:
-  each entry reloads once). When the zone form creates an entry, it reloads only the target
-  thermostat.
+  each entry reloads once), and when that entry is removed. When the zone form creates an entry,
+  it reloads only the target thermostat.
 
 **Data read from Versatile Thermostat.** The readings come from the state attributes that VTherm
 publishes. These attributes may change with VTherm's `master` branch:

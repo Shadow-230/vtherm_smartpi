@@ -1303,8 +1303,9 @@ Dans les fichiers existants :
   la zone qui n'en a pas (section 2.1).
 - **`__init__.py`** recharge la source principale de la zone quand l'entrée de sa source
   additionnelle est enregistrée, sauf si le même enregistrement a aussi écrit l'entrée de la source
-  principale (celle-ci se recharge d'elle-même : chaque entrée se recharge une fois). Quand le
-  formulaire de zone crée une entrée, il ne recharge que le thermostat concerné.
+  principale (celle-ci se recharge d'elle-même : chaque entrée se recharge une fois), et quand
+  cette entrée est supprimée. Quand le formulaire de zone crée une entrée, il ne recharge que le
+  thermostat concerné.
 
 **Données lues dans Versatile Thermostat.** Les lectures viennent des attributs d'état que VTherm
 publie. Ces attributs peuvent changer avec la branche `master` de VTherm :

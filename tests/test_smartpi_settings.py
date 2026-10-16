@@ -255,7 +255,8 @@ def test_record_full_diagnostics_follows_the_defaults_for_an_entry_that_uses_the
 
 
 async def test_a_save_of_the_defaults_reloads_the_thermostats_that_use_them(hass, monkeypatch):
-    """Without an entry of their own, or with one that uses the defaults; not one with its own values."""
+    """Without an entry of their own directly, with one that uses the defaults through that entry
+    (its setup reloads the thermostat once); not one with its own values."""
     from homeassistant.components.climate import DOMAIN as CLIMATE_DOMAIN
     from homeassistant.helpers import entity_registry as er
     from pytest_homeassistant_custom_component.common import MockConfigEntry
@@ -272,12 +273,17 @@ async def test_a_save_of_the_defaults_reloads_the_thermostats_that_use_them(hass
         reg = registry.async_get_or_create("climate", "versatile_thermostat", unique_id, config_entry=vt_entry)
         climates.append(SimpleNamespace(entity_id=reg.entity_id, unique_id=unique_id, proportional_function="smartpi"))
     hass.data[CLIMATE_DOMAIN] = SimpleNamespace(entities=climates)
+    own_entries = {}
     for unique_id, use in (("vt-defaults", True), ("vt-own", False)):
-        MockConfigEntry(
+        own = MockConfigEntry(
             domain=DOMAIN,
             unique_id=f"{DOMAIN}-{unique_id}",
             data={CONF_TARGET_VTHERM: unique_id, CONF_SMART_PI_USE_DEFAULTS: use},
-        ).add_to_hass(hass)
+        )
+        own.add_to_hass(hass)
+        own_entries[unique_id] = own.entry_id
+    defaults = MockConfigEntry(domain=DOMAIN, unique_id=DOMAIN, data={})
+    defaults.add_to_hass(hass)
     reloaded = []
 
     async def reload(entry_id):
@@ -286,6 +292,6 @@ async def test_a_save_of_the_defaults_reloads_the_thermostats_that_use_them(hass
 
     monkeypatch.setattr(hass.config_entries, "async_reload", reload)
 
-    await smartpi_init._reload_smartpi_vtherms_using_defaults(hass)
+    await smartpi_init._reload_affected_vtherms(hass, defaults)
 
-    assert sorted(reloaded) == sorted([vt_entries["vt-none"], vt_entries["vt-defaults"]])
+    assert reloaded == [own_entries["vt-defaults"], vt_entries["vt-none"]]

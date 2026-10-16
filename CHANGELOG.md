@@ -4,6 +4,14 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+- Each change of the SmartPI entries reloads only the thermostats it concerns, each once (taken
+  from the author's newer code, with the fork's zones and entries that use the defaults): a save
+  reloads its thermostat and, for a zone's additional source, the zone's main source; a save of the
+  defaults reloads the thermostats that use them; removing an entry reloads, once it is gone, the
+  thermostats that used it; unloading an entry reloads nothing. The SmartPI algorithm and its
+  services are registered once when the integration starts and are no longer removed, so a reload
+  of the last entry does not leave Versatile Thermostat without its algorithm.
+
 - In a zone with two heat sources, the main source's recovery boost starts only in a recovery: when
   the zone is more than 0.5 °C below its setpoint (after a setback or a cold start), until it reaches
   the setpoint. A dip of a steady zone no longer starts it: in the fastest simulated room in cold
