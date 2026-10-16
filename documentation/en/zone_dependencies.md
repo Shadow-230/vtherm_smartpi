@@ -393,9 +393,11 @@ stateDiagram-v2
   colder all the time, it paused SmartPI's learning most of the time, and it still gave no correct
   `k`.
 - `k` is learned only when SmartPI itself could learn. This needs: learning enabled and not
-  paused; the zone heating or cooling; no power shedding, guard cut or calibration; SmartPI past
-  its learning phase; a reliable dead time; no neighbour window; and no door change within the
-  last `DOOR_SETTLING_S`.
+  paused; the zone heating or cooling; no power shedding or calibration; SmartPI past its learning
+  phase; a reliable dead time; no neighbour window; and no door change within the last
+  `DOOR_SETTLING_S`. A guard cut does not stop it: the zone then gets no heat, which is a known
+  power. Since SmartPI learns its slopes from the raw reading, guard cuts come often enough that
+  stopping for them kept an always-connected neighbour from ever being learned in the tests.
 
 ### 4.3 Measurement windows
 
@@ -560,8 +562,11 @@ sources working, by a joint fit of the zone (one fit of all the values together,
 fit gives the losses `b`, the main source's `a` and delay, the additional source's `a_f` and time
 scale, and the neighbours' `k`. SmartPI starts from that model and keeps it. The first design
 learned each source on its own, one after the other. It was dropped (section 5.8). With 0.1 degC
-sensors, SmartPI's own windows measure a slow cooling as about half as fast as it really is. Every
-value learned on top of SmartPI's model took on its errors.
+sensors, SmartPI's own windows then measured a slow cooling as about half as fast as it really is,
+because they read the filtered temperature. Every value learned on top of SmartPI's model took on
+its errors. SmartPI now computes its learning slopes on the raw reading
+([technical documentation, §3.3](technical_doc.md#33-robust-slope-estimation)), which removes most
+of that error; the joint fit stays, because it also separates the two sources and the neighbours.
 
 ```mermaid
 flowchart LR

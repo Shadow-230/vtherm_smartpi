@@ -164,6 +164,14 @@ En pratique, la décision de soumettre ou d'étendre la fenêtre dépend de la r
 - nombre minimal de changements de niveau : `OLS_MIN_JUMPS = 3`,
 - significativité statistique : `OLS_T_MIN = 2.5`.
 
+La pente est calculée sur `dt_est.tin_history`, qui contient la température mesurée **brute** (un
+nouvel échantillon quand la lecture change, ou toutes les 60 s). Les garde-fous comptent les
+changements de niveau, ils s'appuient donc sur les pas du capteur : la température filtrée par EMA
+`t_int_lp` transformerait un pas de 0.1 °C en plusieurs petits niveaux, et une pente lente serait
+acceptée trop tôt et trop faible (environ la moitié de la vraie vitesse de refroidissement). Les
+échantillons filtrés sont gardés à part (`_tin_lp_history`) et ne servent qu'à la détection du
+temps mort (section 3.5).
+
 Les pentes validées alimentent ensuite `ABEstimator.learn()` qui :
 
 - rejette les outliers physiques (`max_abs_dT_per_min = 0.35`),

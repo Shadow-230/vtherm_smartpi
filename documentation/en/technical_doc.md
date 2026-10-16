@@ -162,6 +162,13 @@ In practice, the decision to submit or extend the window depends on slope robust
 - minimum number of level changes: `OLS_MIN_JUMPS = 3`,
 - statistical significance: `OLS_T_MIN = 2.5`.
 
+The slope is computed on `dt_est.tin_history`, which holds the **raw** measured temperature (a
+new sample when the reading changes, or every 60 s). The guardrails count level changes, so they
+rely on the sensor's steps: the EMA-filtered temperature `t_int_lp` would turn one 0.1 °C step
+into several small levels, and a slow slope would pass too early and come out too flat (about
+half of the true cooling rate). The filtered samples are kept apart (`_tin_lp_history`) and only
+serve the dead-time detection (section 3.5).
+
 Validated slopes are then fed into `ABEstimator.learn()`, which:
 
 - rejects physical outliers (`max_abs_dT_per_min = 0.35`),

@@ -403,10 +403,13 @@ stateDiagram-v2
   permanence, il mettait l'apprentissage de SmartPI en pause la plupart du temps, et il ne donnait
   quand même pas un `k` correct.
 - `k` n'est appris que lorsque SmartPI lui-même pourrait apprendre. Il faut pour cela : l'apprentissage
-  activé et pas en pause ; la zone en chauffe ou en refroidissement ; pas de délestage, de coupure par une
-  garde ni de calibration ; SmartPI sorti de sa phase d'apprentissage ; un temps mort fiable ; pas de
+  activé et pas en pause ; la zone en chauffe ou en refroidissement ; pas de délestage ni de
+  calibration ; SmartPI sorti de sa phase d'apprentissage ; un temps mort fiable ; pas de
   fenêtre ouverte chez un voisin ; et aucun changement d'état de porte pendant les derniers
-  `DOOR_SETTLING_S`.
+  `DOOR_SETTLING_S`. Une coupure de garde (guard cut) ne l'arrête pas : la zone ne reçoit alors pas
+  de chaleur, ce qui est une puissance connue. Depuis que SmartPI apprend ses pentes sur la lecture
+  brute, les coupures de garde sont assez fréquentes pour que, en s'arrêtant pour elles, un voisin
+  toujours connecté ne soit jamais appris dans les tests.
 
 ### 4.3 Fenêtres de mesure
 
@@ -579,9 +582,13 @@ de toutes les valeurs ensemble, section 5.4). L'ajustement donne les déperditio
 retard de la source principale, le `a_f` et l'échelle de temps de la source additionnelle, et les
 `k` des voisins. SmartPI part de ce modèle et le garde. La première conception apprenait chaque
 source à part, l'une après l'autre. Elle a été abandonnée (section 5.8). Avec des capteurs au pas
-de 0.1 degC, les propres fenêtres d'apprentissage de SmartPI mesurent un refroidissement lent
-environ deux fois moins rapide qu'il ne l'est vraiment. Chaque valeur apprise par-dessus le modèle
-de SmartPI reprenait ses erreurs.
+de 0.1 degC, les propres fenêtres d'apprentissage de SmartPI mesuraient alors un refroidissement
+lent environ deux fois moins rapide qu'il ne l'est vraiment, car elles lisaient la température
+filtrée. Chaque valeur apprise par-dessus le modèle de SmartPI reprenait ses erreurs. SmartPI
+calcule désormais ses pentes d'apprentissage sur la lecture brute
+([documentation technique, §3.3](technical_doc.md#33-estimation-robuste-de-pente)), ce qui supprime
+l'essentiel de cette erreur ; l'ajustement conjoint reste, car il sépare aussi les deux sources et
+les voisins.
 
 ```mermaid
 flowchart LR

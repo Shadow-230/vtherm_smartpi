@@ -10,6 +10,20 @@ All notable changes to this project will be documented in this file.
   old shared counter, such as the QAS pack's learned room, starts both counters from it; histories
   seeded from a zone's joint fit do not hold a drift back.
 
+- The exchange with a neighbour is learned also during a guard cut, when the zone gets no heat:
+  with learning slopes from the raw reading guard cuts come more often, and an always-connected
+  neighbour was never learned in the simulator. Now its `k` is learned within 3 % of the truth.
+
+- Learning slopes come from the raw measured temperature (taken from the author's newer code).
+  The learning windows used the EMA-filtered temperature, which turns one step of a 0.1 °C sensor
+  into several small levels: slow slopes passed too early and came out too flat. In
+  the simulator, with a 0.1 °C sensor and four nights with a setback, the learned `a` and `b` were
+  at 0.44–1.15 of the truth and are now at 0.95–1.04; the first learning phase takes longer (about
+  15 h instead of 6 h in the short test). The fork's parts keep working on the raw history: the
+  known inputs' rate is removed from the raw slope, a zone held by a boiler that is not called keeps
+  recording raw samples, and a learning gate or a change of the boiler's call empties both
+  histories.
+
 - `testing.md` gets a section "Coverage": the code coverage per file against the baseline, the
   fork's own lines (99.2 % of the lines, 98.0 % of the branches) with the reason for each line left
   uncovered, and a matrix of the features, their variants and use cases with where each is tested.

@@ -403,10 +403,12 @@ stateDiagram-v2
   jest cały czas chłodniejszy, wstrzymywała uczenie SmartPI przez większość czasu, a i tak nie
   dawała poprawnego `k`.
 - `k` jest uczone tylko wtedy, gdy sam SmartPI mógłby się uczyć. Wymaga to: uczenia włączonego i
-  niewstrzymanego; strefy, która grzeje lub chłodzi; braku zrzutu mocy, odcięcia
-  zabezpieczającego (guard cut) i kalibracji; SmartPI po fazie uczenia; wiarygodnego czasu
-  martwego; braku otwartego okna u sąsiada; braku zmiany stanu drzwi w ciągu ostatnich
-  `DOOR_SETTLING_S`.
+  niewstrzymanego; strefy, która grzeje lub chłodzi; braku zrzutu mocy i kalibracji; SmartPI po
+  fazie uczenia; wiarygodnego czasu martwego; braku otwartego okna u sąsiada; braku zmiany stanu
+  drzwi w ciągu ostatnich `DOOR_SETTLING_S`. Odcięcie zabezpieczające (guard cut) go nie
+  zatrzymuje: strefa nie dostaje wtedy ciepła, a to znana moc. Odkąd SmartPI liczy nachylenia z
+  surowego odczytu, odcięcia zdarzają się na tyle często, że przy zatrzymaniu na nie sąsiad
+  połączony na stałe nigdy nie był nauczony w testach.
 
 ### 4.3 Okna pomiarowe
 
@@ -575,8 +577,11 @@ mapa: stałe krzywe, które zamieniają jedno zapotrzebowanie na dwa wysterowani
 sekcja 5.4). Dopasowanie daje straty `b`, `a` i opóźnienie głównego źródła, `a_f` i skalę czasu
 dodatkowego źródła oraz `k` sąsiadów. SmartPI startuje z tego modelu i go trzyma. Pierwszy projekt
 uczył każde źródło osobno, jedno po drugim. Porzucono go (sekcja 5.8). Przy czujnikach 0.1 degC
-własne okna SmartPI mierzą powolne stygnięcie jako mniej więcej dwa razy wolniejsze, niż jest
-naprawdę. Każda wartość uczona na bazie modelu SmartPI przejmowała jego błędy.
+własne okna SmartPI mierzyły wtedy powolne stygnięcie jako mniej więcej dwa razy wolniejsze, niż
+jest naprawdę, bo czytały temperaturę po filtrze. Każda wartość uczona na bazie modelu SmartPI
+przejmowała jego błędy. Teraz SmartPI liczy nachylenia do uczenia z surowego odczytu
+([dokumentacja techniczna, §3.3](technical_doc.md#33-odporne-wyznaczanie-nachylenia)), co usuwa
+większość tego błędu; wspólne dopasowanie zostaje, bo rozdziela też oba źródła i sąsiadów.
 
 ```mermaid
 flowchart LR

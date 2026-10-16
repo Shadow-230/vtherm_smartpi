@@ -165,6 +165,13 @@ W praktyce to, czy okno zostanie przekazane do uczenia, czy wydłużone, zależy
 - minimalna liczba zmian poziomu odczytu: `OLS_MIN_JUMPS = 3`,
 - istotność statystyczna: `OLS_T_MIN = 2.5`.
 
+Nachylenie jest liczone z `dt_est.tin_history`, w której jest **surowa** zmierzona temperatura
+(nowa próbka, gdy odczyt się zmieni, albo co 60 s). Warunki ochronne liczą zmiany poziomu, więc
+opierają się na krokach czujnika: temperatura po filtrze EMA `t_int_lp` zamieniłaby jeden krok
+0.1 °C w kilka małych poziomów, a powolne nachylenie przeszłoby za wcześnie i wyszłoby za płaskie
+(mniej więcej połowa prawdziwego tempa stygnięcia). Próbki po filtrze są trzymane osobno
+(`_tin_lp_history`) i służą tylko do wykrywania czasu martwego (sekcja 3.5).
+
 Sprawdzone nachylenia trafiają potem do metody `ABEstimator.learn()`, która:
 
 - odrzuca wartości fizycznie nierealne (`max_abs_dT_per_min = 0.35`),
