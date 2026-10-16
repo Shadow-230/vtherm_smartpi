@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 import os
+from dataclasses import replace
 
 import pytest
 
@@ -283,6 +284,44 @@ async def test_a_restart_keeps_the_zone_s_fit(monkeypatch) -> None:
     start_h = sim.clock.elapsed_s / 3600.0
     await sim.run_for(12.0)
     assert tracking(sim, start_h + 2.0, start_h + 12.0).mean_error_c < 0.15
+
+
+async def _setpoint(sim: Simulation, value: float) -> None:
+    for thermostat in (sim.thermostat, sim.source_thermostat):
+        thermostat.target_temperature = value
+    sim.zone.setpoint_c = value
+    for thermostat in (sim.thermostat, sim.source_thermostat):
+        await thermostat.async_control_heating(force=True)
+
+
+async def _night_and_morning(monkeypatch, recovery: str) -> tuple[float | None, float, bool]:
+    """Thirty hours to learn, a night at 17 degC for 8 h, then 20 degC: the hours to reach
+    19.8 degC, the overshoot after it and whether the night was seen as a setback."""
+    split = {**FLOOR.split, "recovery": recovery}
+    with monkeypatch.context() as patch:
+        sim = Simulation(patch, ZoneSpec(source=replace(FLOOR, split=split), sensor_resolution_c=0.1), OUTDOOR)
+        await sim.run_for(30.0)
+        await _setpoint(sim, 17.0)
+        await sim.run_for(8.0)
+        setback = _source(sim)["setback"]
+        await _setpoint(sim, 20.0)
+        start_h = sim.clock.elapsed_s / 3600.0
+        await sim.run_for(8.0)
+    after = [p for p in sim.trace if p.t_h >= start_h]
+    reach = next((p.t_h - start_h for p in after if p.zone_c >= 19.8), None)
+    return reach, max(p.zone_c for p in after) - 20.0, setback
+
+
+async def test_a_fast_recovery_brings_the_zone_back_sooner_than_an_economical_one(monkeypatch) -> None:
+    """During the night the floor carries the zone's load: warm in the morning, without overshoot."""
+    fast_reach, fast_over, fast_setback = await _night_and_morning(monkeypatch, "fast")
+    eco_reach, eco_over, eco_setback = await _night_and_morning(monkeypatch, "economy")
+    print(f"\nrecovery: fast {fast_reach} h {fast_over:+.2f}, economy {eco_reach} h {eco_over:+.2f}")
+
+    assert fast_setback and eco_setback
+    assert fast_reach is not None and eco_reach is not None
+    assert fast_reach <= eco_reach - 0.5
+    assert fast_over <= max(eco_over, 0.0) + 0.15
 
 
 async def test_z7_cooling_learns_its_own_fit(monkeypatch) -> None:

@@ -12,7 +12,11 @@
           "smart_pi_use_setpoint_filter": "Use setpoint filter",
           "smart_pi_use_ff3": "Use FF3",
           "smart_pi_deadband_allow_p": "Allow damped P near deadband edge",
-          "smart_pi_debug": "Record full diagnostics (debug)"
+          "smart_pi_debug": "Record full diagnostics (debug)",
+          "smart_pi_zone_recovery": "Recovery after a setback"
+        },
+        "data_description": {
+          "smart_pi_zone_recovery": "How the zone comes back to its setpoint after a lower one (a night setback, for example)."
         }
       },
       "thermostat": {
@@ -61,7 +65,11 @@
           "smart_pi_use_setpoint_filter": "Use setpoint filter",
           "smart_pi_use_ff3": "Use FF3",
           "smart_pi_deadband_allow_p": "Allow damped P near deadband edge",
-          "smart_pi_debug": "Record full diagnostics (debug)"
+          "smart_pi_debug": "Record full diagnostics (debug)",
+          "smart_pi_zone_recovery": "Recovery after a setback"
+        },
+        "data_description": {
+          "smart_pi_zone_recovery": "How the zone comes back to its setpoint after a lower one (a night setback, for example)."
         }
       },
       "valve_curve": {
@@ -160,7 +168,11 @@
           "source_alone_percent": "Additional source alone up to (%)",
           "lead_band_percent": "Main source's band (%)",
           "source_lag_min": "Additional source: delay",
-          "source_tau_min": "Additional source: lag"
+          "source_tau_min": "Additional source: lag",
+          "recovery": "Recovery after a setback"
+        },
+        "data_description": {
+          "recovery": "How this zone comes back to its setpoint after a lower one (a night setback, for example)."
         }
       },
       "dependencies": {
@@ -270,7 +282,11 @@
           "smart_pi_use_setpoint_filter": "Use setpoint filter",
           "smart_pi_use_ff3": "Use FF3",
           "smart_pi_deadband_allow_p": "Allow damped P near deadband edge",
-          "smart_pi_debug": "Record full diagnostics (debug)"
+          "smart_pi_debug": "Record full diagnostics (debug)",
+          "smart_pi_zone_recovery": "Recovery after a setback"
+        },
+        "data_description": {
+          "smart_pi_zone_recovery": "How the zone comes back to its setpoint after a lower one (a night setback, for example)."
         }
       },
       "boiler_signals": {
@@ -350,7 +366,11 @@
           "smart_pi_use_setpoint_filter": "Use setpoint filter",
           "smart_pi_use_ff3": "Use FF3",
           "smart_pi_deadband_allow_p": "Allow damped P near deadband edge",
-          "smart_pi_debug": "Record full diagnostics (debug)"
+          "smart_pi_debug": "Record full diagnostics (debug)",
+          "smart_pi_zone_recovery": "Recovery after a setback"
+        },
+        "data_description": {
+          "smart_pi_zone_recovery": "How the zone comes back to its setpoint after a lower one (a night setback, for example)."
         }
       },
       "valve_curve": {
@@ -449,7 +469,11 @@
           "source_alone_percent": "Additional source alone up to (%)",
           "lead_band_percent": "Main source's band (%)",
           "source_lag_min": "Additional source: delay",
-          "source_tau_min": "Additional source: lag"
+          "source_tau_min": "Additional source: lag",
+          "recovery": "Recovery after a setback"
+        },
+        "data_description": {
+          "recovery": "How this zone comes back to its setpoint after a lower one (a night setback, for example)."
         }
       },
       "dependencies": {
@@ -600,6 +624,19 @@
       "options": {
         "defaults": "As in SmartPI defaults",
         "own": "This thermostat's own"
+      }
+    },
+    "zone_recovery": {
+      "options": {
+        "fast": "Fast: during a setback the slow source keeps warm, so the zone is back at its setpoint sooner, with about 1–2 % more energy",
+        "economy": "Economical: the deepest setback and the least energy; the zone takes longer to come back to its setpoint"
+      }
+    },
+    "zone_recovery_item": {
+      "options": {
+        "defaults": "As in the SmartPI defaults",
+        "fast": "Fast: during a setback the slow source keeps warm, so the zone is back at its setpoint sooner, with about 1–2 % more energy",
+        "economy": "Economical: the deepest setback and the least energy; the zone takes longer to come back to its setpoint"
       }
     }
   },

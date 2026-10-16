@@ -4,6 +4,17 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+- A zone with two heat sources gets the setting "Recovery after a setback": Fast (the default) or
+  Economical. It is a shared setting of the "SmartPI defaults" entry, and each zone may override it
+  in its form. With Fast, during a setback (a setpoint at least 0.5 °C below the highest of the last
+  24 h) the additional source carries at least the zone's load at the lower setpoint, from the zone's
+  fit, capped by the brake. The recovery boost of the main source now ends two of its cycles ahead
+  instead of one, so a zone whose floor is warm does not overshoot. In the simulator the zone is then
+  back at its setpoint after a night at 17 °C sooner on average than two independent SmartPI (1.9 h
+  against 2.5 h; 3.0 h with Economical; later in 2 of 15 cases, by up to 0.8 h), with less overshoot
+  in every case, for up to 2.7 % more heat than Economical. The entries move to minor version 3,
+  which adds the setting.
+
 - SmartPI's events are fired with Home Assistant's loop-safe `bus.async_fire`; a branch in the
   cancellation of a calibration that could never run is removed, and the manifest declares its
   `vtherm_api` requirement (taken from the author's newer code).

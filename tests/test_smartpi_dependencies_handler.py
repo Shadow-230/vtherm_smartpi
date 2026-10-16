@@ -456,6 +456,25 @@ async def test_a_zone_whose_master_was_deleted_is_reported(hass, caplog) -> None
     assert "The zone's master thermostat cannot be found" in caplog.text
 
 
+async def test_the_zone_s_recovery_follows_the_regulator_settings_unless_it_has_its_own(hass) -> None:
+    """The thermostat's shared settings (here its own) give the recovery; the zone's own wins."""
+    from custom_components.vtherm_smartpi.const import CONF_SMART_PI_ZONE_RECOVERY
+
+    registry = er.async_get(hass)
+    floor = registry.async_get_or_create("climate", VT_DOMAIN, "vt-floor", suggested_object_id="floor")
+    thermostat = FakeThermostatRuntime()
+    thermostat.hass = hass
+    _set_options(hass, thermostat, {CONF_SMART_PI_DEPENDENCIES: [_source_item(floor.id)], CONF_SMART_PI_ZONE_RECOVERY: "economy"})
+    handler = SmartPIHandler(thermostat)
+    handler.init_algorithm()
+    assert handler._source_settings.recovery == "economy"
+
+    own = {**_source_item(floor.id), "recovery": "fast"}
+    _set_options(hass, thermostat, {CONF_SMART_PI_DEPENDENCIES: [own], CONF_SMART_PI_ZONE_RECOVERY: "economy"})
+    handler.init_algorithm()
+    assert handler._source_settings.recovery == "fast"
+
+
 async def test_a_main_source_switched_off_in_the_off_phase_still_tells_its_additional_source(
     hass, monkeypatch
 ) -> None:

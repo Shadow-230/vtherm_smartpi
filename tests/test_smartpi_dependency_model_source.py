@@ -629,9 +629,10 @@ def test_a_recovering_zone_leaves_the_source_s_heat_out_of_the_lead_s_feed_forwa
 
 
 def test_the_boost_ends_before_the_lead_s_heat_on_the_way_overshoots() -> None:
-    """Rising fast, the zone reaches the band within the lead's delay plus a cycle: no boost."""
-    # a 0.03 at full, x_f 0.6 * a_f 0.03, losses 0.001 * 13.5: about 0.035 degC/min, 0.7 degC in 20 min.
-    _, fast = _recovering(zone=19.5, lead_output=1.0)
+    """Rising fast, the zone reaches the band within the lead's delay plus two cycles: no boost."""
+    # a 0.03 at full, x_f 0.43 * a_f 0.03, losses 0.001 * 14: about 0.029 degC/min, 0.87 degC in
+    # 30 min (10 min delay, two 10 min cycles). From 1 degC below, one cycle (0.58 degC) would not do.
+    _, fast = _recovering(zone=19.0, lead_output=1.0)
     assert fast.source["recovery_boost"] is False
     _, slow = _recovering(zone=19.5, lead_output=0.0, x_f=0.0)
     assert slow.source["recovery_boost"] is True

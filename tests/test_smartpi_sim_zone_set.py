@@ -46,6 +46,14 @@ ROOMS = {
 WEATHERS = {"mild": 3.0, "cold": -8.0}
 LEAD_BAND = {"split_rule": "lead_band", "lead_band_percent": 20, "lead_emitter": "radiator", "source_emitter": "floor_water"}
 NIGHTS_H = (6.0, 8.0, 10.0)
+# The one case where the fast recovery stays slower than two independent SmartPI: 3.6 h against
+# 2.9 h on average. The night's load there is above the floor's full power (b 0.002 x 25 degC
+# against a_f 0.04), so the fast recovery cannot charge the floor more. Accepted
+# (documentation/en/zone_dependencies.md, section 5.8).
+RECOVERY_SLOWER_H = {"fastcool-midheat cold": 0.8}
+# The control call's phase within the cycle and the 0.1 degC sensor move a morning by a few
+# minutes either way: with phases of 0, 170 and 340 s the fastest room varies by 0.2 h.
+RECOVERY_TOLERANCE_H = 0.2
 
 
 def _report(text: str) -> None:
@@ -134,12 +142,13 @@ def _compare(name: str, split: RoomResult, independent: RoomResult, fit_line: st
     _report(f"\nSET {name} split: {split.line()} {fit_line}\nSET {name} indep: {independent.line()}")
     assert split.fit is not None and split.fit_h is not None and split.fit_h <= 30.0
     assert split.steady <= independent.steady + 0.02
-    assert max(split.overshoots) <= max(independent.overshoots) + 0.1
-    # The morning recovery after a night setback is not much slower than today's.
+    # With the fast recovery (the default), the zone is back at its setpoint after a night setback
+    # no later than with two independent SmartPI, and overshoots less.
+    assert max(split.overshoots) < max(independent.overshoots)
     assert None not in split.reach_h
     split_reach = sum(split.reach_h) / len(split.reach_h)
     independent_reach = sum(r for r in independent.reach_h if r is not None) / len(independent.reach_h)
-    assert split_reach <= independent_reach + 1.0
+    assert split_reach <= independent_reach + RECOVERY_SLOWER_H.get(name, RECOVERY_TOLERANCE_H)
 
 
 @pytest.mark.parametrize("weather", list(WEATHERS))
