@@ -279,6 +279,10 @@ working with it.
 
 | File | What it checks |
 |---|---|
+| `test_smartpi_dependencies_handler.py` (two tests added) | a main source switched off during the off phase of its cycle cancels the cycle and still sends 0 to its additional source; an additional source switched off in its off phase cancels its own cycle |
+| `test_handler_persistence_extensions.py` | the fork's parts of the state (dependencies, the zone's reset token, the water input) survive a write and a load through the state store; calls every minute arm one delayed write per five minutes; a reset asked by the zone's form is written at once, and only once |
+| `test_smartpi_regulation_gaps.py` | a thermostat leaving the additional source's role integrates nothing for the time spent in it; a restart into the other HVAC mode resets the PI on the first calculation only |
+| `test_smartpi_ab_drift.py` (two tests added) | a state of the QAS pack's learned room, saved with one shared `learn_seq`, starts both drift counters from it; histories seeded from a zone's joint fit still let `b` follow a drift |
 | `test_smartpi_raw_slopes.py` | learning slopes come from the raw measured temperature: a slow ramp read by a 0.1 °C sensor gives its true slope, minus the rate of the known inputs; a zone held by a boiler that is not called keeps recording raw samples; a change of the boiler's call empties the raw and the filtered history |
 
 ## 5. Limits

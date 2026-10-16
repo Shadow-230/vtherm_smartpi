@@ -283,6 +283,10 @@ przychodzą z każdą zmianą; testy poniżej sprawdzają, że dodatki forka nad
 
 | Plik | Co sprawdza |
 |---|---|
+| `test_smartpi_dependencies_handler.py` (dwa dodane testy) | główne źródło wyłączone w fazie wyłączenia swojego cyklu anuluje cykl i nadal wysyła 0 do dodatkowego źródła; dodatkowe źródło wyłączone w fazie wyłączenia anuluje własny cykl |
+| `test_handler_persistence_extensions.py` | części stanu dodane w forku (zależności, token resetu strefy, wejście wody) przechodzą przez zapis i odczyt w state store; wywołania co minutę planują jeden zapis odroczony na pięć minut; reset, o który prosi formularz strefy, jest zapisywany od razu i tylko raz |
+| `test_smartpi_regulation_gaps.py` | termostat, który wychodzi z roli dodatkowego źródła, niczego nie całkuje za czas spędzony w tej roli; restart w innym trybie HVAC kasuje PI tylko przy pierwszym obliczeniu |
+| `test_smartpi_ab_drift.py` (dwa dodane testy) | stan nauczonego pomieszczenia z pakietu QAS, zapisany z jednym wspólnym `learn_seq`, ustawia oba liczniki dryfu; historie zasiane ze wspólnego dopasowania strefy nadal pozwalają `b` iść za dryfem |
 | `test_smartpi_raw_slopes.py` | nachylenia do uczenia pochodzą z surowej zmierzonej temperatury: powolna zmiana odczytywana przez czujnik 0.1 °C daje prawdziwe nachylenie pomniejszone o tempo znanych wejść; strefa wstrzymana przez kocioł, który nie jest wezwany, dalej zapisuje surowe próbki; zmiana wezwania kotła czyści historię surową i historię po filtrze |
 
 ## 5. Ograniczenia
