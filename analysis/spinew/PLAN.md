@@ -31,7 +31,8 @@ dopisane na końcu) i w `config.step.global` (`en.json`/`fr.json`: krok usunięt
 Narzędzie: `tools/union_resolve.py`.
 
 **Następne kroki:**
-1. H1 – zdarzenia wilgotności (prysznic, gotowanie), `ANALIZA.md` §22; gałąź od `dev2`.
+1. H1 – zdarzenia wilgotności (prysznic, gotowanie), `ANALIZA.md` §22: gałąź
+   `feat/humidity-events` gotowa lokalnie, czeka na decyzję właściciela (push/PR).
 2. Faza C – dopiero po potwierdzeniu właściciela.
 
 Odtworzenie środowiska i pomiarów: `ANALIZA.md` §3, `tools/` (skrypty), `results/` (wyniki).

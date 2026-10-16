@@ -703,3 +703,42 @@ Próg 3 %RH daje w łazienkach prawie te same zdarzenia, w kuchni 3× więcej (s
 Koniec „poziom wyjściowy + 3 %RH” trwa zwykle > 2 h; przyjęte: poniżej poziomu wyjściowego + 25 %
 wzrostu, najpóźniej 3 h, potem 30 min uspokojenia.
 
+Odtworzenie danych przez detektor (`tools/hum_replay.py`): łazienka parter 0,99 zdarzenia/dzień,
+uczenie wstrzymane 1,7 h/dzień; łazienka góra 0,67/dzień, 1,6 h; kuchnia 0,44/dzień, 0,6 h.
+
+### 22.1 Implementacja (gałąź `feat/humidity-events`, od `dev2` `7023334`)
+
+- `smartpi/humidity_event.py` (`HumidityEvent`): idle → event → settling; start przy wzroście
+  ≥ 5 %RH w 10 min, koniec przy poziomie bazowym + 25 % wzrostu albo po 3 h, 30 min uspokojenia;
+  po nim historia od nowa. Odczyt brak/NaN/bool nic nie zaczyna.
+- `algo.py`: bramka uczenia `humidity_event` (po bramkach zależności i kotła), brak uczenia
+  zależności, trym FF bez okna, **całka wstrzymana** (`integrator_hold`, źródło
+  `humidity_event`, tylko gdy nic innego jej nie trzyma).
+- `handler.py`: `algo.update_humidity(t.current_humidity)` przy każdym sterowaniu.
+- Diagnostyka: blok `humidity` (od pierwszego odczytu).
+
+Pierwsza wersja blokowała całkę flagą `block_negative_integral` (w chłodzeniu
+`block_positive_integral`). Ślad z symulacji pokazał, że to nie działa: flaga blokuje tylko
+nowe narastanie w danym kierunku, a dodatnią całkę grzania pozwala „odwijać” do zera
+(`I:GUARD_UNWIND`), czyli dokładnie spadek, który miał być zatrzymany. Zamienione na pełne
+wstrzymanie.
+
+### 22.2 Symulacja (`tools/h1_probe.py`)
+
+Łazienka a=0,03, b=0,001, czujnik 0,1 °C, 3 °C na zewnątrz; prysznic = źródło 40 °C przez
+przewodność g przez 15–60 min o 7:00, wilgotność +25 %RH (narastanie 10 min, zanik τ 40 min).
+Porównanie z wilgotnością i bez (a/b względem prawdziwych, średni błąd, szczyt i dołek po prysznicu):
+
+| scenariusz | bez wilgotności | z wilgotnością |
+|---|---|---|
+| g=0,004, 15 min, dni 3–7 | a/b 0,98/0,98, szczyt +1,0, dołek −0,07 | to samo, dołek −0,06 |
+| g=0,0008, 60 min | szczyt +0,3, dołek −0,06…−0,08 | szczyt +0,3, dołek −0,06 |
+| g=0,0002, 60 min (ciepło poniżej guard_cut) | dołek −0,01, całka spada 376,9 → 374,1 | dołek 0,00, całka stoi (376,04) |
+| g=0,006, 30 min, od dnia 0 (uczenie) | a/b 0,98/1,00 | a/b 0,98/0,99 |
+
+Wniosek: w symulatorze efekt jest neutralny (±0,01 °C). Przy silnym prysznicu `guard_cut` i
+strefa nieczułości już trzymają całkę, a estymator a/b nie łapie okien z prysznicem. Zysk
+widać tylko w słabym cieple (całka nie schodzi). Realny zysk zależy od rzeczy, których
+symulator nie ma (czujnik temperatury ogrzany parą, ciepło oddawane przez ściany). Ryzyko: brak
+regresji w symulacji; jedyny koszt to 1,6–1,7 h/dzień bez uczenia w łazience.
+
