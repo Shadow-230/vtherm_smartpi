@@ -78,6 +78,39 @@ async def test_user_step_shows_thermostat_form_when_entry_already_exists(hass) -
     assert result["step_id"] == "thermostat"
 
 
+@pytest.mark.asyncio
+async def test_user_step_recreates_global_entry_when_only_dedicated_entries_exist(hass) -> None:
+    """The global entry must be recreated when it was deleted but dedicated entries remain."""
+    dedicated = MockConfigEntry(
+        domain=DOMAIN,
+        title="Dedicated",
+        unique_id=f"{DOMAIN}-switch-target",
+        data={CONF_TARGET_VTHERM: "switch-target"},
+    )
+    dedicated.add_to_hass(hass)
+
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN,
+        context={"source": SOURCE_USER},
+    )
+
+    assert result["type"] == FlowResultType.CREATE_ENTRY
+    assert result["title"] == "SmartPI defaults"
+    assert result["data"] == {key: DEFAULT_OPTIONS[key] for key in SHARED_SETTINGS}
+    assert result["result"].unique_id == DOMAIN
+
+
+@pytest.mark.asyncio
+async def test_a_legacy_defaults_entry_without_unique_id_is_not_duplicated(hass) -> None:
+    """An entry made before the defaults had their unique ID is still the defaults entry."""
+    MockConfigEntry(domain=DOMAIN, title="SmartPI defaults", data=dict(DEFAULT_OPTIONS)).add_to_hass(hass)
+
+    result = await hass.config_entries.flow.async_init(DOMAIN, context={"source": SOURCE_USER})
+
+    assert result["type"] == FlowResultType.FORM
+    assert result["step_id"] == "thermostat"
+
+
 def test_global_options_schema_hides_valve_linearization() -> None:
     """Global defaults must not expose valve-only linearization settings."""
     schema_keys = _schema_keys(build_options_schema(DEFAULT_OPTIONS))

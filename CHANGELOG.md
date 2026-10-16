@@ -4,6 +4,10 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+- The "SmartPI defaults" entry can be created again after it was removed, also while thermostats
+  keep their own entries; an older defaults entry without its unique ID is not duplicated. The
+  unused `global` step of the setup is removed (taken from the author's newer code).
+
 - Each change of the SmartPI entries reloads only the thermostats it concerns, each once (taken
   from the author's newer code, with the fork's zones and entries that use the defaults): a save
   reloads its thermostat and, for a zone's additional source, the zone's main source; a save of the

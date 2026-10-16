@@ -84,7 +84,7 @@ Deux étapes sont nécessaires après le redémarrage : ajouter l'intégration S
 
 Allez dans **Paramètres → Intégrations → Ajouter une intégration**, puis recherchez *SmartPI*.
 
-Lors de la première installation, SmartPI crée automatiquement l'entrée « SmartPI defaults » (l'entrée des valeurs par défaut). Elle contient les réglages partagés par les thermostats (marqués « partagé » dans le [tableau de configuration](#configuration)) et les signaux de la chaudière. Vous pouvez les modifier ensuite depuis **Paramètres → Intégrations → SmartPI → Configurer**.
+Lors de la première installation, SmartPI crée automatiquement l'entrée « SmartPI defaults » (l'entrée des valeurs par défaut). Elle contient les réglages partagés par les thermostats (marqués « partagé » dans le [tableau de configuration](#configuration)) et les signaux de la chaudière. Vous pouvez les modifier ensuite depuis **Paramètres → Intégrations → SmartPI → Configurer**. Si vous supprimez cette entrée, ajouter de nouveau l'intégration SmartPI la recrée avec les valeurs de départ, même quand des thermostats gardent leur propre entrée ; les thermostats qui utilisent les valeurs par défaut sont rechargés.
 
 ### Sélectionner SmartPI dans Versatile Thermostat
 

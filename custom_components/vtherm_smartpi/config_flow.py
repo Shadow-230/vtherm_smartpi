@@ -1987,8 +1987,9 @@ class SmartPIConfigFlow(SmartPIFlowSections, ConfigFlow, domain=DOMAIN):
         return "config"
 
     async def async_step_user(self, user_input: dict[str, Any] | None = None):
-        """Create default plugin settings on first install."""
-        if not self._async_current_entries():
+        """Create the "SmartPI defaults" entry when there is none (also after it was removed while
+        thermostats' entries remain), else choose a thermostat."""
+        if defaults_entry(self.hass) is None:
             await self.async_set_unique_id(DOMAIN)
             self._abort_if_unique_id_configured()
             return self.async_create_entry(
@@ -1997,19 +1998,6 @@ class SmartPIConfigFlow(SmartPIFlowSections, ConfigFlow, domain=DOMAIN):
             )
 
         return await self.async_step_thermostat(user_input)
-
-    async def async_step_global(self, user_input: dict[str, Any] | None = None):
-        """Handle the global defaults entry."""
-        await self.async_set_unique_id(DOMAIN)
-        self._abort_if_unique_id_configured()
-
-        if user_input is not None:
-            return self.async_create_entry(title="SmartPI defaults", data=user_input)
-
-        return self.async_show_form(
-            step_id="global",
-            data_schema=build_options_schema(_shared_defaults()),
-        )
 
     async def async_step_thermostat(self, user_input: dict[str, Any] | None = None):
         """Select the target thermostat; its sections follow in a menu, written at "Save and finish"."""
