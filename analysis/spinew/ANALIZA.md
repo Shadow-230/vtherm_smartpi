@@ -418,6 +418,8 @@ się parsują.
 | Nowe commity autora tylko scaleniem `upstream/master` | Odstępstwo z decyzji 2026-10-15 (§1 p. 2) |
 | Odstępstwa zgłaszamy przed kodem | Przyjęte (§1 p. 3) |
 | Push/PR/scalenie za „tak” | Przyjęte; branch wybiera właściciel (§1 p. 4) |
+| Gałąź integracyjna `dev` | Dla tej pracy `dev2` (D10, §1 p. 4); `CLAUDE.md` i `PLAN_ROZWOJU.md` to opisują (2026-10-16) |
+| Usuwanie gałęzi po scaleniu | D23 (§1 p. 13) |
 | Nowe klucze tylko w `en.json` | Zmienione decyzją 2026-10-15: aktualizujemy wszystkie języki (§1 p. 6) |
 | Dokumentacja EN/FR/PL razem z kodem, prosty język | Przyjęte (§1 p. 6–7, §14) |
 | CHANGELOG w `[Unreleased]` | Przyjęte (§1 p. 8) |
