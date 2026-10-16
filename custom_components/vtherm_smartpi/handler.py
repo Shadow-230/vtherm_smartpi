@@ -493,6 +493,10 @@ class SmartPIHandler:
             setattr(t, "_off_time_sec", int(t.cycle_min * 60))
             if t.is_device_active:
                 await t.async_underlying_entity_turn_off()
+            elif t.cycle_scheduler and t.cycle_scheduler.is_cycle_running:
+                # As for a thermostat of its own switched off: the scheduler may still
+                # hold a heat cycle while the device is in its off phase.
+                await t.cycle_scheduler.cancel_cycle()
             return
         scheduler = t.cycle_scheduler
         if bool(getattr(scheduler, "is_valve_mode", False)) and command != self._applied_source_command:

@@ -278,7 +278,7 @@ przychodzą z każdą zmianą; testy poniżej sprawdzają, że dodatki forka nad
 
 | Plik | Co sprawdza |
 |---|---|
-| `test_smartpi_dependencies_handler.py` (jeden dodany test) | główne źródło wyłączone w fazie wyłączenia swojego cyklu anuluje cykl i nadal wysyła 0 do dodatkowego źródła |
+| `test_smartpi_dependencies_handler.py` (dwa dodane testy) | główne źródło wyłączone w fazie wyłączenia swojego cyklu anuluje cykl i nadal wysyła 0 do dodatkowego źródła; dodatkowe źródło wyłączone w fazie wyłączenia anuluje własny cykl |
 
 ## 5. Ograniczenia
 

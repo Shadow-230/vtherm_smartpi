@@ -421,6 +421,20 @@ async def test_a_second_source_turned_off_turns_its_device_off(hass) -> None:
     assert thermostat._on_time_sec == 0
 
 
+async def test_a_second_source_turned_off_in_its_off_phase_cancels_its_cycle(hass) -> None:
+    """Off between two pulses: the cycle still running is cancelled, so it turns nothing on later."""
+    handler, thermostat = _handler(hass, [])
+    thermostat.vtherm_hvac_mode = "off"
+    thermostat.is_device_active = False
+    thermostat.cycle_scheduler.is_cycle_running = True
+
+    await handler._control_as_source(False)
+
+    thermostat.cycle_scheduler.cancel_cycle.assert_awaited_once()
+    thermostat.async_underlying_entity_turn_off.assert_not_awaited()
+    assert thermostat._on_time_sec == 0
+
+
 async def test_a_source_that_cannot_be_resolved_has_no_heating_type(hass, monkeypatch) -> None:
     handler, _ = _handler(hass, [])
 

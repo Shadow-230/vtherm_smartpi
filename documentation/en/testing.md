@@ -273,7 +273,7 @@ working with it.
 
 | File | What it checks |
 |---|---|
-| `test_smartpi_dependencies_handler.py` (one test added) | a main source switched off during the off phase of its cycle cancels the cycle and still sends 0 to its additional source |
+| `test_smartpi_dependencies_handler.py` (two tests added) | a main source switched off during the off phase of its cycle cancels the cycle and still sends 0 to its additional source; an additional source switched off in its off phase cancels its own cycle |
 
 ## 5. Limits
 

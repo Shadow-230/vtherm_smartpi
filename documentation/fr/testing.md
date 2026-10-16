@@ -285,7 +285,7 @@ ajouts du fork fonctionnent toujours avec lui.
 
 | Fichier | Ce qu'il vérifie |
 |---|---|
-| `test_smartpi_dependencies_handler.py` (un test ajouté) | une source principale éteinte pendant la phase d'arrêt de son cycle annule le cycle et envoie quand même 0 à sa source additionnelle |
+| `test_smartpi_dependencies_handler.py` (deux tests ajoutés) | une source principale éteinte pendant la phase d'arrêt de son cycle annule le cycle et envoie quand même 0 à sa source additionnelle ; une source additionnelle éteinte pendant sa phase d'arrêt annule son propre cycle |
 
 ## 5. Limites
 

@@ -6,7 +6,8 @@ All notable changes to this project will be documented in this file.
 
 - A thermostat switched off during the off phase of its PWM cycle cancels the running cycle, so
   the scheduler does not switch the device on again later; a main source still sends its 0 to
-  its additional source first. Remove the setters of `guard_cut_active` and `guard_kick_active`,
+  its additional source first. An additional source that stops working (its thermostat off, or
+  a command for another HVAC mode) cancels its running cycle the same way. Remove the setters of `guard_cut_active` and `guard_kick_active`,
   which could only raise an error and were not used (both taken from the author's newer code).
 
 - `testing.md` gets a section "Coverage": the code coverage per file against the baseline, the
