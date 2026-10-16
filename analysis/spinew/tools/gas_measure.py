@@ -50,7 +50,7 @@ async def main():
     if os.environ.get("ZR_CASES"): cases = os.environ["ZR_CASES"].split(",")
     res = {}
     for case in cases:
-        res[case] = await run(case, None if label == "indep" else Z.LEAD_BAND)
+        res[case] = await run(case, None if label == "indep" else ({**Z.LEAD_BAND, "recovery": "economy"} if label.startswith("economy") else Z.LEAD_BAND))
         print(label, case, json.dumps(res[case]), flush=True)
     json.dump(res, open(out, "w"), indent=1)
 asyncio.run(main())

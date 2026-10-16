@@ -1,0 +1,32 @@
+SET base-slowheat mild split: d1=0.305 steady=0.031 signed=-0.031 over=+0.01/+0.01/+0.04 reach=1.4/2.1/2.4 fit_h=19.5 learned_h=19.5 fit=a1.02,b1.00,af1.00,delay10
+SET base-slowheat mild indep: d1=0.308 steady=0.089 signed=-0.016 over=+0.24/+0.25/+0.24 reach=3.7/3.1/2.9 fit_h=None learned_h=23.9
+SET slowcool-fastheat mild split: d1=0.812 steady=0.018 signed=-0.012 over=+0.09/+0.21/+0.25 reach=0.8/0.9/0.9 fit_h=19.5 learned_h=19.5 fit=a1.02,b1.03,af1.06,delay10
+SET slowcool-fastheat mild indep: d1=0.457 steady=0.053 signed=-0.010 over=+0.36/+0.50/+0.59 reach=1.4/1.6/1.6 fit_h=None learned_h=26.9
+SET slowcool-slowheat mild split: d1=0.283 steady=0.036 signed=-0.036 over=-0.00/+0.05/+0.08 reach=1.2/1.9/1.9 fit_h=19.5 learned_h=19.5 fit=a1.02,b1.04,af1.05,delay10
+SET slowcool-slowheat mild indep: d1=0.313 steady=0.077 signed=-0.037 over=+0.23/+0.31/+0.36 reach=3.7/3.8/3.3 fit_h=None learned_h=32.8
+SET base mild split: d1=0.319 steady=0.022 signed=-0.001 over=+0.09/+0.26/+0.16 reach=1.1/1.7/1.7 fit_h=19.5 learned_h=19.5 fit=a1.01,b1.00,af1.00,delay10
+SET base mild indep: d1=0.326 steady=0.087 signed=-0.009 over=+0.38/+0.29/+0.27 reach=2.2/1.9/1.9 fit_h=None learned_h=19.9
+SET base-slowheat cold split: d1=0.542 steady=0.022 signed=-0.017 over=+0.07/+0.06/+0.03 reach=5.2/3.9/3.5 fit_h=19.5 learned_h=19.5 fit=a1.01,b1.01,af1.01,delay10
+SET base-slowheat cold indep: d1=0.562 steady=0.119 signed=-0.041 over=+0.24/+0.25/+0.32 reach=5.5/4.7/3.9 fit_h=None learned_h=35.6
+SET slowcool-slowheat cold split: d1=0.312 steady=0.028 signed=+0.014 over=+0.00/+0.02/-0.03 reach=1.1/2.3/3.3 fit_h=19.5 learned_h=19.5 fit=a1.00,b1.00,af1.00,delay10
+SET slowcool-slowheat cold indep: d1=0.322 steady=0.094 signed=-0.012 over=+0.31/+0.32/+0.31 reach=5.2/4.4/3.8 fit_h=None learned_h=29.6
+SET base cold split: d1=0.301 steady=0.026 signed=-0.024 over=+0.03/+0.04/+0.15 reach=1.1/1.8/1.7 fit_h=19.5 learned_h=19.5 fit=a1.00,b0.99,af0.99,delay10
+SET base cold indep: d1=0.331 steady=0.079 signed=-0.010 over=+0.24/+0.27/+0.28 reach=2.7/2.4/2.3 fit_h=None learned_h=24.6
+SET slowcool-fastheat cold split: d1=0.541 steady=0.022 signed=-0.018 over=+0.17/+0.29/+0.41 reach=0.9/1.2/1.1 fit_h=19.5 learned_h=19.5 fit=a1.01,b0.99,af1.00,delay10
+SET slowcool-fastheat cold indep: d1=0.386 steady=0.056 signed=-0.015 over=+0.31/+0.40/+0.50 reach=1.7/1.5/1.4 fit_h=None learned_h=18.4
+SET fastcool-midheat cold split: d1=0.629 steady=0.024 signed=-0.001 over=+0.14/+0.09/+0.05 reach=4.4/3.7/2.6 fit_h=19.5 learned_h=19.5 fit=a1.00,b1.01,af1.02,delay10
+SET fastcool-midheat cold indep: d1=0.737 steady=0.086 signed=-0.027 over=+0.39/+0.38/+0.34 reach=3.2/2.8/2.6 fit_h=None learned_h=19.7
+SET fastcool-midheat mild split: d1=0.319 steady=0.034 signed=-0.004 over=+0.06/+0.06/+0.08 reach=1.4/1.4/1.3 fit_h=19.5 learned_h=19.5 fit=a1.01,b1.00,af1.01,delay10
+SET fastcool-midheat mild indep: d1=0.354 steady=0.101 signed=+0.002 over=+0.32/+0.29/+0.26 reach=2.0/1.8/1.6 fit_h=None learned_h=14.3
+SET fastcool-fastheat mild split: d1=0.381 steady=0.052 signed=+0.033 over=+0.19/+0.16/+0.35 reach=0.8/1.0/0.9 fit_h=19.5 learned_h=19.5 fit=a1.00,b1.00,af1.01,delay10
+SET fastcool-fastheat mild indep: d1=0.283 steady=0.097 signed=+0.001 over=+0.33/+0.35/+0.45 reach=1.2/1.2/1.2 fit_h=None learned_h=7.8
+SET fastcool-fastheat cold split: d1=0.394 steady=0.044 signed=+0.032 over=+0.46/+0.49/+0.29 reach=0.9/1.1/1.0 fit_h=19.5 learned_h=19.5 fit=a1.00,b1.00,af1.01,delay10
+SET fastcool-fastheat cold indep: d1=0.383 steady=0.253 signed=+0.120 over=+0.61/+0.58/+0.84 reach=1.1/1.0/0.9 fit_h=None learned_h=9.8
+SET water split: d1=0.416 steady=0.053 signed=-0.011 over=+0.05/-0.01/-0.02 reach=3.8/3.3/3.6 fit_h=19.5 learned_h=19.5 fit=a0.99,b0.96,af0.94,delay10
+SET water indep: d1=0.359 steady=0.128 signed=+0.008 over=+0.10/+0.40/+0.36 reach=6.4/5.9/5.8 fit_h=None learned_h=39.8
+SET valve split: d1=0.336 steady=0.020 signed=-0.017 over=+0.10/+0.14/+0.19 reach=1.2/1.6/1.6 fit_h=19.5 learned_h=19.5 fit=a1.01,b1.03,af1.03,delay10
+SET valve indep: d1=0.326 steady=0.089 signed=+0.000 over=+0.26/+0.25/+0.30 reach=2.2/2.0/2.0 fit_h=None learned_h=19.9
+SET two_stage split: d1=0.309 steady=0.035 signed=+0.019 over=+0.11/+0.13/+0.19 reach=1.3/1.7/1.7 fit_h=19.5 learned_h=19.5 fit=a0.97,b1.10,af1.21,delay10
+SET two_stage indep: d1=0.293 steady=0.092 signed=+0.004 over=+0.36/+0.37/+0.37 reach=2.4/2.0/1.9 fit_h=None learned_h=19.8
+SET two zones always: A: split 0.024 (+0.02/-0.06) indep 0.089 fit=a1.00,b1.00,af1.00,k[0.97] | B: split 0.019 (+0.03/-0.05) indep 0.092 fit=a0.99,b1.00,af0.98,k[0.95]
+SET two zones door: A: split 0.034 (+0.09/-0.12) indep 0.124 fit=a0.99,b0.96,af0.96,k[0.89] | B: split 0.029 (+0.05/-0.12) indep 0.066 fit=a0.99,b0.99,af0.97,k[0.94]

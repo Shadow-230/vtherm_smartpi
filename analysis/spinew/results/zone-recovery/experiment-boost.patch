@@ -1,0 +1,46 @@
+--- /tmp/claude-0/-home-user-vtherm-smartpi/5a15329f-fcf5-56ea-be39-e4c8f5de7573/scratchpad/wt-zr/custom_components/vtherm_smartpi/smartpi/dependency_model.py	2026-10-16 13:08:29.241904498 +0000
++++ /tmp/claude-0/-home-user-vtherm-smartpi/5a15329f-fcf5-56ea-be39-e4c8f5de7573/scratchpad/exp-fix/custom_components/vtherm_smartpi/smartpi/dependency_model.py	2026-10-16 12:35:48.159271805 +0000
+@@ -58,7 +58,6 @@
+     DOOR_SETTLING_S,
+     COUPLING_K_MAX,
+     KNOWN_INPUT_FADE_S,
+-    SOURCE_BOOST_END_CYCLES,
+     SOURCE_BOOST_ERROR_C,
+     SOURCE_BRAKE_STEPS,
+     SOURCE_LEARN_BLOCK_MIN_S,
+@@ -514,9 +513,8 @@
+         So while the zone is colder than its setpoint by more than
+         SOURCE_BOOST_ERROR_C, the lead works as if it were alone. The boost ends
+         early, once the fitted model says the zone reaches that band within the
+-        lead's delay plus SOURCE_BOOST_END_CYCLES of its cycles at the present
+-        powers: the heat the lead has already sent, and its answer to the error
+-        left in the next cycle, then land the zone instead of overshooting it.
++        lead's delay plus one of its cycles at the present powers: the heat the
++        lead has already sent then lands the zone instead of overshooting it.
+         """
+         source = self._source
+         if fit is None or source.mode != SOURCE_MODE_ALLOCATION:
+@@ -525,11 +523,21 @@
+         if error is None or error <= SOURCE_BOOST_ERROR_C or ctx.zone_temp is None or ctx.ext_temp is None:
+             return False
+         sign = _sign(ctx.hvac_mode)
++        import os as _os
++        fix = _os.environ.get("ZR_FIX", "")
++        if fix == "D" and ctx.target_temp is not None:
++            ex_sp = sum(item.conductance * (ctx.target_temp - item.temperature) for item in exchanges)
++            if fit.a_f * source.x_f >= sign * (fit.b * (ctx.target_temp - ctx.ext_temp) + ex_sp):
++                return False
+         lead = min(max(ctx.lead_output, 0.0), 1.0) * min(max(ctx.lead_power_cap, 0.0), 1.0)
+         exchange = sum(item.conductance * (ctx.zone_temp - item.temperature) for item in exchanges)
+         rate = sign * fit.a * lead + sign * fit.a_f * source.x_f - fit.b * (ctx.zone_temp - ctx.ext_temp) - exchange
+-        horizon_min = (fit.lead_delay_s + SOURCE_BOOST_END_CYCLES * max(ctx.lead_cycle_s, 0.0)) / 60.0
+-        return error - sign * rate * horizon_min > SOURCE_BOOST_ERROR_C
++        cycles = 2.0 if fix == "E" else 1.0
++        horizon_min = (fit.lead_delay_s + cycles * max(ctx.lead_cycle_s, 0.0)) / 60.0
++        band = SOURCE_BOOST_ERROR_C
++        if fix == "F":
++            band = 2 * SOURCE_BOOST_ERROR_C
++        return error - sign * rate * horizon_min > band
+ 
+     def _neighbour_k(self, item_id: str, fit: ZoneFitResult | None) -> float | None:
+         """The exchange coefficient in use: the zone's joint fit's once published, which

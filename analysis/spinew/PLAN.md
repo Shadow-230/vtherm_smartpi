@@ -18,23 +18,26 @@ Stan na: 2026-10-16.
 | Etap | Gałąź | Commity (od `dev2`) | Stan |
 |---|---|---|---|
 | A0 | – | – | zrobione: wzorzec `dev2` w `ANALIZA.md` §3 |
-| A1 | `feat/spinew-a1-raw-slopes` | `46a323b` (autor), `d39df98`, `013f292`, `74016f7` (D11) | kod, testy, dokumentacja gotowe; CI zielone; lokalnie pada tylko `test_rooms[base-slowheat-cold]` → naprawia Z1 |
-| A2 | `feat/spinew-a2-drift-counters` | `e0903e6` (autor), `b3e3e05` | gotowe, wszystko zielone |
-| A3 | `fix/spinew-a3-regulation-gaps` | `2d5ce1c` (port autora), `154230d`, `077e091` (D11, ta sama zmiana co w A1) | CI zielone; lokalnie pada tylko `test_rooms[fastcool-midheat-cold]` → naprawia Z1 |
-| A4 | `feat/spinew-a4-state-store` | `d04c21f` (autor), `fab5e37` (D9) | gotowe, wszystko zielone |
-| A5 | `fix/spinew-a5-off-cycle` | `e4a0a49`, `c750ac3` (autor), `823f2e4`, `5c11903` (D12) | gotowe, wszystko zielone |
-| Z1 | `feat/zone-recovery` (od A1) | jeszcze bez własnych commitów | plan zatwierdzony do D16 (niżej, „Etap Z1”); kod nie zaczęty |
+| A1 | `feat/spinew-a1-raw-slopes` | `46a323b` (autor), `d39df98`, `013f292`, `74016f7` (D11) | PR #17; CI zielone; lokalnie pada tylko `test_rooms[base-slowheat-cold]` → naprawia Z1 |
+| A2 | `feat/spinew-a2-drift-counters` | `e0903e6` (autor), `b3e3e05` | PR #18; wszystko zielone |
+| A3 | `fix/spinew-a3-regulation-gaps` | `2d5ce1c` (port autora), `154230d`, `077e091` (D11, ta sama zmiana co w A1) | PR #19; CI zielone; lokalnie pada tylko `test_rooms[fastcool-midheat-cold]` → naprawia Z1 |
+| A4 | `feat/spinew-a4-state-store` | `d04c21f` (autor), `fab5e37` (D9) | PR #20; wszystko zielone |
+| A5 | `fix/spinew-a5-off-cycle` | `e4a0a49`, `c750ac3` (autor), `823f2e4`, `5c11903` (D12) | PR #21; wszystko zielone |
+| Z1 | `feat/zone-recovery` (od A1) | `7c7f5e6` | gotowe lokalnie: CI 1369 passed, lokalnie 1453 passed (w tym oba pokoje z A1/A3), pokrycie 93,19 → 93,22 %; wynik i odstępstwa: `ANALIZA.md` §20.6; niewypchnięte |
 
-Gałęzie etapów i `feat/zone-recovery` są w forku (wypchnięte 2026-10-16 za zgodą właściciela),
-bez PR-ów. Kolejna sesja: `git fetch origin` i praca na nich.
+Gałęzie etapów i `feat/zone-recovery` są w forku (wypchnięte 2026-10-16 za zgodą właściciela).
+PR-y A1–A5 do `dev2`: #17–#21 (2026-10-16), nie scalone. Commit Z1 `7c7f5e6` czeka na zgodę na push;
+jego PR po scaleniu #17. Kolejna sesja: `git fetch origin` i praca na nich.
 
 **Następne kroki:**
 1. Za „tak” właściciela: PR-y gałęzi A1–A5 do `dev2` (każdy osobno). Przy
    scalaniu kolejnych PR-ów spodziewane konflikty tylko w `CHANGELOG.md` (`[Unreleased]`) i w
    `testing.md` §4.9 (EN/FR/PL; każda gałąź dodaje tę sekcję) – łączyć wpisy. Zmiana D11 jest w
    A1 i A3 jako ten sam kod: przy drugim scaleniu zostaje jedna kopia i jeden wpis CHANGELOG.
-2. Etap Z1 (niżej), po decyzji D16; PR po scaleniu A1.
-3. Faza B, potem C (opisy niżej).
+2. Z1: push i PR do `dev2` po scaleniu #17 (za „tak” właściciela).
+3. Faza B, potem C (opisy niżej) – dopiero po potwierdzeniu właściciela.
+4. D18 (`ANALIZA.md` §20.6): błąd ustalony strefy w szybkim pokoju przy innych fazach – decyzja,
+   czy osobny etap.
 
 Odtworzenie środowiska i pomiarów: `ANALIZA.md` §3, `tools/` (skrypty), `results/` (wyniki).
 
@@ -372,6 +375,14 @@ po A1), PR do `dev2` po scaleniu A1. Wariant V1: łatka próbna
   ograniczone hamulcem (`_predictive_command`). Bez dopasowania strefy – bez zmian.
 - `economy`: działanie jak dziś (bit w bit, test różnicowy).
 - Diagnostyka strefy: aktywny poziom i to, czy trwa obniżenie.
+
+**Wykonanie (2026-10-16), odstępstwa od planu powyżej:**
+- „Jak w SmartPI defaults” nie jest zapisywane w pozycji strefy (brak klucza = ustawienie wspólne);
+  wartość wspólna to efektywne ustawienie termostatu (wpis domyślny albo własne wartości termostatu).
+- Migracja 1.3 dopisuje ustawienie też do wpisów termostatów z własnymi wartościami.
+- Koniec przyspieszenia (boost) głównego źródła: opóźnienie + 2 cykle (`SOURCE_BOOST_END_CYCLES`),
+  bo przy fazach 170/340 s najszybszy pokój przegrzewał się bardziej niż osobne SmartPI (§20.6).
+- Kryterium dojścia z tolerancją 0,2 h (fazy 0/170/340 s); D16 jako wyjątek 0,8 h.
 
 **Testy Z1.**
 - Jednostkowe: rozpoznanie obniżenia (próg, 24 h, restart, COOL); polecenie w nocy przy `fast`

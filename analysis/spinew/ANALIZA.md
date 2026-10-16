@@ -442,8 +442,9 @@ się parsują.
 | D13 | Optymalizacja dojścia strefy po obniżeniu: cel „dojście nie wolniejsze i mniejsze przegrzanie niż dwa osobne SmartPI”, §20 | przyjęte 2026-10-16 (cel właściciela) |
 | D14 | Ustawienie „Dojście po obniżeniu”: Szybkie (V1, domyślne) / Oszczędne (jak dziś); wartość we wpisie „SmartPI defaults”, nadpisanie w formularzu strefy („Jak w SmartPI defaults” domyślnie); krótki opis każdej opcji w oknie wyboru | przyjęte 2026-10-16 (rekomendacja: 2 poziomy, wariant pośredni odrzucony) |
 | D15 | Kryterium testu dla „Oszczędne”: dłuższe dojście akceptowalne (właściciel: celowo wolniej) | przyjęte 2026-10-16 |
-| D16 | Pokój „fastcool-midheat, mróz” przy „Szybkie” +0,7 h: opisany wyjątek w teście | otwarte (propozycja: wyjątek z liczbami w docstringu) |
+| D16 | Pokój „fastcool-midheat, mróz” przy „Szybkie” +0,7 h: opisany wyjątek w teście | przyjęte 2026-10-16 (właściciel zlecił Z1 z tą propozycją): wyjątek 0,8 h w `RECOVERY_SLOWER_H` |
 | D17 | Poranne podbicie krzywej grzewczej (strona kotła, nie SmartPI), §20.5 | informacyjnie; ewentualnie osobna funkcja smart boilera |
+| D18 | Strefa `fastcool-fastheat`, mróz, fazy 170/340 s: błąd ustalony 0,20 °C także na `dev2` (§20.6) | otwarte: osobny etap po Z1? |
 
 ## 17. Testy – stan i wpływ
 
@@ -625,3 +626,26 @@ Woda na krzywej, przesunięcie +5 K do dojścia (najwyżej 3 h): osobne 6,1 → 
 V1 3,6 → 1,9 h (+2,4 % ciepła względem osobnych). Działa niezależnie od sterowania strefy, tylko z
 kotłem sterowanym krzywą; nie uwzględnia spadku sprawności na gorętszej wodzie. Nie w SmartPI
 (D17).
+
+### 20.6 Wdrożenie Z1 i odporność na fazę (2026-10-16)
+
+Kod Z1 (`feat/zone-recovery`) daje przy fazie 0 wyniki identyczne z V1 (`results/zone-recovery/zr_impl.txt`).
+Sprawdzenie z fazą wywołania regulacji 170 i 340 s (`tools/zr_phase.py`, §0a.7 planu):
+
+- `fastcool-fastheat` łagodnie: przegrzanie „Szybkie” 0,53–0,57 °C wobec 0,45 u osobnych
+  (`zr_phase_all.txt`). Przyczyna (`tools/zr_morning.py`, `tools/zr_brake.py`): ciepła podłoga
+  przyspiesza wzrost, a odpowiedź kaloryfera w cyklu po końcu przyspieszenia (boost) wynosi strefę
+  ponad nastawę; hamulec liczy kaloryfer na jego zapotrzebowaniu, nie na 100 % z boostu.
+- Warianty (`experiment-boost.patch`, `zr_fix1.txt`): D (bez boostu, gdy podłoga sama niesie
+  obciążenie) – bez efektu; **E (koniec boostu: opóźnienie + 2 cykle zamiast 1)** – przegrzanie
+  0,11–0,37; F (pasmo 0,4 °C) – gorsze dojście w mrozie. Wdrożone E jako
+  `SOURCE_BOOST_END_CYCLES = 2` (dotyczy też „Oszczędne”).
+- Z E, 3 fazy × 15 przypadków (`zr_final.txt`, `zr_phase_E.txt`): przegrzanie zawsze mniejsze niż
+  u osobnych; dojście średnio 1,90 h (osobne 2,53, „Oszczędne” 2,96); wolniej tylko D16
+  (≤ +0,77 h) i `fastcool-fastheat` mróz (+0,03…+0,16 h). Kryterium testu: dojście ≤ osobne
+  + 0,2 h (tolerancja fazy), D16 0,8 h, przegrzanie ściśle mniejsze.
+- Ciepło (`gE_*.json`): „Szybkie” wobec osobnych −0,6…+2,0 %, „Oszczędne” −1,3…+0,4 %,
+  „Szybkie” wobec „Oszczędne” 0,0…+2,7 %.
+- **Nowe, poza Z1:** `fastcool-fastheat` mróz przy fazach 170/340 – błąd ustalony strefy
+  0,20 °C (faza 0: 0,044); to samo na `dev2` (`zr_phase2.txt`), więc istniejący problem
+  (przyczyna niezbadana). Osobny temat (D18).

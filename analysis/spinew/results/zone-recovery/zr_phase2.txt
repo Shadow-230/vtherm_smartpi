@@ -1,0 +1,8 @@
+econ fastcool-fastheat cold phase=170: reach 1.69/1.06 (+0.63) over +0.30/+0.77 steady 0.199/0.267
+dev2 fastcool-fastheat cold phase=340: reach 1.79/2.19 (-0.40) over +0.32/+0.32 steady 0.200/0.130
+econ fastcool-fastheat mild phase=340: reach 1.34/1.23 (+0.12) over +0.31/+0.45 steady 0.038/0.097
+econ fastcool-fastheat mild phase=170: reach 1.38/1.24 (+0.14) over +0.32/+0.46 steady 0.029/0.098
+dev2 fastcool-fastheat cold phase=170: reach 1.69/1.69 (-0.01) over +0.30/+0.39 steady 0.199/0.213
+dev2 fastcool-fastheat mild phase=340: reach 1.34/1.25 (+0.09) over +0.31/+0.45 steady 0.038/0.136
+dev2 fastcool-fastheat cold phase=0: reach 1.46/2.32 (-0.86) over +0.20/+0.53 steady 0.044/0.113
+dev2 fastcool-fastheat mild phase=0: reach 1.34/1.35 (-0.01) over +0.30/+0.49 steady 0.052/0.101

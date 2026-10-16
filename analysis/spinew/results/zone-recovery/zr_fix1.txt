@@ -1,0 +1,12 @@
+D base mild phase=340: reach 1.51/2.06 (-0.56) over +0.18/+0.28 steady 0.025/0.085
+D fastcool-fastheat cold phase=170: reach 1.16/1.06 (+0.11) over +0.40/+0.77 steady 0.199/0.267
+D fastcool-fastheat mild phase=170: reach 0.96/1.24 (-0.28) over +0.53/+0.46 steady 0.029/0.098
+D fastcool-fastheat mild phase=340: reach 0.88/1.23 (-0.35) over +0.57/+0.45 steady 0.038/0.097
+E base mild phase=340: reach 1.56/2.06 (-0.50) over +0.17/+0.28 steady 0.025/0.085
+E fastcool-fastheat cold phase=170: reach 1.21/1.06 (+0.16) over +0.35/+0.77 steady 0.191/0.267
+E fastcool-fastheat mild phase=170: reach 1.03/1.24 (-0.21) over +0.37/+0.46 steady 0.029/0.098
+E fastcool-fastheat mild phase=340: reach 0.94/1.23 (-0.28) over +0.11/+0.45 steady 0.038/0.097
+F base mild phase=340: reach 1.52/2.06 (-0.54) over +0.18/+0.28 steady 0.025/0.085
+F fastcool-fastheat cold phase=170: reach 1.35/1.06 (+0.29) over +0.37/+0.77 steady 0.211/0.267
+F fastcool-fastheat mild phase=170: reach 1.00/1.24 (-0.24) over +0.29/+0.46 steady 0.029/0.098
+F fastcool-fastheat mild phase=340: reach 0.92/1.23 (-0.31) over +0.21/+0.45 steady 0.038/0.097
