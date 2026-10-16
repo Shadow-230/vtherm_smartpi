@@ -4,6 +4,13 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+- In a zone with two heat sources, the main source's recovery boost starts only in a recovery: when
+  the zone is more than 0.5 °C below its setpoint (after a setback or a cold start), until it reaches
+  the setpoint. A dip of a steady zone no longer starts it: in the fastest simulated room in cold
+  weather, with the control call later in its cycle, each dip switched the main source's
+  feed-forward between two shares and drained its integral, and the zone kept swinging 0.17–0.20 °C
+  around its setpoint; it now holds it within 0.05–0.06 °C.
+
 - A zone with two heat sources gets the setting "Recovery after a setback": Fast (the default) or
   Economical. It is a shared setting of the "SmartPI defaults" entry, and each zone may override it
   in its form. With Fast, during a setback (a setpoint at least 0.5 °C below the highest of the last

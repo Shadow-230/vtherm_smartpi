@@ -923,25 +923,30 @@ source additionnelle. Résultat : quand un plancher à pleine puissance se réch
 principale lui cède sa part alors que la zone est encore trop froide d'un ou deux degrés. Seule sa
 partie proportionnelle mène alors la suite du rattrapage, et SmartPI garde cette partie douce (son
 intégrale est maintenue après un changement de consigne). Deux SmartPI indépendants rattrapent plus
-vite, car chacun compte toute la charge. Donc, tant que la zone est plus froide que sa consigne de
-plus de `SOURCE_BOOST_ERROR_C`, les entrées connues de la source principale laissent de côté la
-chaleur de la source additionnelle. Cela vaut pour le feed-forward, pour `T_ref` et pour la
-correction de l'apprentissage. La source principale travaille alors comme si elle était seule
-(`recovery_boost` dans les diagnostics). Le renfort de rattrapage a besoin d'un ajustement publié
-et du mode d'allocation ; sans eux, il est inactif. Le renfort s'arrête plus tôt dès que le modèle ajusté
-indique que la zone atteindra cette bande d'ici la fin du retard ajusté de la source principale
-plus `SOURCE_BOOST_END_CYCLES` (deux) de ses cycles, aux puissances actuelles : le cycle en cours,
-et le suivant, où la source principale répond encore à l'erreur qui reste. La chaleur que la source
-principale a déjà envoyée amène alors la zone dans la bande au lieu de la lui faire dépasser. Sans
-cet arrêt anticipé, les pièces rapides dépassaient leur consigne de jusqu'à 0.66 degC ; avec un
-cycle au lieu de deux, une pièce rapide dont le plancher restait chaud grâce au retour rapide
-dépassait de 0.57 degC contre 0.45 avec deux SmartPI indépendants (section 5.8).
+vite, car chacun compte toute la charge. Donc, tant que la zone est en rattrapage et plus froide que
+sa consigne de plus de `SOURCE_BOOST_ERROR_C`, les entrées connues de la source principale laissent
+de côté la chaleur de la source additionnelle. Cela vaut pour le feed-forward, pour `T_ref` et pour
+la correction de l'apprentissage. La source principale travaille alors comme si elle était seule
+(`recovery_boost` dans les diagnostics). Un rattrapage commence quand la zone est à plus de
+`SOURCE_BOOST_ARM_C` sous sa consigne (après un abaissement ou un départ à froid) et dure jusqu'à ce
+qu'elle atteigne sa consigne. Une baisse d'une zone stable n'est pas un rattrapage : là, le renfort
+faisait passer le feed-forward de la source principale entre la part avec et sans la chaleur de la
+source, et la pièce la plus rapide oscillait autour de sa consigne (section 5.8). Le renfort de
+rattrapage a besoin d'un ajustement publié et du mode d'allocation ; sans eux, il est inactif. Le
+renfort s'arrête plus tôt dès que le modèle ajusté indique que la zone atteindra cette bande d'ici
+la fin du retard ajusté de la source principale plus `SOURCE_BOOST_END_CYCLES` (deux) de ses cycles,
+aux puissances actuelles : le cycle en cours, et le suivant, où la source principale répond encore à
+l'erreur qui reste. La chaleur que la source principale a déjà envoyée amène alors la zone dans la
+bande au lieu de la lui faire dépasser. Sans cet arrêt anticipé, les pièces rapides dépassaient leur
+consigne de jusqu'à 0.66 degC ; avec un cycle au lieu de deux, une pièce rapide dont le plancher
+restait chaud grâce au retour rapide dépassait de 0.57 degC contre 0.45 avec deux SmartPI
+indépendants (section 5.8).
 
 ```mermaid
 stateDiagram-v2
     state "la source principale compte la chaleur de la source additionnelle" as Counted
     state "rattrapage : la source principale travaille comme si elle était seule" as Boost
-    Counted --> Boost: ajustement publié, mode d'allocation, zone plus froide que la consigne de plus de SOURCE_BOOST_ERROR_C, et zone non prévue dans la bande d'ici le retard de la source principale plus deux cycles
+    Counted --> Boost: ajustement publié, mode d'allocation, un rattrapage (armé SOURCE_BOOST_ARM_C sous la consigne, jusqu'à ce qu'elle soit atteinte), zone plus froide que la consigne de plus de SOURCE_BOOST_ERROR_C, et zone non prévue dans la bande d'ici le retard de la source principale plus deux cycles
     Boost --> Counted: zone prévue dans la bande d'ici le retard de la source principale plus deux cycles, zone dans la bande, ou pas d'ajustement ou d'allocation
 ```
 
@@ -1120,10 +1125,10 @@ même zone avec la boucle d'allocation seule :
 
 | Mesure | Zone, retour rapide | Zone, économique | Deux SmartPI indépendants |
 |---|---|---|---|
-| Erreur en régime établi, moyenne des 12 pièces | 0.030 degC | 0.030 degC | 0.099 degC |
+| Erreur en régime établi, moyenne des 12 pièces | 0.029 degC | 0.029 degC | 0.099 degC |
 | Erreur en régime établi, plage | 0.018–0.052 degC | 0.018–0.052 degC | 0.053–0.253 degC |
-| Dépassement après la nuit, pire pièce / moyenne | 0.35 / 0.14 degC | 0.24 / 0.10 degC | 0.84 / 0.42 degC |
-| Temps pour arriver à 0.2 degC sous la consigne après la nuit, moyenne | 1.90 h | 2.96 h | 2.53 h |
+| Dépassement après la nuit, pire pièce / moyenne | 0.35 / 0.15 degC | 0.27 / 0.11 degC | 0.84 / 0.42 degC |
+| Temps pour arriver à 0.2 degC sous la consigne après la nuit, moyenne | 1.91 h | 2.97 h | 2.53 h |
 | Idem, pièce la plus lente (`b` 0.001, `a` 0.02, froid) | 4.2 h | 6.1 h | 4.7 h |
 | Erreur du jour 1, moyenne | 0.43 degC | 0.43 degC | 0.40 degC |
 | Ajustement publié | après 19.5 h dans chaque pièce | après 19.5 h dans chaque pièce | — |
@@ -1142,7 +1147,7 @@ même zone avec la boucle d'allocation seule :
 
 **Chaleur utilisée** sur les trois nuits et jours, dans les 12 pièces et les trois installations
 ci-dessus (bilan thermique de la pièce, les deux sources, rendement de la chaudière supposé
-constant) : par rapport à deux SmartPI indépendants, −0.6 à +2.0 % avec le retour rapide et −1.3 à
+constant) : par rapport à deux SmartPI indépendants, −0.7 à +2.0 % avec le retour rapide et −1.3 à
 +0.4 % avec l'économique. Le retour rapide utilise jusqu'à 2.7 % de chaleur en plus que l'économique :
 la nuit est en moyenne 0.2 à 0.6 degC plus chaude, l'abaissement moins profond.
 
@@ -1192,8 +1197,18 @@ retour rapide atteint 19.8 degC en 0.85 h, l'économique en 2.2 h.
   en avance au lieu d'un. Sur les trois phases, le dépassement est alors inférieur à celui de deux
   SmartPI indépendants dans tous les cas ; les matins durent 0.1–0.3 h de plus dans quelques pièces,
   toujours moins qu'avec deux SmartPI indépendants, sauf dans la pièce `b` 0.002, `a` 0.04 par temps
-  froid (voir les limites plus bas) et dans la pièce la plus rapide par temps froid (jusqu'à 0.16 h de plus, où les deux installations oscillent autour
-  de la consigne à ces phases).
+  froid (voir les limites plus bas) et dans la pièce la plus rapide par temps froid.
+- **Un rattrapage, pas chaque baisse, lance le renfort** (section 5.6). Dans la pièce la plus rapide
+  par temps froid, avec l'appel de régulation à 170 ou 340 s, la zone oscillait autour de sa
+  consigne (erreur en régime établi 0.17–0.20 degC ; la même chose sur le code d'avant le retour
+  rapide) : chaque baisse de 0.2–0.3 degC lançait un renfort, qui faisait passer le feed-forward de
+  la source principale d'environ 0.4 à 1.0. Ce saut vidait aussi son intégrale, par l'anti-windup
+  qui compare un cycle terminé avec la dernière sortie du modèle. Avec le renfort lancé seulement à
+  partir de `SOURCE_BOOST_ARM_C` sous la consigne et tenu jusqu'à ce qu'elle soit atteinte,
+  l'erreur en régime établi y est de 0.05–0.06 degC ; sur 12 pièces × 3 phases, chaque cas
+  respecte les critères. Mesurer l'anti-windup par rapport à la sortie du modèle au début du cycle
+  aidait aussi là, mais ralentissait une autre pièce de 0.17 h ; l'anti-windup de l'auteur reste tel
+  quel.
 - **Ce qui n'a pas marché, et pourquoi la conception est ce qu'elle est :**
   - *Apprendre la source additionnelle par-dessus le modèle de SmartPI* (la première conception) :
     `a_f` sortait à 0.61–1.64 fois la vraie valeur avec des capteurs au pas de 0.1 degC, ou n'était
@@ -1232,10 +1247,10 @@ retour rapide atteint 19.8 degC en 0.85 h, l'économique en 2.2 h.
 
 - **Rattrapage du matin après un abaissement de nuit.** Avec le retour rapide, la zone revient à sa
   consigne au plus tard comme avec deux SmartPI indépendants dans 14 cas sur 15 (la pièce la plus
-  rapide par temps froid à 2 min près), et dépasse moins
+  rapide par temps froid à 8 min près), et dépasse moins
   dans tous. Dans la pièce `b` 0.002, `a` 0.04 par temps froid, elle met 3.6 h contre 2.9 h : la
   charge de la nuit y dépasse la pleine puissance du plancher, qui ne peut donc pas être chargé
-  davantage. Le retour économique est plus lent par conception : 2.96 h contre 2.53 h en moyenne,
+  davantage. Le retour économique est plus lent par conception : 2.97 h contre 2.53 h en moyenne,
   6.1 h contre 4.7 h dans la pièce la plus lente, et 7.2 h contre 6.0 h avec l'eau. Son plancher
   reste presque inactif pendant la nuit.
 - **Le jour 1** est moins bon qu'avec deux SmartPI indépendants (0.43 contre 0.40 degC) : les blocs
@@ -1479,6 +1494,7 @@ critères. Les résultats des sections 4.6 et 5.8 viennent de ces tests.
 | `SPLIT_PREDICTED_SHARE` | 1 | part de l'erreur prévue que la source peut corriger |
 | `SOURCE_BRAKE_STEPS` | 8 | divisions par deux qui trouvent le plafond du freinage |
 | `SOURCE_BOOST_ERROR_C` | 0.2 degC | une zone plus froide que cela fait son rattrapage avec la source principale qui travaille comme si elle était seule |
+| `SOURCE_BOOST_ARM_C` | 0.5 degC | un rattrapage commence à cette distance sous la consigne et dure jusqu'à ce que la zone l'atteigne ; seulement alors le renfort peut commencer |
 | `SOURCE_BOOST_END_CYCLES` | 2 | le renfort s'arrête quand la zone est prévue dans la bande d'ici le retard de la source principale plus ce nombre de ses cycles |
 | `SOURCE_SETBACK_MIN_C` | 0.5 degC | une consigne aussi loin sous la référence est un abaissement (section 5.6) |
 | `SOURCE_SETBACK_MEMORY_S` | 24 h | durée pendant laquelle la référence d'un abaissement est gardée |

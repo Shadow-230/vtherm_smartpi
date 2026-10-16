@@ -604,6 +604,10 @@ SOURCE_BRAKE_STEPS = 8
 # the band within the lead's delay plus SOURCE_BOOST_END_CYCLES of its cycles: the
 # cycle under way, and the one its own answer to the remaining error still gives.
 SOURCE_BOOST_ERROR_C = 0.2
+# The boost starts only from this far below the setpoint: a recovery after a setback or
+# a cold start, not a dip of a steady zone, where switching the lead's feed-forward
+# between the shares with and without the source made a fast room swing.
+SOURCE_BOOST_ARM_C = 0.5
 SOURCE_BOOST_END_CYCLES = 2
 # How a zone comes back after a setback (a setpoint lower than the day's, a night
 # setback for example). Fast: during the setback the additional source carries at
