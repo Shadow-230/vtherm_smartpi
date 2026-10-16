@@ -187,7 +187,7 @@ Wyniki są w [Wejścia wody i kotła, §4.4](water_input.md#44-wyniki-symulacja)
 
 | Plik | Zestaw | Co sprawdza |
 |---|---|---|
-| `test_smartpi_sim_baseline.py` | krótki i długi | sam SmartPI uczy się znanego pomieszczenia. Z czujnikiem 0.01 °C: `a` i `b` ±5 % i opóźnienie z dokładnością do 4 min, wszystko w ciągu 12 h (siatka 12 pomieszczeń w długim zestawie). Z czujnikiem 0.1 °C nadal kończy uczenie, z `a` i `b` w zakresie 0.4–1.6 |
+| `test_smartpi_sim_baseline.py` | krótki i długi | sam SmartPI uczy się znanego pomieszczenia. Z czujnikiem 0.01 °C: `a` i `b` ±5 % i opóźnienie z dokładnością do 4 min, wszystko w ciągu 12 h (siatka 12 pomieszczeń w długim zestawie). Z czujnikiem 0.1 °C kończy uczenie (w około 15 h) z `a` i `b` w granicach ±15 %; w długim zestawie cztery noce z obniżeniem zostawiają `a` i `b` w granicach ±10 % (trzy pomieszczenia, trzy fazy wywołań) |
 | `test_smartpi_sim_two_thermostats.py` | krótki i długi | opóźnienie i bezwładność podłogówki w modelu pomieszczenia; dwa termostaty, każdy z własnym SmartPI, które grzeją jedno pomieszczenie (dzisiejsze działanie, punkt odniesienia dla Z1 i Z4) |
 | `test_smartpi_regression_no_dependencies.py` | krótki | funkcje skonfigurowane, ale nieaktywne: dokładnie ten sam przebieg i zapisany stan co bez tych funkcji |
 | `test_smartpi_sim_harness.py` | krótki | zegar, timery, cykle włącz/wyłącz, minimalne czasy załączenia i wyłączenia, zawory, wywołanie regulacji VTherm w każdym cyklu; ten sam przebieg wykonany dwa razy daje ten sam wynik |
@@ -279,6 +279,9 @@ przychodzą z każdą zmianą; testy poniżej sprawdzają, że dodatki forka nad
 | Plik | Co sprawdza |
 |---|---|
 | `test_handler_persistence_extensions.py` | części stanu dodane w forku (zależności, token resetu strefy, wejście wody) przechodzą przez zapis i odczyt w state store; wywołania co minutę planują jeden zapis odroczony na pięć minut; reset, o który prosi formularz strefy, jest zapisywany od razu i tylko raz |
+| `test_smartpi_regulation_gaps.py` | termostat, który wychodzi z roli dodatkowego źródła, niczego nie całkuje za czas spędzony w tej roli; restart w innym trybie HVAC kasuje PI tylko przy pierwszym obliczeniu |
+| `test_smartpi_ab_drift.py` (dwa dodane testy) | stan nauczonego pomieszczenia z pakietu QAS, zapisany z jednym wspólnym `learn_seq`, ustawia oba liczniki dryfu; historie zasiane ze wspólnego dopasowania strefy nadal pozwalają `b` iść za dryfem |
+| `test_smartpi_raw_slopes.py` | nachylenia do uczenia pochodzą z surowej zmierzonej temperatury: powolna zmiana odczytywana przez czujnik 0.1 °C daje prawdziwe nachylenie pomniejszone o tempo znanych wejść; strefa wstrzymana przez kocioł, który nie jest wezwany, dalej zapisuje surowe próbki; zmiana wezwania kotła czyści historię surową i historię po filtrze |
 
 ## 5. Ograniczenia
 

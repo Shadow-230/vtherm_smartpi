@@ -193,7 +193,7 @@ Les résultats sont dans [Entrées eau et chaudière, §4.4](water_input.md#44-r
 
 | Fichier | Ensemble | Ce qu'il vérifie |
 |---|---|---|
-| `test_smartpi_sim_baseline.py` | court et long | SmartPI seul apprend une pièce connue. Avec un capteur de 0.01 °C : `a` et `b` ±5 % et le retard à 4 min près, le tout en 12 h (une grille de 12 pièces dans l'ensemble long). Avec un capteur de 0.1 °C, il termine quand même son apprentissage, avec `a` et `b` dans 0.4–1.6 |
+| `test_smartpi_sim_baseline.py` | court et long | SmartPI seul apprend une pièce connue. Avec un capteur de 0.01 °C : `a` et `b` ±5 % et le retard à 4 min près, le tout en 12 h (une grille de 12 pièces dans l'ensemble long). Avec un capteur de 0.1 °C, il termine son apprentissage (en 15 h environ) avec `a` et `b` à ±15 % ; dans l'ensemble long, quatre nuits avec réduit laissent `a` et `b` à ±10 % (trois pièces, trois phases d'appel) |
 | `test_smartpi_sim_two_thermostats.py` | court et long | le retard et l'inertie du plancher dans le modèle de la pièce ; deux thermostats, chacun avec son propre SmartPI, qui chauffent une même pièce (le fonctionnement actuel, la base de comparaison pour Z1 et Z4) |
 | `test_smartpi_regression_no_dependencies.py` | court | des fonctions configurées mais pas actives : exactement la même simulation et le même état sauvegardé que sans la fonction |
 | `test_smartpi_sim_harness.py` | court | l'horloge, les minuteries, les cycles tout-ou-rien, les temps minimaux de marche et d'arrêt, les vannes, l'appel de régulation de VTherm à chaque cycle ; la même simulation faite deux fois donne le même résultat |
@@ -286,6 +286,9 @@ ajouts du fork fonctionnent toujours avec lui.
 | Fichier | Ce qu'il vérifie |
 |---|---|
 | `test_handler_persistence_extensions.py` | les parties de l'état propres au fork (dépendances, jeton de réinitialisation de la zone, entrée d'eau) survivent à une écriture et une lecture par le state store ; des appels chaque minute préparent une écriture différée toutes les cinq minutes ; une réinitialisation demandée par le formulaire de la zone est écrite tout de suite, une seule fois |
+| `test_smartpi_regulation_gaps.py` | un thermostat qui quitte le rôle de source additionnelle n'intègre rien pour le temps passé dans ce rôle ; un redémarrage dans l'autre mode HVAC réinitialise le PI au premier calcul seulement |
+| `test_smartpi_ab_drift.py` (deux tests ajoutés) | l'état de la pièce apprise du paquet QAS, enregistré avec un seul `learn_seq` commun, initialise les deux compteurs de dérive ; des historiques semés par l'ajustement conjoint d'une zone laissent toujours `b` suivre une dérive |
+| `test_smartpi_raw_slopes.py` | les pentes d'apprentissage viennent de la température mesurée brute : une rampe lente lue par un capteur de 0.1 °C donne sa vraie pente, moins la vitesse due aux entrées connues ; une zone retenue par une chaudière non appelée continue d'enregistrer des échantillons bruts ; un changement de l'appel de la chaudière vide l'historique brut et l'historique filtré |
 
 ## 5. Limites
 
