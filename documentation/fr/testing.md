@@ -299,6 +299,20 @@ ajouts du fork fonctionnent toujours avec lui.
 | `test_smartpi_ab_drift.py` (deux tests ajoutés) | l'état de la pièce apprise du paquet QAS, enregistré avec un seul `learn_seq` commun, initialise les deux compteurs de dérive ; des historiques semés par l'ajustement conjoint d'une zone laissent toujours `b` suivre une dérive |
 | `test_smartpi_raw_slopes.py` | les pentes d'apprentissage viennent de la température mesurée brute : une rampe lente lue par un capteur de 0.1 °C donne sa vraie pente, moins la vitesse due aux entrées connues ; une zone retenue par une chaudière non appelée continue d'enregistrer des échantillons bruts ; un changement de l'appel de la chaudière vide l'historique brut et l'historique filtré |
 
+### 4.10 Événements d'humidité
+
+| Fichier | Ce qu'il vérifie |
+|---|---|
+| `test_smartpi_humidity_event.py` | un événement commence avec une montée rapide de l'humidité et pas avec une lente, se termine au quart de sa montée ou après sa durée maximale, puis se stabilise ; le niveau stabilisé n'est pas une nouvelle montée ; une lecture absente, non numérique ou booléenne ne démarre rien ; pendant un événement et sa stabilisation l'apprentissage attend (verrou `humidity_event`), les dépendances de la zone n'apprennent pas, l'intégrale est maintenue en chauffage et en refroidissement, le trim du feed-forward ne prend aucune fenêtre ; le bloc `humidity` des diagnostics |
+| `test_smartpi_boiler_handler.py` (un test ajouté) | le handler transmet le `current_humidity` de Versatile Thermostat à l'algorithme, None sans capteur |
+
+Dans le simulateur, une salle de bains avec une douche par jour (15–60 min de chaleur, une montée
+d'humidité de 25 %HR) régule de la même façon avec et sans l'humidité (à 0,01 °C près) : les
+gardes et la deadband maintiennent déjà l'intégrale pendant que la douche surchauffe la pièce ;
+pendant une chaleur plus faible, l'intégrale est maintenant maintenue au lieu de se défaire. Le
+scénario est une sonde (`analysis/spinew/tools/h1_probe.py` sur la branche d'analyse), pas un test
+de la suite.
+
 ## 5. Limites
 
 - **Le simulateur est plus clément qu'une maison.** Il n'a pas de bruit de capteur, à part
@@ -783,6 +797,14 @@ compte ; la dernière colonne dit ce qui reste non testé et pourquoi.
 | Calibration pendant le maintien | `test_smartpi_boiler_algo.py::test_a_calibration_is_cancelled_while_the_boiler_is_not_called` | — | — | couvert | — |
 | La source additionnelle | `test_smartpi_boiler_algo.py::test_working_as_another_thermostat_s_source_clears_the_boiler_s_mode` | B2 | QW6 | couvert | — |
 | Chaque source et raison | `test_smartpi_boiler_handler.py::test_a_provider_says_why_it_does_not_call_the_boiler`, `test_smartpi_heating_inputs.py::test_a_provider_says_why_it_does_not_call_the_boiler` | B2 | QC2, QW5 | couvert | — |
+
+**Événements d'humidité**
+
+| Variante / cas d'usage | Test dans le processus | Simulation | QAS | État | Action |
+|---|---|---|---|---|---|
+| Début, fin, durée maximale, stabilisation, lectures inutilisables | `test_smartpi_humidity_event.py::test_a_shower_s_rise_starts_an_event`, `::test_the_event_ends_at_a_quarter_of_its_rise_then_settles`, `::test_without_a_usable_reading_nothing_starts` | — | — | couvert | — |
+| Apprentissage, dépendances, intégrale (chauffage et refroidissement), trim du feed-forward | `test_smartpi_humidity_event.py::test_learning_waits_during_an_event_and_its_settling`, `::test_the_integral_is_held_during_an_event`, `::test_the_feed_forward_trim_takes_no_window_from_an_event` | sonde (section 4.10) | — | couvert | un passage sur le banc avec un vrai capteur d'humidité |
+| Sans capteur d'humidité | `test_smartpi_humidity_event.py::test_without_a_humidity_sensor_nothing_changes`, `test_smartpi_boiler_handler.py::test_control_hands_the_room_s_humidity_to_the_algorithm` | — | — | couvert | — |
 
 **L'extension autour d'elles**
 

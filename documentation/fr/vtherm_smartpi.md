@@ -277,6 +277,14 @@ Points utiles à connaître :
 - si le temps mort de refroidissement ne peut pas être appris pendant longtemps, SmartPI peut continuer avec un snapshot partiel,
 - après plusieurs échecs de recalibration, SmartPI continue de fonctionner et signale un modèle dégradé dans les diagnostics.
 
+### Douches et cuisson
+
+Quand Versatile Thermostat a un capteur d'humidité pour la pièce, SmartPI l'utilise sans aucun
+réglage : une montée rapide de l'humidité (une douche, une cuisson) signale une chaleur qui ne
+vient pas du chauffage. Tant qu'elle dure et un moment après, SmartPI n'apprend pas de la pièce et
+ne laisse pas cette chaleur baisser son besoin de chauffage. Détails :
+[documentation technique, §4.7](technical_doc.md#47-événements-dhumidité).
+
 ## Réglages conseillés
 
 Les réglages par défaut conviennent dans la plupart des installations.

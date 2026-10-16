@@ -795,6 +795,8 @@ class SmartPIHandler:
 
             self._update_water(algo)
             self._update_boiler(algo)
+            # Versatile Thermostat's humidity feature (None without a humidity sensor).
+            algo.update_humidity(getattr(t, "current_humidity", None))
 
             # Calculate uses current temp, ext temp, etc.
             # If guard_cut is active, calculate() will set on_percent=0.

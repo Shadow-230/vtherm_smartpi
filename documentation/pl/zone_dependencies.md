@@ -1366,7 +1366,7 @@ ma przy obliczeniu, w którym nie udało się pobrać odczytów:
 |---|---|
 | `b_eff`, `t_ref` | złożony model |
 | `inputs_active` | czy znane wejścia są aktywne |
-| `learning_gate` | `neighbour_window`, `door_open`, `source_heat`, `door_settling`, `boiler_settling` albo brak |
+| `learning_gate` | `neighbour_window`, `door_open`, `source_heat`, `door_settling`, `boiler_settling`, `humidity_event` albo brak |
 | `neighbour_window_action` | zastosowana reakcja na okno |
 | `items[]` | dla każdego sąsiada: `id`, `kind` (`neighbour`), `entity`, `mode`, `available`, `active`, `t_neighbour`, `neighbour_window`, `k`, `k_reliable`, `k_from_zone_fit`, `k_samples`, `indistinguishable`, `share_of_losses`; `available` ma wartość false także w trybie bezpieczeństwa albo gdy nie ma poprawnej (skończonej) temperatury |
 

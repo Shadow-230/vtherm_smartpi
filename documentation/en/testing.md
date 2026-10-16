@@ -287,6 +287,19 @@ working with it.
 | `test_smartpi_ab_drift.py` (two tests added) | a state of the QAS pack's learned room, saved with one shared `learn_seq`, starts both drift counters from it; histories seeded from a zone's joint fit still let `b` follow a drift |
 | `test_smartpi_raw_slopes.py` | learning slopes come from the raw measured temperature: a slow ramp read by a 0.1 °C sensor gives its true slope, minus the rate of the known inputs; a zone held by a boiler that is not called keeps recording raw samples; a change of the boiler's call empties the raw and the filtered history |
 
+### 4.10 Humidity events
+
+| File | What it checks |
+|---|---|
+| `test_smartpi_humidity_event.py` | an event starts with a quick humidity rise and not with a slow one, ends at a quarter of its rise or after its longest, then settles; the settled level is no new rise; a missing, non-numeric or boolean reading starts nothing; during an event and its settling learning waits (gate `humidity_event`), the zone's dependencies do not learn, the integral is held in heating and in cooling, the feed-forward trim takes no window; the diagnostics' `humidity` block |
+| `test_smartpi_boiler_handler.py` (one test added) | the handler hands Versatile Thermostat's `current_humidity` to the algorithm, None without a sensor |
+
+In the simulator a bathroom with a daily shower (15–60 min of heat, a humidity pulse of 25 %RH)
+regulates the same with and without the humidity (within 0.01 °C): the guards and the deadband
+already hold the integral while the shower overheats the room; during a weaker heat the integral
+is now held instead of unwinding. The scenario is a probe (`analysis/spinew/tools/h1_probe.py` on
+the analysis branch), not a test of the suite.
+
 ## 5. Limits
 
 - **The simulator is kinder than a house.** It has no sensor noise except rounding; no sun, people
@@ -743,6 +756,14 @@ the last column says what is left untested and why.
 | Calibration while held | `test_smartpi_boiler_algo.py::test_a_calibration_is_cancelled_while_the_boiler_is_not_called` | — | — | covered | — |
 | The additional source | `test_smartpi_boiler_algo.py::test_working_as_another_thermostat_s_source_clears_the_boiler_s_mode` | B2 | QW6 | covered | — |
 | Each source and reason | `test_smartpi_boiler_handler.py::test_a_provider_says_why_it_does_not_call_the_boiler`, `test_smartpi_heating_inputs.py::test_a_provider_says_why_it_does_not_call_the_boiler` | B2 | QC2, QW5 | covered | — |
+
+**Humidity events**
+
+| Variant / use case | In-process test | Simulation | QAS | Status | Action |
+|---|---|---|---|---|---|
+| Start, end, longest event, settling, unusable readings | `test_smartpi_humidity_event.py::test_a_shower_s_rise_starts_an_event`, `::test_the_event_ends_at_a_quarter_of_its_rise_then_settles`, `::test_without_a_usable_reading_nothing_starts` | — | — | covered | — |
+| Learning, dependencies, integral (heating and cooling), feed-forward trim | `test_smartpi_humidity_event.py::test_learning_waits_during_an_event_and_its_settling`, `::test_the_integral_is_held_during_an_event`, `::test_the_feed_forward_trim_takes_no_window_from_an_event` | probe (section 4.10) | — | covered | a bench run with a real humidity sensor |
+| Without a humidity sensor | `test_smartpi_humidity_event.py::test_without_a_humidity_sensor_nothing_changes`, `test_smartpi_boiler_handler.py::test_control_hands_the_room_s_humidity_to_the_algorithm` | — | — | covered | — |
 
 **The plugin around them**
 

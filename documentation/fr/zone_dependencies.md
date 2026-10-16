@@ -1405,7 +1405,7 @@ configurées : un voisin, ou la source principale d'une zone à deux sources (se
 |---|---|
 | `b_eff`, `t_ref` | le modèle composé |
 | `inputs_active` | si des entrées connues sont actives |
-| `learning_gate` | `neighbour_window`, `door_open`, `source_heat`, `door_settling`, `boiler_settling` ou aucun |
+| `learning_gate` | `neighbour_window`, `door_open`, `source_heat`, `door_settling`, `boiler_settling`, `humidity_event` ou aucun |
 | `neighbour_window_action` | la réaction à la fenêtre appliquée |
 | `items[]` | par voisin : `id`, `kind` (`neighbour`), `entity`, `mode`, `available`, `active`, `t_neighbour`, `neighbour_window`, `k`, `k_reliable`, `k_from_zone_fit`, `k_samples`, `indistinguishable`, `share_of_losses` ; `available` est faux aussi en mode sécurité ou sans température finie |
 

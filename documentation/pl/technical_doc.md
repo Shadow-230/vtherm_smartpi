@@ -148,7 +148,7 @@ Kod nie używa już stałej `WINDOW_MIN_MINUTES`. Uczenie opiera się teraz na `
 - wstrzymuje się, gdy ustawiona jest bramka uczenia (warunek, który wstrzymuje uczenie): otwarte drzwi
   do sąsiada albo czas uspokajania się po nich, otwarte okno u sąsiada, jeszcze nieznane ciepło
   drugiego źródła, emiter stygnący, bo kocioł nie jest wezwany do grzania, albo nagrzewający się
-  znowu po starcie kotła;
+  znowu po starcie kotła, zdarzenie wilgotności: prysznic albo gotowanie, §4.7;
   odrzuca też rozpoczęte okno uczenia za każdym razem, gdy bramka się zaczyna lub kończy,
 - odejmuje od zmierzonej zmiany temperatury część, którą powodują znane wejścia: ich tempo
   `known_rate = Σ g_i·(T_i − T) + Σ q_j`, scałkowane (zsumowane) w oknie,
@@ -460,6 +460,7 @@ Obecne dodatkowe zabezpieczenia to:
 - jawne `I:HOLD` w fazie `deadtime_heat` po wznowieniu, dla `window_resume` i `power_shedding_resume` w trybie grzania,
 - logika wstrzymania w strefie nieczułości,
 - przy ogrzewaniu wodnym wstrzymanie `no_heat`: wysterowanie i całka są wstrzymane w czasie grzania ciepłej wody użytkowej, a sama całka jest wstrzymana, gdy woda daje prawie zero ciepła ([Wejścia wody i kotła, §3.4](water_input.md#34-użycie-w-smartpi)),
+- zdarzenie wilgotności (prysznic albo gotowanie): uczenie jest wstrzymane, a całka wstrzymana (sekcja 4.7),
 - otwarte okno u sąsiada, gdy połączenie z tym sąsiadem jest aktywne: reakcja wybrana dla tego sąsiada. To albo wyłączenie (tą samą drogą co przy otwartym oknie, z chronionym wznowieniem), albo preset strefy „ochrona przed mrozem” lub „eco”. Ta reakcja nigdy nie żąda więcej grzania ani chłodzenia niż nastawa ([Zależności stref, §4.5](zone_dependencies.md#45-okno-u-połączonego-sąsiada)).
 
 Obliczenie rozróżnia też dwie strefy wokół nastawy:
@@ -508,6 +509,46 @@ Decyzje nadzorcy są publikowane jako zdarzenia Home Assistant. Każde zdarzenie
 Przed tym formatem zdarzenia miały nazwę termostatu w `entity_id`, a rekorder Home Assistant (zapis
 historii) ją odrzucał. Automatyzacja, która szukała nazwy w `entity_id`, powinna teraz szukać jej
 w `name`.
+
+### 4.7 Zdarzenia wilgotności
+
+Prysznic albo gotowanie grzeje pomieszczenie ciepłem, którego SmartPI nie zna, a wilgotność
+pomieszczenia to pokazuje. Gdy Versatile Thermostat publikuje wilgotność pomieszczenia (jego
+funkcja wilgotności, `current_humidity`, z czujnika wskazanego albo znalezionego), `HumidityEvent`
+śledzi ją przy każdym obliczeniu. Nic się nie konfiguruje: bez czujnika wilgotności nic się nie
+zmienia.
+
+- Zdarzenie zaczyna się, gdy wilgotność rośnie o co najmniej `HUMIDITY_EVENT_RISE` w ciągu
+  `HUMIDITY_EVENT_WINDOW_S`; najniższy poziom w tym oknie to poziom bazowy zdarzenia.
+- Kończy się, gdy wilgotność spadnie poniżej poziomu bazowego plus `HUMIDITY_EVENT_END_SHARE`
+  wzrostu (liczonego do szczytu zdarzenia), a najpóźniej po `HUMIDITY_EVENT_MAX_S`.
+- Potem trwa `HUMIDITY_EVENT_SETTLE_S` uspokajania; poziomy po nim zaczynają nową historię, więc
+  powolny ogon zdarzenia nie jest nowym wzrostem.
+- Brak odczytu albo odczyt, który nie jest liczbą, niczego nie zaczyna; trwające zdarzenie kończy
+  się według swojego zegara.
+
+W czasie zdarzenia i uspokajania:
+
+- bramka uczenia `humidity_event` wstrzymuje uczenie `a`, `b` i czasów martwych, jak inne bramki
+  (sekcja 3.2), a zależności strefy się nie uczą,
+- całka jest wstrzymana (`I:HOLD`, źródło wstrzymania `humidity_event`): ciepło zdarzenia
+  nauczyłoby ją mniejszej potrzeby grzania (większej potrzeby chłodzenia), a pomieszczenie
+  mijałoby się z nastawą przez godziny po zdarzeniu. Ochrona w jedną stronę nie wystarcza: nadal
+  pozwala, by zapamiętana w całce potrzeba zeszła w stronę zera,
+- trym feed-forward nie bierze żadnego okna.
+
+Sama regulacja trwa: człon proporcjonalny i zabezpieczenia odpowiadają na ciepło zdarzenia.
+
+| Stała                      | Wartość | Dlaczego |
+| -------------------------- | ------- | -------- |
+| `HUMIDITY_EVENT_RISE`      | 5 %RH  | prysznic podnosi wilgotność o 20–30 %RH, gotowanie o około 10 %RH; pogoda zmienia ją w 10 min dużo mniej |
+| `HUMIDITY_EVENT_WINDOW_S`  | 600 s  | prysznic osiąga szczyt w 2–16 min |
+| `HUMIDITY_EVENT_END_SHARE` | 0,25   | wilgotność wraca do ćwierci wzrostu 40–90 min po szczycie |
+| `HUMIDITY_EVENT_MAX_S`     | 3 h    | wilgotność, która zostaje wysoka (schnące pranie), nie wstrzymuje uczenia na stałe |
+| `HUMIDITY_EVENT_SETTLE_S`  | 30 min | ściany i powietrze oddają ciepło zdarzenia |
+
+Wartości pochodzą z ośmiu tygodni danych z dwóch łazienek i kuchni: jedno zdarzenie dziennie
+w łazience (0,4 w kuchni), uczenie wstrzymane 1,6–1,7 h dziennie w łazience i 0,6 h w kuchni.
 
 ---
 
@@ -590,6 +631,7 @@ zarejestrowane: przeładowanie albo usunięcie wpisu nie zostawia Versatile Ther
 | `split.py`, `source_settings.py`, `source_link.py` | reguły podziału i pętla przydziału, ustawienia źródeł, łącze między źródłami |
 | `water_input.py`       | współczynnik wody `φ` z danych o wodzie                     |
 | `boiler_call.py`       | czy kocioł grzeje dla strefy, która woła o ciepło           |
+| `humidity_event.py`    | zdarzenia wilgotności (prysznic, gotowanie) z wilgotności pomieszczenia |
 
 Moduły rozszerzeń są opisane w
 [Zależności stref, §6](zone_dependencies.md#6-komponenty-i-interfejsy) i
@@ -735,7 +777,10 @@ widoczne w `analysis.twin`.
 - `boiler`: czy kocioł jest wezwany do grzania, wybrane źródło (`entities`, `provider:<name>`,
   `vtherm_central_boiler`) i jego sygnały (`inputs`), powód i zapotrzebowanie oraz tryb uczenia,
   który z tego wynika; widoczny, gdy wybrano źródło wezwania
-  ([Wejścia wody i kotła, §8](water_input.md#8-diagnostyka)).
+  ([Wejścia wody i kotła, §8](water_input.md#8-diagnostyka));
+- `humidity`: wilgotność pomieszczenia, stan zdarzenia (`idle`, `event`, `settling`), jego poziom
+  bazowy i szczyt oraz liczba zdarzeń od startu; widoczny, gdy pojawi się pierwszy odczyt
+  wilgotności (sekcja 4.7).
 
 Gdy są dane o wodzie, wartości `power` to moc przy wodzie odniesienia, a
 `current_cycle_percent` i `next_cycle_percent` to wysterowanie wysyłane do emitera.

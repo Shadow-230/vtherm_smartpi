@@ -117,6 +117,15 @@ chaudière là où la source la donne, et `inputs` : d'où vient chaque signal. 
 dans [Entrées eau et chaudière, §8](water_input.md#8-diagnostics) et expliqués dans
 [§4](water_input.md#4-une-chaudière-qui-nest-pas-appelée).
 
+### `humidity`
+
+Quand Versatile Thermostat donne l'humidité de la pièce, `live` reçoit un bloc `humidity` dès
+qu'une lecture a été vue. Il contient l'humidité (`humidity`), l'état d'un événement d'humidité
+(`idle`, `event`, `settling`), la base (`baseline`) et le pic (`peak`) de l'événement, et `events`,
+le nombre d'événements depuis le démarrage. Pendant un événement et sa stabilisation,
+`learning_gate` vaut `humidity_event`. Ils sont expliqués dans
+[la documentation technique, §4.7](technical_doc.md#47-événements-dhumidité).
+
 ## Fréquence de publication
 
 Le capteur de diagnostic est rafraîchi lors des entrées de contrôle

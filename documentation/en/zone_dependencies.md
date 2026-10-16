@@ -1330,7 +1330,7 @@ block is missing at a calculation where the readings could not be obtained:
 |---|---|
 | `b_eff`, `t_ref` | the composed model |
 | `inputs_active` | whether known inputs are active |
-| `learning_gate` | `neighbour_window`, `door_open`, `source_heat`, `door_settling`, `boiler_settling` or none |
+| `learning_gate` | `neighbour_window`, `door_open`, `source_heat`, `door_settling`, `boiler_settling`, `humidity_event` or none |
 | `neighbour_window_action` | the window reaction applied |
 | `items[]` | per neighbour: `id`, `kind` (`neighbour`), `entity`, `mode`, `available`, `active`, `t_neighbour`, `neighbour_window`, `k`, `k_reliable`, `k_from_zone_fit`, `k_samples`, `indistinguishable`, `share_of_losses`; `available` is false also in safety mode or without a finite temperature |
 

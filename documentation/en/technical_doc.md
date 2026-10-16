@@ -145,7 +145,8 @@ The code no longer uses a `WINDOW_MIN_MINUTES` constant. Learning now relies on 
 - gives up after `DT_MAX_MIN = 240` minutes if no robust signal emerges,
 - pauses while a learning gate is set (a neighbour's door open or settling, a neighbour's open
   window, the second source's heat not yet known, the emitter cooling down because the boiler is
-  not called or warming up again once it starts), and discards the learning window in progress
+  not called or warming up again once it starts, a humidity event: a shower or cooking, §4.7),
+  and discards the learning window in progress
   each time a gate starts or ends,
 - subtracts from the measured temperature change the part that the known inputs cause: their rate
   `known_rate = Σ g_i·(T_i − T) + Σ q_j`, integrated over the window,
@@ -457,6 +458,7 @@ Additional protections currently present are:
 - explicit `I:HOLD` during the post-resume `deadtime_heat` phase for `window_resume` and `power_shedding_resume` in heating mode,
 - deadband hold logic,
 - with water heating, the `no_heat` hold: the command and the integral are held during domestic hot water, and only the integral is held while the water brings almost no heat ([Water and boiler inputs, §3.4](water_input.md#34-use-in-smartpi)),
+- a humidity event (a shower or cooking): learning pauses and the integral is held (section 4.7),
 - a neighbour's open window, while the connection to that neighbour is active: the reaction chosen for that neighbour. It is either off, through the window-off path with its protected resume, or the zone's frost or eco preset, and it never asks for more heating or cooling than the setpoint does ([Zone dependencies, §4.5](zone_dependencies.md#45-a-window-at-a-connected-neighbour)).
 
 The calculation also distinguishes two zones around the setpoint:
@@ -505,6 +507,44 @@ The supervisor's decisions are published as Home Assistant events. Every event c
 Before this format, the events carried the thermostat's name in `entity_id`, and Home Assistant's
 recorder rejected it. An automation that looked for the name in `entity_id` should now look for it
 in `name`.
+
+### 4.7 Humidity events
+
+A shower or cooking heats the room with heat SmartPI does not know, and the room's humidity
+shows it. When Versatile Thermostat publishes the room's humidity (its humidity feature,
+`current_humidity`, from a configured or found sensor), `HumidityEvent` follows it at each
+calculation. Nothing is configured: without a humidity sensor nothing changes.
+
+- An event starts when the humidity rises by `HUMIDITY_EVENT_RISE` within
+  `HUMIDITY_EVENT_WINDOW_S`; the lowest level of that window is the event's baseline.
+- It ends when the humidity falls below the baseline plus `HUMIDITY_EVENT_END_SHARE` of the rise
+  (from the event's peak), and at the latest after `HUMIDITY_EVENT_MAX_S`.
+- `HUMIDITY_EVENT_SETTLE_S` of settling follow; the levels after it start a new history, so the
+  event's slow tail is no new rise.
+- A missing or non-numeric reading starts nothing; an event already running ends by its clock.
+
+While an event or its settling runs:
+
+- the `humidity_event` learning gate pauses the learning of `a`, `b` and dead times, as the other
+  gates (section 3.2), and the zone's dependencies do not learn,
+- the integral is held (`I:HOLD`, hold source `humidity_event`): the event's heat would teach it a
+  smaller heating need (a larger cooling one), and the room would miss its setpoint for hours
+  after the event. A guard in one direction is not enough: it still lets the integral's held need
+  unwind towards zero,
+- the feed-forward trim takes no window.
+
+The regulation itself goes on: the proportional term and the guards answer the event's heat.
+
+| Constant                   | Value | Why |
+| -------------------------- | ----- | --- |
+| `HUMIDITY_EVENT_RISE`      | 5 %RH | a shower rises 20–30 %RH, cooking about 10 %RH; the weather moves the humidity much less within 10 min |
+| `HUMIDITY_EVENT_WINDOW_S`  | 600 s | a shower reaches its peak within 2–16 min |
+| `HUMIDITY_EVENT_END_SHARE` | 0.25  | the humidity falls back to a quarter of the rise 40–90 min after the peak |
+| `HUMIDITY_EVENT_MAX_S`     | 3 h   | a humidity that stays high (a drying laundry) does not pause learning for good |
+| `HUMIDITY_EVENT_SETTLE_S`  | 30 min | the walls and the air give back the event's heat |
+
+The values come from eight weeks of two bathrooms and a kitchen: one event a day in a bathroom
+(0.4 in the kitchen), learning paused 1.6–1.7 h a day in a bathroom and 0.6 h in the kitchen.
 
 ---
 
@@ -587,6 +627,7 @@ its algorithm.
 | `split.py`, `source_settings.py`, `source_link.py` | split rules and allocation loop, source settings, the link between sources |
 | `water_input.py`       | the water's factor `φ` from the water data                  |
 | `boiler_call.py`       | whether the boiler heats a calling zone                     |
+| `humidity_event.py`    | humidity events (a shower, cooking) from the room's humidity |
 
 The modules of the extensions are described in
 [Zone dependencies, §6](zone_dependencies.md#6-components-and-interfaces) and
@@ -727,7 +768,10 @@ twin is usable, its public diagnostic fields are exposed under `analysis.twin`.
 - `boiler`: whether the boiler is called, the chosen source (`entities`, `provider:<name>`,
   `vtherm_central_boiler`) and its signals (`inputs`), the reason and the demand, and the learning
   mode that follows from it; shown when a call source is chosen
-  ([Water and boiler inputs, §8](water_input.md#8-diagnostics)).
+  ([Water and boiler inputs, §8](water_input.md#8-diagnostics));
+- `humidity`: the room's humidity, the event's state (`idle`, `event`, `settling`), its baseline
+  and peak, and the number of events since the start; shown once a humidity reading has been seen
+  (section 4.7).
 
 With water data, the `power` values are power at the reference water, while
 `current_cycle_percent` and `next_cycle_percent` are the command sent to the emitter.
