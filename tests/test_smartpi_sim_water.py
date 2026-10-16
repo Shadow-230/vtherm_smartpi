@@ -118,8 +118,9 @@ async def test_an_unavailable_supply_sensor_is_a_gap_lasting_after_a_day(monkeyp
     create_issue = MagicMock()
     monkeypatch.setattr("custom_components.vtherm_smartpi.handler.ir.async_create_issue", create_issue)
     sim = _sim(monkeypatch, "entities", SimBoiler(curve_slope=1.2))
-    sim.force_water_reasons([(24.0, 99.0, "unavailable")])
-    await sim.run_for(23.9)
+    # The reset is offered only once SmartPI has learned (about 29 h here): the gap starts later.
+    sim.force_water_reasons([(36.0, 99.0, "unavailable")])
+    await sim.run_for(35.9)
     learned_factor = sim.algo.water.state.factor
     await sim.run_for(23.0)
     assert sim.algo.water.state.source == "average"

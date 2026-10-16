@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from .const import ZONE_RECOVERY_FAST, ZONE_RECOVERY_MODES
 from .dependencies import (
     KEY_LEAD_BAND,
     KEY_LEAD_EMITTER,
@@ -19,6 +20,7 @@ from .dependencies import (
     KEY_SOURCE_TAU_MIN,
     KEY_SPLIT_RATIO,
     KEY_SPLIT_RULE,
+    KEY_ZONE_RECOVERY,
     DependencyItem,
 )
 from .source_model import EMITTER_RADIATOR, EMITTERS, SourceResponse
@@ -52,10 +54,16 @@ class SourceSettings:
     lead: SourceResponse
     source_emitter: str
     source: SourceResponse
+    # How the zone comes back after a setback (ZONE_RECOVERY_MODES).
+    recovery: str = ZONE_RECOVERY_FAST
 
     @classmethod
-    def from_item(cls, item: DependencyItem) -> SourceSettings:
-        """Settings of a source item; values that do not validate fall back to defaults."""
+    def from_item(cls, item: DependencyItem, default_recovery: str = ZONE_RECOVERY_FAST) -> SourceSettings:
+        """Settings of a source item; values that do not validate fall back to defaults.
+
+        The zone's recovery is the item's own, or ``default_recovery`` (the shared
+        setting of the thermostat's regulator settings) when the item holds no valid value.
+        """
         extra = item.extra
         rule_name = extra.get(KEY_SPLIT_RULE)
         ratio = _percent(extra.get(KEY_SPLIT_RATIO), 100.0)
@@ -67,4 +75,7 @@ class SourceSettings:
         )
         lead_emitter, lead = _response(extra, KEY_LEAD_EMITTER, KEY_LEAD_LAG_MIN, KEY_LEAD_TAU_MIN)
         source_emitter, source = _response(extra, KEY_SOURCE_EMITTER, KEY_SOURCE_LAG_MIN, KEY_SOURCE_TAU_MIN)
-        return cls(item.item_id, item.entity, rule, lead_emitter, lead, source_emitter, source)
+        recovery = extra.get(KEY_ZONE_RECOVERY)
+        if recovery not in ZONE_RECOVERY_MODES:
+            recovery = default_recovery if default_recovery in ZONE_RECOVERY_MODES else ZONE_RECOVERY_FAST
+        return cls(item.item_id, item.entity, rule, lead_emitter, lead, source_emitter, source, recovery)

@@ -518,7 +518,6 @@ class Simulation:
         handler.init_algorithm()
         # Persistence is not simulated: Store writes would need a running hass.
         handler._store = None
-        handler._legacy_store = None
         handler.on_scheduler_ready(scheduler)
         return scheduler, handler
 

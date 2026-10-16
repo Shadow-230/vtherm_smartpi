@@ -313,6 +313,7 @@ The column "Where it is set" says where each setting belongs. **Shared**: in the
 | **Use setpoint filter** | Enables proportional setpoint shaping and heating landing control near the target. | shared | `enabled` |
 | **Use FF3** | Enables short-horizon predictive correction near the setpoint in disturbance recovery conditions. | shared | `enabled` |
 | **Allow damped P near deadband edge** | Inside the deadband, keeps a reduced proportional action near its edge. When disabled, the proportional branch is off in the whole deadband. | shared | `disabled` |
+| **Recovery after a setback** | A zone with two heat sources: how it comes back to its setpoint after a lower one. Fast: during a setback the slow source keeps warm, so the zone is back sooner, with about 1–2 % more energy. Economical: the deepest setback and the least energy; the zone takes longer to come back. Each zone may override it ([Zone dependencies, §5.6](zone_dependencies.md#56-allocation-loop-and-predictive-brake)). | shared | `Fast` |
 | **Record full diagnostics (debug)** | Records the complete live diagnostic payload for historical analysis. | shared | `disabled` |
 
 The activation delays are SmartPI's own. Versatile Thermostat keeps delays with the same names in its TPI settings; for a thermostat on SmartPI they are not used.

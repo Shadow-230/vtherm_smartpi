@@ -16,7 +16,11 @@
           "smart_pi_deadband_allow_p": "Autoriser P amorti près du bord de bande morte",
           "smart_pi_allow_pwm_cycle_force": "Autoriser le redémarrage PWM aux transitions de bande",
           "smart_pi_debug": "Enregistrer les diagnostics complets (debug)",
-          "smart_pi_enable_valve_linearization": "Activer la linéarisation de courbe de vanne"
+          "smart_pi_enable_valve_linearization": "Activer la linéarisation de courbe de vanne",
+          "smart_pi_zone_recovery": "Retour après un abaissement"
+        },
+        "data_description": {
+          "smart_pi_zone_recovery": "Comment la zone revient à sa consigne après une consigne plus basse (un abaissement de nuit, par exemple)."
         }
       },
       "thermostat": {
@@ -49,6 +53,22 @@
           "smart_pi_knee_demand": "Demande au coude",
           "smart_pi_knee_valve": "Ouverture de vanne au coude",
           "smart_pi_max_valve": "Ouverture maximale de vanne"
+        }
+      },
+      "settings_own": {
+        "data": {
+          "smart_pi_zone_recovery": "Retour après un abaissement"
+        },
+        "data_description": {
+          "smart_pi_zone_recovery": "Comment la zone revient à sa consigne après une consigne plus basse (un abaissement de nuit, par exemple)."
+        }
+      },
+      "zone_parameter": {
+        "data": {
+          "recovery": "Retour après un abaissement"
+        },
+        "data_description": {
+          "recovery": "Comment cette zone revient à sa consigne après une consigne plus basse (un abaissement de nuit, par exemple)."
         }
       }
     },
@@ -86,6 +106,30 @@
           "smart_pi_knee_valve": "Ouverture de vanne au coude",
           "smart_pi_max_valve": "Ouverture maximale de vanne"
         }
+      },
+      "regulator": {
+        "data": {
+          "smart_pi_zone_recovery": "Retour après un abaissement"
+        },
+        "data_description": {
+          "smart_pi_zone_recovery": "Comment la zone revient à sa consigne après une consigne plus basse (un abaissement de nuit, par exemple)."
+        }
+      },
+      "settings_own": {
+        "data": {
+          "smart_pi_zone_recovery": "Retour après un abaissement"
+        },
+        "data_description": {
+          "smart_pi_zone_recovery": "Comment la zone revient à sa consigne après une consigne plus basse (un abaissement de nuit, par exemple)."
+        }
+      },
+      "zone_parameter": {
+        "data": {
+          "recovery": "Retour après un abaissement"
+        },
+        "data_description": {
+          "recovery": "Comment cette zone revient à sa consigne après une consigne plus basse (un abaissement de nuit, par exemple)."
+        }
       }
     },
     "error": {
@@ -105,6 +149,21 @@
           "name": "Apprentissage activé",
           "description": "Indique si SmartPI peut mettre à jour son modèle thermique et ses estimations de temps mort."
         }
+      }
+    }
+  },
+  "selector": {
+    "zone_recovery": {
+      "options": {
+        "fast": "Rapide : pendant l'abaissement, la source lente reste chaude ; la zone revient plus tôt à sa consigne, avec environ 1 à 2 % d'énergie en plus",
+        "economy": "Économique : l'abaissement le plus profond et le moins d'énergie ; la zone met plus de temps à revenir à sa consigne"
+      }
+    },
+    "zone_recovery_item": {
+      "options": {
+        "defaults": "Comme dans les paramètres SmartPI par défaut",
+        "fast": "Rapide : pendant l'abaissement, la source lente reste chaude ; la zone revient plus tôt à sa consigne, avec environ 1 à 2 % d'énergie en plus",
+        "economy": "Économique : l'abaissement le plus profond et le moins d'énergie ; la zone met plus de temps à revenir à sa consigne"
       }
     }
   }

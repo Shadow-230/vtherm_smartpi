@@ -313,6 +313,7 @@ La colonne « Où il se règle » dit à qui appartient chaque réglage. **Parta
 | **Utiliser le filtre de consigne** | Active le lissage de consigne proportionnel et l'atterrissage de chauffe près de la cible. | partagé | `activé` |
 | **Utiliser FF3** | Active une correction prédictive de court horizon près de la consigne, pendant la récupération après une perturbation. | partagé | `activé` |
 | **Autoriser P amorti près du bord de bande morte** | Dans la bande morte, garde une action proportionnelle réduite près de son bord. Désactivée, la branche proportionnelle est coupée dans toute la bande morte. | partagé | `désactivé` |
+| **Retour après un abaissement** | Zone à deux sources de chaleur : comment elle revient à sa consigne après une consigne plus basse. Rapide : pendant l'abaissement, la source lente reste chaude ; la zone revient plus tôt, avec environ 1 à 2 % d'énergie en plus. Économique : l'abaissement le plus profond et le moins d'énergie ; la zone met plus de temps à revenir. Chaque zone peut la remplacer ([Dépendances entre zones, §5.6](zone_dependencies.md#56-boucle-dallocation-et-freinage-anticipé)). | partagé | `Rapide` |
 | **Enregistrer les diagnostics complets (debug)** | Enregistre les diagnostics live complets pour l'analyse historique. | partagé | `désactivé` |
 
 Les délais d'activation sont ceux de SmartPI. Versatile Thermostat garde des délais du même nom dans ses réglages TPI ; pour un thermostat sur SmartPI, ils ne sont pas utilisés.

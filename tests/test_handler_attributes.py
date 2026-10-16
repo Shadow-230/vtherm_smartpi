@@ -81,7 +81,7 @@ async def test_set_learning_service_publishes_and_persists(monkeypatch):
         thermostat.hass,
         "smartpi_diag_update_vt-test",
     )
-    thermostat.hass.bus.fire.assert_called_once_with(
+    thermostat.hass.bus.async_fire.assert_called_once_with(
         "vtherm_smartpi_event",
         {
             "entity_id": "climate.test",
@@ -89,3 +89,36 @@ async def test_set_learning_service_publishes_and_persists(monkeypatch):
             "learning_enabled": False,
         },
     )
+
+
+async def test_every_smartpi_event_is_fired_with_the_loop_safe_api(monkeypatch):
+    """The services run in Home Assistant's event loop: bus.async_fire, never bus.fire."""
+    monkeypatch.setattr(
+        "custom_components.vtherm_smartpi.handler.er.async_get",
+        lambda hass: MagicMock(async_get_entity_id=MagicMock(return_value=None)),
+    )
+    monkeypatch.setattr("custom_components.vtherm_smartpi.handler.async_dispatcher_send", MagicMock())
+    thermostat = MagicMock()
+    thermostat.hass = MagicMock()
+    thermostat.entity_id = "climate.test"
+    thermostat.unique_id = "vt-test"
+    thermostat._attr_extra_state_attributes = {"specific_states": {}}
+    thermostat.prop_algorithm = SmartPI(
+        hass=thermostat.hass,
+        cycle_min=10,
+        minimal_activation_delay=0,
+        minimal_deactivation_delay=0,
+        name="Handler events test",
+    )
+    handler = SmartPIHandler(thermostat)
+    handler._async_save = AsyncMock()
+    handler.control_heating = AsyncMock()
+
+    await handler.service_reset_smart_pi_learning()
+    await handler.service_set_smartpi_learning(True)
+    await handler.service_force_smartpi_calibration()
+    await handler.service_reset_smartpi_integral()
+
+    thermostat.hass.bus.fire.assert_not_called()
+    fired = [call.args[1].get("type") for call in thermostat.hass.bus.async_fire.call_args_list if call.args[0] == "vtherm_smartpi_event"]
+    assert fired == ["learning_reset", "learning_enabled_changed", "force_calibration", "integral_reset"]
