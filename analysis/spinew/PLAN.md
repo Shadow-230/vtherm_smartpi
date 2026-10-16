@@ -15,36 +15,24 @@ Stan na: 2026-10-16.
 **Gałąź integracyjna: `dev2`** (= `dev@34c1440`, w forku). Każdy etap na własnej gałęzi od `dev2`,
 **osobny PR na etap** do `dev2`. Na `dev`, `qas`, `master` nic nie wypychamy (decyzja D10).
 
-| Etap | Gałąź | Commity (od `dev2`) | Stan |
+| Etap | Gałąź | PR do `dev2` | Stan |
 |---|---|---|---|
-| A0 | – | – | zrobione: wzorzec `dev2` w `ANALIZA.md` §3 |
-| A1 | `feat/spinew-a1-raw-slopes` | `46a323b` (autor), `d39df98`, `013f292`, `74016f7` (D11) | PR #17; CI zielone; lokalnie pada tylko `test_rooms[base-slowheat-cold]` → naprawia Z1 |
-| A2 | `feat/spinew-a2-drift-counters` | `e0903e6` (autor), `b3e3e05` | PR #18; wszystko zielone |
-| A3 | `fix/spinew-a3-regulation-gaps` | `2d5ce1c` (port autora), `154230d`, `077e091` (D11, ta sama zmiana co w A1) | PR #19; CI zielone; lokalnie pada tylko `test_rooms[fastcool-midheat-cold]` → naprawia Z1 |
-| A4 | `feat/spinew-a4-state-store` | `d04c21f` (autor), `fab5e37` (D9) | PR #20; wszystko zielone |
-| A5 | `fix/spinew-a5-off-cycle` | `e4a0a49`, `c750ac3` (autor), `823f2e4`, `5c11903` (D12) | PR #21; wszystko zielone |
-| Z1 | `feat/zone-recovery` (od A1) | `7c7f5e6` | wypchnięte, PR po scaleniu #17; CI 1369 passed, lokalnie 1453 passed (w tym oba pokoje z A1/A3), pokrycie 93,19 → 93,22 %; wynik i odstępstwa: `ANALIZA.md` §20.6 |
-| Z2 | `fix/zone-aw-reference` (od Z1) | `658538e` | lokalnie; CI 1371, lokalnie 1455 passed, pokrycie 93,22 → 93,23 %; `ANALIZA.md` §20.7 |
-| B1 | `feat/spinew-b1-lifecycle` (od `dev2`) | `d6bd030`, `1aca7e7` | lokalnie; testowany razem z B3 (CI 1345, lokalnie 1420 passed) |
-| B2 | `feat/spinew-b2-defaults-entry` (od B1) | `09e1954`, `ed58be7` | lokalnie; CI i lokalnie zielone po `ed58be7` (wcześniej 1 test: wpis defaults tworzony przy dodaniu integracji) |
-| B3 | `feat/spinew-b3-service-targets` (od B1) | `6421a40` | lokalnie; CI 1345, lokalnie 1420 passed, pokrycie 93,16 → 93,19 % |
-| B4 | `fix/spinew-b4-events` (od `dev2`) | `1f10101` | lokalnie; CI 1323, lokalnie 1398 passed |
+| A1–A5 | `feat/spinew-a1-raw-slopes` … `fix/spinew-a5-off-cycle` | #17–#21 | scalone 2026-10-16 |
+| Z1 | `feat/zone-recovery` | #23 | scalone 2026-10-16 |
+| Z2 | `fix/zone-aw-reference` | #24 | scalone 2026-10-16 |
+| B1 | `feat/spinew-b1-lifecycle` | #25 | scalone 2026-10-16 |
+| B2 | `feat/spinew-b2-defaults-entry` | #26 | scalone 2026-10-16 |
+| B3 | `feat/spinew-b3-service-targets` | #27 | scalone 2026-10-16 |
+| B4 | `fix/spinew-b4-events` | #22 | scalone 2026-10-16 |
 
-Gałęzie etapów i `feat/zone-recovery` są w forku (wypchnięte 2026-10-16 za zgodą właściciela).
-PR-y A1–A5 do `dev2`: #17–#21 (2026-10-16), nie scalone. Z1 (`7c7f5e6`) wypchnięty; jego PR po
-scaleniu #17. PR-y #17–#21 obserwowane w sesji (CI zielone na wszystkich). Kolejna sesja: `git fetch origin` i praca na nich.
+Konflikty przy scalaniu były tylko w `CHANGELOG.md` i `testing.md` §4 (wpisy obu stron zostały,
+podwójny wpis D11 usunięty), w teście `test_smartpi_dependencies_handler.py` (dwie funkcje
+dopisane na końcu) i w `config.step.global` (`en.json`/`fr.json`: krok usunięty przez B2).
+Narzędzie: `tools/union_resolve.py`.
 
 **Następne kroki:**
-1. Za „tak” właściciela: PR-y gałęzi A1–A5 do `dev2` (każdy osobno). Przy
-   scalaniu kolejnych PR-ów spodziewane konflikty tylko w `CHANGELOG.md` (`[Unreleased]`) i w
-   `testing.md` §4.9 (EN/FR/PL; każda gałąź dodaje tę sekcję) – łączyć wpisy. Zmiana D11 jest w
-   A1 i A3 jako ten sam kod: przy drugim scaleniu zostaje jedna kopia i jeden wpis CHANGELOG.
-2. Z1: push i PR do `dev2` po scaleniu #17 (za „tak” właściciela).
-3. Z2 i faza B (B1–B4) zrobione lokalnie (2026-10-16): push i PR-y za „tak” właściciela. PR B2 i
-   B3 po scaleniu B1; PR Z2 po scaleniu Z1. Przy scaleniu B2 z Z1: B2 usuwa `config.step.global`
-   z `en.json`/`fr.json`, a Z1 dodaje tam `smart_pi_zone_recovery` – zostaje usunięcie (krok
-   `global` nie istnieje).
-4. Faza C – dopiero po potwierdzeniu właściciela.
+1. H1 – zdarzenia wilgotności (prysznic, gotowanie), `ANALIZA.md` §22; gałąź od `dev2`.
+2. Faza C – dopiero po potwierdzeniu właściciela.
 
 Odtworzenie środowiska i pomiarów: `ANALIZA.md` §3, `tools/` (skrypty), `results/` (wyniki).
 

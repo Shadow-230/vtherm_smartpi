@@ -684,3 +684,22 @@ B1–B4 według planu (`PLAN.md`, Faza B), lokalnie. Odstępstwa i znaleziska:
   termostatów); test `test_config_flow_paths.py` dostał wpis defaults.
 - B3: wywołania QAS (`entity_id` w danych) działają (`test_a_qas_style_call_with_entity_id_in_data_still_works`).
 
+## 22. H1: wilgotność z VT (2026-10-16)
+
+VT (`FeatureHumidityManager`) czyta czujnik wilgotności (wskazany albo wykryty przy czujniku
+temperatury) i podaje `current_humidity` termostatu. Decyzja właściciela: funkcja działa
+automatycznie, gdy VT podaje wilgotność.
+
+Dane właściciela (`history_10.csv`, surowe próbki 21.08–16.10.2026, co 2,5–4 min;
+`tools/hum_events.py`), zdarzenie = wzrost ≥ 5 %RH w 10 min:
+
+| czujnik | zdarzeń/dzień | wzrost (mediana) | do szczytu | po szczycie do 50 % / 25 % wzrostu |
+|---|---|---|---|---|
+| łazienka parter | 1,0 | 20 %RH | 11 min | 35 / 51 min |
+| łazienka góra | 0,7 | 22 %RH | 16 min | 39 / 88 min |
+| kuchnia | 0,4 | 11 %RH | 9 min | 37 / 40 min |
+
+Próg 3 %RH daje w łazienkach prawie te same zdarzenia, w kuchni 3× więcej (szum) – zostaje 5 %RH.
+Koniec „poziom wyjściowy + 3 %RH” trwa zwykle > 2 h; przyjęte: poniżej poziomu wyjściowego + 25 %
+wzrostu, najpóźniej 3 h, potem 30 min uspokojenia.
+
