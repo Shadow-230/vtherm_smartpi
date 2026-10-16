@@ -4,6 +4,12 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+- A thermostat switched off during the off phase of its PWM cycle cancels the running cycle, so
+  the scheduler does not switch the device on again later; a main source still sends its 0 to
+  its additional source first. An additional source that stops working (its thermostat off, or
+  a command for another HVAC mode) cancels its running cycle the same way. Remove the setters of `guard_cut_active` and `guard_kick_active`,
+  which could only raise an error and were not used (both taken from the author's newer code).
+
 - SmartPI writes its state at most once every five minutes from the control loop instead of at
   each control call, about once a minute per thermostat (taken from the author's newer code, with
   its `state_store.py`). The services, the removal of a thermostat and a cancelled calibration
