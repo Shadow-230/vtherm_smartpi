@@ -25,12 +25,11 @@ Stan na: 2026-10-16.
 | A5 | `fix/spinew-a5-off-cycle` | `e4a0a49`, `c750ac3` (autor), `823f2e4`, `5c11903` (D12) | gotowe, wszystko zielone |
 | Z1 | `feat/zone-recovery` (od A1) | jeszcze bez własnych commitów | plan zatwierdzony do D16 (niżej, „Etap Z1”); kod nie zaczęty |
 
-**Uwaga:** gałęzie etapów istnieją tylko lokalnie w kontenerze sesji z 2026-10-16, dopóki
-właściciel nie zgodzi się na push. Jeśli ich nie ma w forku, kolejna sesja odtwarza je według
-opisów etapów niżej (cherry-pick commitów autora + nasze zmiany opisane w `ANALIZA.md` §19).
+Gałęzie etapów i `feat/zone-recovery` są w forku (wypchnięte 2026-10-16 za zgodą właściciela),
+bez PR-ów. Kolejna sesja: `git fetch origin` i praca na nich.
 
 **Następne kroki:**
-1. Za „tak” właściciela: push gałęzi etapów A1–A5 i PR-y do `dev2` (każdy osobno). Przy
+1. Za „tak” właściciela: PR-y gałęzi A1–A5 do `dev2` (każdy osobno). Przy
    scalaniu kolejnych PR-ów spodziewane konflikty tylko w `CHANGELOG.md` (`[Unreleased]`) i w
    `testing.md` §4.9 (EN/FR/PL; każda gałąź dodaje tę sekcję) – łączyć wpisy. Zmiana D11 jest w
    A1 i A3 jako ten sam kod: przy drugim scaleniu zostaje jedna kopia i jeden wpis CHANGELOG.
