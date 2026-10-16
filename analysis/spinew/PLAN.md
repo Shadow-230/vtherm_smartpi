@@ -14,7 +14,7 @@ Stan na: 2026-10-16.
 
 **Gałąź integracyjna: `dev2`** (start: `dev@34c1440`; teraz `705b3f2`, w forku). Każdy etap na własnej
 gałęzi od `dev2`, **osobny PR na etap** do `dev2`. Na `dev`, `qas`, `master` nic nie wypychamy (decyzja
-D10). Po scaleniu gałąź etapu jest usuwana (D23; na GitHubie usuwa właściciel). Wzorzec testów `dev2@705b3f2`:
+D10). Na `dev2` trafiają także nasze własne funkcje (np. Z1, Z2, H1), nie tylko zmiany autora. Po scaleniu gałąź etapu jest usuwana (D23; na GitHubie usuwa właściciel). Wzorzec testów `dev2@705b3f2`:
 1451 passed + 84 skipped (CI), 1535 passed lokalnie, pokrycie 93,57 % (`ANALIZA.md` §3).
 
 | Etap | Gałąź | PR do `dev2` | Stan |

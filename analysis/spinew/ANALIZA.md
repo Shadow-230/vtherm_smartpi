@@ -24,6 +24,7 @@ Zasady łączą dokumenty procesu właściciela (`CLAUDE.md` i `PLAN_ROZWOJU.md`
    **Od 2026-10-16 gałęzią integracyjną tej pracy jest `dev2`** (kopia `dev@34c1440`): każda
    gałąź robocza od `dev2`, **osobny PR na każdy etap** do `dev2`. Na `dev`, `qas` i `master` nie
    wypychamy nic (`dev` zostaje na `34c1440` jako zapas). `qas` na razie nie dotykamy.
+   Na `dev2` trafiają także nasze własne funkcje (np. Z1, Z2, H1), nie tylko zmiany autora. (2026-10-16)
 5. Bez merge całego `SPINew` i bez próbnych merge do istniejących gałęzi. Testy i próby tylko na
    nowych gałęziach.
 6. **Dokumentacja we wszystkich językach** (2026-10-15): EN jest źródłem, FR i PL to tłumaczenia,
@@ -446,7 +447,7 @@ się parsują.
 | D7 | Korekta reference governora przy wodzie | pomiar 2026-10-15: niepotrzebna, opcja D (§13.4) |
 | D8 | „Drganie” capa reference governora (§13.5) | przyjęte 2026-10-15: obserwujemy w C1; ewentualna zmiana (kod autora) po pomiarze i za zgodą właściciela |
 | D9 | Zapis stanu od razu po resecie strefy (`_apply_reset_request`, etap A4) | przyjęte 2026-10-15: zapis natychmiastowy, jak przy serwisie `reset_smartpi_learning` u autora |
-| D10 | Gałąź integracyjna `dev2`, osobny PR na etap; nic na `dev`, `qas`, `master` | przyjęte 2026-10-16 |
+| D10 | Gałąź integracyjna `dev2` (zmiany autora i nasze własne funkcje), osobny PR na etap; nic na `dev`, `qas`, `master` | przyjęte 2026-10-16 |
 | D11 | Okna nauki wymiany z sąsiadem nie przepadają przy „guard cut” (`_dependency_learning_allowed`), §19.3 | przyjęte 2026-10-16; w A1 i A3 (ta sama zmiana) |
 | D12 | Dodatkowe źródło, które przestaje pracować, anuluje trwający cykl (jak poprawka autora dla OFF), §19.5 | przyjęte 2026-10-16; w A5 |
 | D13 | Optymalizacja dojścia strefy po obniżeniu: cel „dojście nie wolniejsze i mniejsze przegrzanie niż dwa osobne SmartPI”, §20 | przyjęte 2026-10-16 (cel właściciela) |
