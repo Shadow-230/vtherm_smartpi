@@ -260,7 +260,7 @@ Quand le modèle thermique devient fiable, SmartPI bascule dans son mode normal 
 
 Près de la température cible, SmartPI cherche à éviter les micro-corrections permanentes. Le résultat attendu est une régulation plus stable, avec moins de corrections inutiles qu'un TPI fixe.
 
-Lors d'une hausse de consigne en chauffage, le filtre de consigne utilise aussi le modèle appris pour gérer l'approche finale de la cible. La branche proportionnelle suit une référence filtrée, tandis que la consigne brute reste disponible pour la branche intégrale. Près de la cible, SmartPI peut plafonner la demande de chauffe interne quand le modèle prédit que la chaleur déjà injectée suffit à atteindre la consigne. Cet atterrissage aide la pièce à ralentir avant la cible au lieu de continuer à chauffer uniquement parce que le feed-forward ou l'état PI gelé reste positif.
+Lors d'un changement de consigne en HEAT ou COOL, le filtre de consigne utilise aussi le modèle appris pour gérer l'approche finale de la cible. La branche proportionnelle suit une référence gouvernée, tandis que la consigne brute reste disponible pour la branche intégrale. Près de la cible, SmartPI peut plafonner la demande interne quand le modèle prédit que l'énergie thermique déjà engagée suffit à atteindre la consigne. La réserve dynamique et le handoff confirmé dans le temps ralentissent l'approche sans maintenir la pièce à un écart fixe de la cible.
 
 Avec `FF3`, activé par défaut, SmartPI peut aussi appliquer une petite correction prédictive près de la consigne lorsqu'il détecte un contexte crédible de perturbation externe.
 
@@ -318,7 +318,7 @@ La colonne « Où il se règle » dit à qui appartient chaque réglage. **Parta
 | **Hystérésis marche** | Seuil de redémarrage pendant le bootstrap. | partagé | `0.3°C` |
 | **Hystérésis arrêt** | Seuil d'arrêt pendant le bootstrap. | partagé | `0.5°C` |
 | **Facteur tau de relâchement** | Échelle du délai de relâchement intégral par rapport à la constante de temps apprise. | partagé | `0.5` |
-| **Utiliser le filtre de consigne** | Active le lissage de consigne proportionnel et l'atterrissage de chauffe près de la cible. | partagé | `activé` |
+| **Utiliser le filtre de consigne** | Active le lissage de consigne proportionnel et la gouvernance prédictive HEAT/COOL près de la cible. | partagé | `activé` |
 | **Utiliser FF3** | Active une correction prédictive de court horizon près de la consigne, pendant la récupération après une perturbation. | partagé | `activé` |
 | **Autoriser P amorti près du bord de bande morte** | Dans la bande morte, garde une action proportionnelle réduite près de son bord. Désactivée, la branche proportionnelle est coupée dans toute la bande morte. | partagé | `désactivé` |
 | **Retour après un abaissement** | Zone à deux sources de chaleur : comment elle revient à sa consigne après une consigne plus basse. Rapide : pendant l'abaissement, la source lente reste chaude ; la zone revient plus tôt, avec environ 1 à 2 % d'énergie en plus. Économique : l'abaissement le plus profond et le moins d'énergie ; la zone met plus de temps à revenir. Chaque zone peut la remplacer ([Dépendances entre zones, §5.6](zone_dependencies.md#56-boucle-dallocation-et-freinage-anticipé)). | partagé | `Rapide` |
@@ -382,7 +382,7 @@ Autres blocs utiles sous `live` :
 - `temperature` : température mesurée, erreur, état de l'intégrale,
 - `model` : `a`, `b`, niveau de confiance et temps morts appris,
 - `feedforward` : état du feed-forward et de FF3,
-- `setpoint` : informations de consigne filtrée et d'atterrissage,
+- `setpoint` : informations de consigne filtrée et du gouverneur de référence,
 - `autocalib` : état de la supervision automatique,
 - `calibration` : état d'une calibration forcée,
 - `dependencies` : dépendances entre zones et zone à deux sources de chaleur, quand elles sont configurées ([Dépendances entre zones, §9](zone_dependencies.md#9-diagnostics)),
@@ -394,10 +394,11 @@ En mode normal, le bloc `setpoint` peut contenir :
 - `filtered_setpoint` : référence suivie par la branche proportionnelle,
 - `trajectory_active` : indique si une trajectoire de consigne est active,
 - `trajectory_source` : indique pourquoi la trajectoire est active,
-- `landing_active` : indique si l'atterrissage de chauffe est actif,
-- `landing_reason` : raison de l'état d'atterrissage,
-- `landing_u_cap` : cap de demande de chauffe interne appliqué pendant l'atterrissage,
-- `landing_coast_required` : indique si SmartPI laisse la pièce en roue libre parce que le modèle prédit assez de chaleur stockée.
+- `governor_active` : indique si le façonnage prédictif de référence ou de commande est actif,
+- `governor_phase` : phase courante `idle`, `governed` ou `handoff`,
+- `governor_reason` : raison de la dernière décision du gouverneur,
+- `governor_command_cap` : cap de demande interne HEAT/COOL,
+- `governor_coast_required` : indique si la prédiction impose une commande nulle.
 
 Les valeurs avancées utilisées par la carte fournie sont toujours disponibles
 dans `live.analysis`. Le mode debug n'ajoute ni ne retire de champs publiés : il
@@ -409,11 +410,16 @@ Une carte Markdown Home Assistant est aussi disponible pour afficher plus simple
 
 https://github.com/KipK/vtherm_smartpi/tree/master/cards
 
+Les cartes de cette version sont dans [`cards/`](../../cards), en anglais, en français et en
+polonais (`smartpi_diags-en.md`, `smartpi_diags-fr.md`, `smartpi_diags-pl.md`). En plus des sections
+de l'auteur, elles montrent les entrées connues (`dependencies`), l'eau (`water`) et l'appel de la
+chaudière (`boiler`) quand SmartPI publie ces blocs.
+
 ## Panel de régulation avec Equinox
 
 SmartPI publie aussi le résumé `specific_states.smart_pi` et la référence d'entité `specific_states.regulation_diagnostics` sur l'entité thermostat. Tant que SmartPI utilise des données d'eau, il écrit aussi `specific_states.water_factor` : le facteur d'eau qu'il applique (la chaleur que donne l'émetteur avec l'eau actuelle, comparée à celle donnée avec une eau de référence). C'est la sortie de SmartPI pour toute intégration qui la lit ([Entrées eau et chaudière, §3.4](water_input.md#34-utilisation-dans-smartpi)). La [carte Lovelace Equinox](https://github.com/KipK/equinox) utilise ces attributs pour afficher un panel **Régulation** dédié depuis le menu de la carte climate.
 
-Avec Equinox, vous pouvez suivre la progression d'apprentissage SmartPI, la confiance du modèle, le détail de puissance, l'atterrissage de consigne, les graphes d'historique et les actions de maintenance disponibles sans copier la carte Markdown de diagnostics.
+Avec Equinox, vous pouvez suivre la progression d'apprentissage SmartPI, la confiance du modèle, le détail de puissance, la gouvernance de consigne, les graphes d'historique et les actions de maintenance disponibles sans copier la carte Markdown de diagnostics.
 
 ![Vue d'ensemble du panel de régulation SmartPI dans Equinox](https://github.com/KipK/equinox/raw/master/assets/screens/regul-overview.png)
 

@@ -210,7 +210,7 @@ def test_the_feed_forward_trim_records_the_power(monkeypatch):
     algo = make_smartpi()
     algo.update_water(live(40.0), 20.0)
     recorded = {}
-    monkeypatch.setattr(algo._fftrim_observer, "complete_applied_cycle", lambda **kw: recorded.update(kw))
+    monkeypatch.setattr(algo._causal_power_trace, "complete_applied_cycle", lambda **kw: recorded.update(kw))
     algo._record_completed_fftrim_power(cycle_end_now=0.0, e_eff=0.6)
     assert recorded["realized_linear_power"] == pytest.approx(0.6 * algo.water_factor)
 

@@ -712,6 +712,66 @@
 | Retries | {{ calibration_retry }} |
 | Dernière calibration | {% if calibration_last %}`{{ calibration_last }}`{% else %}—{% endif %} |
 
+{% set deps = spi.get('dependencies') %}
+{% set water = spi.get('water') %}
+{% set boiler = spi.get('boiler') %}
+{% if deps %}
+---
+
+### 🔗 Entrées connues
+
+| Signal | Valeur |
+|---|---|
+{% if deps.get('role') == 'second_source' -%}
+| Rôle | source additionnelle de `{{ deps.get('lead') }}` |
+| Commande appliquée | {% if deps.get('command') is not none %}{{ deps.get('command') | float | round(3) }}{% else %}—{% endif %} |
+{% else -%}
+| `b_eff` / `T_ref` | {% if deps.get('b_eff') is not none %}{{ deps.get('b_eff') | float | round(6) }}{% else %}—{% endif %} / {% if deps.get('t_ref') is not none %}{{ deps.get('t_ref') | float | round(2) }}°C{% else %}—{% endif %} |
+| Entrées actives | {% if deps.get('inputs_active') is sameas true %}oui{% elif deps.get('inputs_active') is sameas false %}non{% else %}—{% endif %} |
+| Verrou d'apprentissage | `{{ deps.get('learning_gate') or '—' }}` |
+| Réaction à la fenêtre du voisin | `{{ deps.get('neighbour_window_action') or '—' }}` |
+{% for item in deps.get('items', []) -%}
+| Voisin `{{ item.get('id') }}` | {% if item.get('available') is sameas false %}indisponible{% else %}{{ item.get('t_neighbour', '—') }}°C · échange `k` {{ item.get('k') if item.get('k') is not none else '—' }}{% endif %} |
+{% endfor -%}
+{% set source = deps.get('second_source') -%}
+{% if source -%}
+| Source additionnelle | `{{ source.get('entity') }}` · Mode `{{ source.get('mode') }}` |
+| Commande / chaleur actuelle | {% if source.get('command') is not none %}{{ source.get('command') | float | round(3) }}{% else %}—{% endif %} / {% if source.get('x_f') is not none %}{{ source.get('x_f') | float | round(3) }}{% else %}—{% endif %} |
+| Plafond de puissance | {% if source.get('power_cap') is not none %}{{ source.get('power_cap') | float | round(3) }}{% else %}—{% endif %} |
+| Retour / abaissement en cours | `{{ source.get('recovery') or '—' }}` / {% if source.get('setback') is sameas true %}oui{% elif source.get('setback') is sameas false %}non{% else %}—{% endif %} |
+| Ajustement de la zone | {% if (source.get('zone_fit') or {}).get('published') is sameas true %}oui{% else %}non{% endif %} |
+{% endif -%}
+{% endif %}
+{% endif %}
+
+{% if water %}
+---
+
+### 💧 Eau
+
+| Signal | Valeur |
+|---|---|
+| Type de chauffage | `{{ water.get('heating_type') }}` |
+| Facteur d'eau | {% if water.get('factor') is not none %}{{ water.get('factor') | float | round(3) }}{% else %}—{% endif %} |
+| Origine du facteur | `{{ water.get('source') }}` |
+| Départ moyen | {% if water.get('supply_avg_c') is not none %}{{ water.get('supply_avg_c') | float | round(1) }}°C{% else %}—{% endif %} |
+| Eau chaude / eau trop tiède | {% if water.get('no_heat') is sameas true %}oui{% elif water.get('no_heat') is sameas false %}non{% else %}—{% endif %} / {% if water.get('low_heat') is sameas true %}oui{% elif water.get('low_heat') is sameas false %}non{% else %}—{% endif %} |
+| Eau trop froide pour la demande | {% if water.get('water_too_cold') is sameas true %}oui{% elif water.get('water_too_cold') is sameas false %}non{% else %}—{% endif %} |
+{% endif %}
+
+{% if boiler %}
+---
+
+### 🔥 Appel de la chaudière
+
+| Signal | Valeur |
+|---|---|
+| Source | `{{ boiler.get('source') }}` |
+| Appelée pour chauffer | {% if boiler.get('called') is sameas true %}oui{% elif boiler.get('called') is sameas false %}non{% else %}inconnu{% endif %} |
+| Pourquoi elle ne l'est pas | `{{ boiler.get('reason') or '—' }}` |
+| Mode d'apprentissage | `{{ boiler.get('learning') or '—' }}` |
+{% endif %}
+
 {% if has_analysis %}
 ---
 

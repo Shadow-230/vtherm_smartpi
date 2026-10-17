@@ -341,9 +341,18 @@ il ne sert plus le thermostat, ou quand le capteur de départ a disparu.
      modèle appris. Un passage à un type électrique ne propose rien.
 7. **Puissance dans les diagnostics.** Avec des données d'eau, les valeurs du bloc `power`
    (`pi_percent`, `ff_percent`, `command_percent`, `limited_percent`, `applied_percent`, les valeurs
-   `linear_*`) et les séries d'historique `power.command_percent` et `power.applied_percent` sont
-   des puissances à l'eau de référence. `current_cycle_percent` et `next_cycle_percent` sont la
-   commande envoyée à l'émetteur.
+   `linear_*`) et les séries d'historique `power.command_percent`, `power.applied_percent`,
+   `power.governor_cap_percent` et `power.before_governor_cap_percent` sont des puissances à l'eau
+   de référence. `current_cycle_percent` et `next_cycle_percent` sont la commande envoyée à
+   l'émetteur.
+8. **Gouverneur de référence.** Vers la fin d'un changement de consigne, le gouverneur de
+   référence ([Documentation technique, §4.4](technical_doc.md#44-gestion-de-consigne)) peut
+   plafonner la puissance pour que la chaleur déjà donnée ne soit pas de trop. Il prédit avec le
+   modèle à l'eau de référence et ne connaît pas la limite de l'eau du point 3. Il n'y a rien à
+   changer : quand une eau trop froide limite la commande, le plafond ne contraint pas (il ne
+   ferait que couper une puissance que l'eau coupe déjà). Le gouverneur ne promet alors rien
+   qu'une mesure plus tard pourrait démentir, et il ne retire donc pas son épisode comme une
+   prédiction ratée. En bref : sous une limite d'eau, le gouverneur ne freine pas (section 3.6).
 
 ### 3.5 Cycle de vie des données
 
@@ -391,6 +400,25 @@ SmartPI apprend moins de la moitié de la puissance du radiateur à l'eau de ré
 froide donnée par la courbe ressemble à un radiateur plus faible. Avec des données d'eau, venant
 d'entités ou d'un fournisseur, il apprend entre 0.5 et 1.2 fois cette puissance, et plus de 1.5 fois
 la valeur qu'il apprend sans elles.
+
+**Gouverneur de référence avec l'eau** (mesuré le 2026-10-17 ; script
+`analysis/spinew/measure_governor_water.py` sur la branche d'analyse). Une pièce avec radiateur
+(`a` 0.06, `b` 0.001, délai 10 min, capteur 0.1 °C), 48 h à 20 °C, puis quatre jours avec 17 °C
+dès 22:00 et 21 °C dès 6:00 ; trois phases de régulation, donc douze approches du matin par cas.
+Comparé au filtre de consigne d'avant le gouverneur :
+
+| Eau | Temps jusqu'à 20.9 °C | Minutes avec un plafond qui contraint | Épisodes retirés |
+|---|---|---|---|
+| sans données d'eau | 2.1 h (avant : 2.2 h) | 0.3 (avant : 37) | 0 |
+| 60 °C, avec données | 2.2 h (avant : 2.1 h) | 0 (avant : 40) | 0 |
+| 45 °C, avec données | 4.5 h (avant : 4.5 h) | 0 (avant : 27) | 0 |
+| 40 °C, avec données | 7.9 h (avant : 7.9 h) | 0 (avant : 20) | 0 |
+| 45 °C, sans données | 4.7 h (avant : 4.7 h) | 0 (avant : 16) | 0 |
+
+Une eau plus froide allonge l'approche dans les deux versions ; c'est la physique du radiateur, pas
+la régulation. Avec de l'eau à 40 °C, une approche sur douze n'a pas atteint 20.9 °C en 8 h. Le
+test `test_smartpi_governor_water.py` vérifie une version plus courte (45 °C, trois phases de
+régulation) ([Tests, §4.9](testing.md#49-changements-repris-du-nouveau-code-de-lauteur)).
 
 ## 4. Une chaudière qui n'est pas appelée
 

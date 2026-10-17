@@ -712,6 +712,66 @@
 | Retries | {{ calibration_retry }} |
 | Last calibration | {% if calibration_last %}`{{ calibration_last }}`{% else %}—{% endif %} |
 
+{% set deps = spi.get('dependencies') %}
+{% set water = spi.get('water') %}
+{% set boiler = spi.get('boiler') %}
+{% if deps %}
+---
+
+### 🔗 Known inputs
+
+| Signal | Value |
+|---|---|
+{% if deps.get('role') == 'second_source' -%}
+| Role | additional source of `{{ deps.get('lead') }}` |
+| Command applied | {% if deps.get('command') is not none %}{{ deps.get('command') | float | round(3) }}{% else %}—{% endif %} |
+{% else -%}
+| `b_eff` / `T_ref` | {% if deps.get('b_eff') is not none %}{{ deps.get('b_eff') | float | round(6) }}{% else %}—{% endif %} / {% if deps.get('t_ref') is not none %}{{ deps.get('t_ref') | float | round(2) }}°C{% else %}—{% endif %} |
+| Inputs active | {% if deps.get('inputs_active') is sameas true %}yes{% elif deps.get('inputs_active') is sameas false %}no{% else %}—{% endif %} |
+| Learning gate | `{{ deps.get('learning_gate') or '—' }}` |
+| Neighbour window action | `{{ deps.get('neighbour_window_action') or '—' }}` |
+{% for item in deps.get('items', []) -%}
+| Neighbour `{{ item.get('id') }}` | {% if item.get('available') is sameas false %}unavailable{% else %}{{ item.get('t_neighbour', '—') }}°C · exchange `k` {{ item.get('k') if item.get('k') is not none else '—' }}{% endif %} |
+{% endfor -%}
+{% set source = deps.get('second_source') -%}
+{% if source -%}
+| Additional source | `{{ source.get('entity') }}` · Mode `{{ source.get('mode') }}` |
+| Command / heat now | {% if source.get('command') is not none %}{{ source.get('command') | float | round(3) }}{% else %}—{% endif %} / {% if source.get('x_f') is not none %}{{ source.get('x_f') | float | round(3) }}{% else %}—{% endif %} |
+| Power cap | {% if source.get('power_cap') is not none %}{{ source.get('power_cap') | float | round(3) }}{% else %}—{% endif %} |
+| Recovery / setback now | `{{ source.get('recovery') or '—' }}` / {% if source.get('setback') is sameas true %}yes{% elif source.get('setback') is sameas false %}no{% else %}—{% endif %} |
+| Zone fit | {% if (source.get('zone_fit') or {}).get('published') is sameas true %}yes{% else %}no{% endif %} |
+{% endif -%}
+{% endif %}
+{% endif %}
+
+{% if water %}
+---
+
+### 💧 Water
+
+| Signal | Value |
+|---|---|
+| Heating type | `{{ water.get('heating_type') }}` |
+| Water factor | {% if water.get('factor') is not none %}{{ water.get('factor') | float | round(3) }}{% else %}—{% endif %} |
+| Factor source | `{{ water.get('source') }}` |
+| Averaged supply | {% if water.get('supply_avg_c') is not none %}{{ water.get('supply_avg_c') | float | round(1) }}°C{% else %}—{% endif %} |
+| Hot water / water too cool | {% if water.get('no_heat') is sameas true %}yes{% elif water.get('no_heat') is sameas false %}no{% else %}—{% endif %} / {% if water.get('low_heat') is sameas true %}yes{% elif water.get('low_heat') is sameas false %}no{% else %}—{% endif %} |
+| Water too cold for the demand | {% if water.get('water_too_cold') is sameas true %}yes{% elif water.get('water_too_cold') is sameas false %}no{% else %}—{% endif %} |
+{% endif %}
+
+{% if boiler %}
+---
+
+### 🔥 Boiler's call
+
+| Signal | Value |
+|---|---|
+| Source | `{{ boiler.get('source') }}` |
+| Called for heat | {% if boiler.get('called') is sameas true %}yes{% elif boiler.get('called') is sameas false %}no{% else %}unknown{% endif %} |
+| Reason it is not | `{{ boiler.get('reason') or '—' }}` |
+| Learning mode | `{{ boiler.get('learning') or '—' }}` |
+{% endif %}
+
 {% if has_analysis %}
 ---
 

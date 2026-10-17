@@ -111,6 +111,7 @@ Drzwi są otwarte 7:00–9:00, 12:00–13:30 i 18:00–22:00.
 | N5 | chłodzenie, korytarz o temperaturze 28 °C za drzwiami | `k` ±25 %; błąd poniżej 0.3 °C od 60 h |
 | N6 | okno korytarza otwarte przez godzinę, gdy drzwi są otwarte, raz dla każdej reakcji | w tym czasie `k` nie jest uczone; reakcja jest zastosowana (nic, wyłączenie, ochrona przed mrozem 7 °C, eco 17 °C); urządzenie zgodnie z nią pracuje albo staje; potem temperatura w pomieszczeniu nie wychodzi więcej niż 0.6 °C ponad nastawę (przeregulowanie) |
 | N7 | pomieszczenie między dwoma zawsze otwartymi sąsiadami, temperatura każdego z nich skacze raz | dla każdego: `k` w granicach ±35 % albo pokazany jako „nie da się rozróżnić” |
+| N3 rano | po uczeniu N3 (70 h) dwie noce przy 17 °C, potem 20 °C o 6:00; trzy fazy regulacji (dwie lokalnie) | 19.9 °C w mniej niż 3.6 h i przeregulowanie poniżej 0.3 °C każdego ranka (przed reference governorem i z nim: 3.0–3.3 h, 0.15–0.24 °C) |
 
 ### 3.2 Strefa z dwoma źródłami ciepła — `test_smartpi_sim_second_source.py`
 
@@ -290,6 +291,11 @@ przychodzą z każdą zmianą; testy poniżej sprawdzają, że dodatki forka nad
 | `test_smartpi_regulation_gaps.py` | termostat, który wychodzi z roli dodatkowego źródła, niczego nie całkuje za czas spędzony w tej roli; restart w innym trybie HVAC kasuje PI tylko przy pierwszym obliczeniu |
 | `test_smartpi_ab_drift.py` (dwa dodane testy) | stan nauczonego pomieszczenia z pakietu QAS, zapisany z jednym wspólnym `learn_seq`, ustawia oba liczniki dryfu; historie zasiane ze wspólnego dopasowania strefy nadal pozwalają `b` iść za dryfem |
 | `test_smartpi_raw_slopes.py` | nachylenia do uczenia pochodzą z surowej zmierzonej temperatury: powolna zmiana odczytywana przez czujnik 0.1 °C daje prawdziwe nachylenie pomniejszone o tempo znanych wejść; strefa wstrzymana przez kocioł, który nie jest wezwany, dalej zapisuje surowe próbki; zmiana wezwania kotła czyści historię surową i historię po filtrze |
+| `test_smartpi_governor_water.py` | przyczynowy zapis mocy korekty FF i model zależności strefy zapisują moc cyklu przy wodzie odniesienia; poranne dojście ograniczone wodą 45 °C (trzy fazy regulacji) nie ma wiążącego limitu governora, gdy ogranicza woda, i żaden epizod nie jest wycofany jako chybiona prognoza |
+| `test_smartpi_governor_source_role.py` | wyjście z roli dodatkowego źródła czyści trajektorię nastawy i epizod reference governora sprzed tej roli; temperatura narzucona przez okno u sąsiada jest celem governora, a zamknięcie okna uzbraja hamowanie jak wzrost nastawy |
+| `test_smartpi_governor_humidity.py` | w czasie zdarzenia wilgotności zwalnianie hamowania widzi wstrzymaną całkę i niczego nie zwalnia; dopuszczalne okno korekty FF z każdej z dróg autora (koniec cyklu, okresowa) jest odrzucane |
+| `test_smartpi_dependencies_algo.py` (rozszerzony test podstawienia) | reference governor dostaje `b_eff` i `T_ref` przez filtr nastawy, a pomiary korekty FF dostają `T_ref` jako temperaturę zewnętrzną |
+| `test_smartpi_water_algo.py` (jeden test zmieniony) | moc cyklu przy wodzie odniesienia trafia do przyczynowego zapisu mocy, dokąd autor przeniósł ją z obserwatora korekty FF |
 
 ### 4.10 Zdarzenia wilgotności
 

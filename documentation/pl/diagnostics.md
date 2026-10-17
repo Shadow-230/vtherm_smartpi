@@ -26,18 +26,31 @@ Tryb debugowania zapisuje zarówno `live`, jak i `history`. Zawartość nie jest
 w `history`: uzgodniony zestaw danych historii jest taki sam w obu trybach.
 Tryb debugowania zmienia więc to, co jest zachowywane, a nie to, co jest publikowane.
 
-Blok `history` zawiera te osiem serii danych:
+Blok `history` zawiera te jedenaście serii danych:
 
 | Ścieżka w `history` | Znaczenie |
 |---|---|
 | `temperature.indoor` | Temperatura w pomieszczeniu |
 | `setpoint.filtered_setpoint` | Przefiltrowana nastawa regulacji |
-| `power.applied_percent` | Moc faktycznie podana |
+| `setpoint.nominal_reference` | Nominalne odniesienie z profilu, oceniane przez reference governor |
+| `power.applied_percent` | Wysterowanie zadane po ograniczeniach wyjścia |
 | `power.command_percent` | Żądane wysterowanie, przed wpływem elementu wykonawczego (tego, co fizycznie włącza grzanie) |
 | `power.pi_percent` | Udział części PI |
 | `power.ff_percent` | Udział części wyprzedzającej (feed-forward) |
+| `power.governor_cap_percent` | Limit wysterowania z reference governora, w % |
+| `power.before_governor_cap_percent` | Żądanie PI przed zastosowaniem limitu, w % |
 | `model.a` | Nauczone wzmocnienie grzania |
 | `model.b` | Nauczony współczynnik strat ciepła |
+
+Nominalne odniesienie jest zapisywane z dokładnością 0,01 °C, a limit i żądanie przed limitem z
+dokładnością 0,1 %. Te trzy pola rozszerzają schemat v2; ich źródła zostają w
+`live.analysis.reference_governor`. Brak odniesienia albo limitu to `null`, nie zero. Limit
+naprawdę równy zero to 0 %. Po końcu hamowania żądanie przed limitem może być nadal dostępne, a
+nominalne odniesienie i limit znikają.
+
+Żądanie przed limitem używa już przefiltrowanego odniesienia części P; nie jest symulacją PI na
+nastawie użytkownika. Zadane wysterowanie nie mierzy dostarczonego ciepła. Wykresy muszą przerywać
+krzywą limitu przy `null` i znosić brak pól ze starszych wersji.
 
 ## Diagnostyka bieżąca
 
@@ -52,7 +65,7 @@ Blok `live` jest podzielony według zadań:
 | `learning` | Etap uczenia, postęp fazy startowej, przyjęte aktualizacje i stan dryfu (powolnej zmiany modelu) |
 | `governance` | Reżim cieplny (rodzaj bieżącej sytuacji) i decyzja o aktualizacji modelu |
 | `feedforward` | Stan FF3, źródło strefy nieczułości i główna diagnostyka FFTrim (powolnej korekty części wyprzedzającej) |
-| `setpoint` | Przefiltrowana nastawa, trajektoria, podbicie (boost) i podsumowanie „lądowania” |
+| `setpoint` | Przefiltrowana nastawa, trajektoria, podbicie (boost) i podsumowanie reference governora |
 | `autocalib` | Stan nadzoru automatycznej kalibracji |
 | `calibration` | Stan kalibracji, liczba ponownych prób i czas ostatniego zakończenia |
 | `analysis` | Zaawansowane pola używane przez dołączone karty diagnostyczne |
@@ -61,7 +74,7 @@ Blok `live` jest podzielony według zadań:
 | `boiler` | Tylko dla wodnego rodzaju ogrzewania z wybranym źródłem wezwania kotła: to źródło, wezwanie i wynikający z niego tryb uczenia |
 
 `analysis` dzieli zaawansowane bieżące wartości na `control`, `learning`,
-`trajectory`, `landing`, `deadtime`, `governance`, `feedforward` oraz, gdy jest
+`trajectory`, `reference_governor`, `deadtime`, `governance`, `feedforward` oraz, gdy jest
 dostępny, `twin`.
 
 FFTrim używa zagnieżdżonych bloków w stałym układzie:

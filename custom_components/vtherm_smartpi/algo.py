@@ -2071,6 +2071,9 @@ class SmartPI:
 
     def leave_source_role(self) -> None:
         self._executive = None
+        # The role regulated nothing: a setpoint episode from before it (trajectory,
+        # reference governor) must not resume on the first own tick.
+        self.sp_mgr.reset()
 
     @property
     def source_power_cap(self) -> float:

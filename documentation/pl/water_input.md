@@ -326,8 +326,16 @@ obsługiwać termostat albo gdy czujnika zasilania już nie ma.
      Zmiana na rodzaj elektryczny niczego nie proponuje.
 7. **Moc w diagnostyce.** Przy danych o wodzie wartości bloku `power` (`pi_percent`, `ff_percent`,
    `command_percent`, `limited_percent`, `applied_percent`, wartości `linear_*`) oraz serie
-   historii `power.command_percent` i `power.applied_percent` to moc przy wodzie odniesienia.
-   `current_cycle_percent` i `next_cycle_percent` to wysterowanie wysyłane do emitera.
+   historii `power.command_percent`, `power.applied_percent`, `power.governor_cap_percent` i
+   `power.before_governor_cap_percent` to moc przy wodzie odniesienia. `current_cycle_percent` i
+   `next_cycle_percent` to wysterowanie wysyłane do emitera.
+8. **Reference governor.** Pod koniec zmiany nastawy reference governor
+   ([Dokumentacja techniczna, §4.4](technical_doc.md#44-obsługa-nastawy)) może ograniczyć moc, żeby
+   ciepło już dostarczone nie okazało się za duże. Przewiduje modelem przy wodzie odniesienia i nie
+   zna limitu wody z punktu 3. Nie trzeba tego zmieniać: gdy chłodna woda ogranicza wysterowanie,
+   jego limit nie wiąże (obciąłby tylko moc, którą woda i tak obcina). Governor niczego wtedy nie
+   obiecuje, więc późniejszy pomiar nie ma czego obalić i governor nie wycofuje epizodu jako
+   chybionej prognozy. Krótko: przy ograniczeniu wodą governor nie hamuje (sekcja 3.6).
 
 ### 3.5 Cykl życia danych
 
@@ -374,6 +382,25 @@ Układ: grzejnik na kotle z krzywą grzewczą, na zewnątrz 3 °C ± 3 °C, 48 h
 uczy się mniej niż połowy mocy grzejnika przy wodzie odniesienia: chłodniejsza woda z krzywej
 wygląda jak słabszy grzejnik. Z danymi o wodzie, z encji albo od dostawcy, uczy się od 0.5 do 1.2
 tej mocy i ponad 1.5 raza tyle, ile bez nich.
+
+**Reference governor przy wodzie** (pomiar z 2026-10-17; skrypt
+`analysis/spinew/measure_governor_water.py` na gałęzi analizy). Pokój z grzejnikiem (`a` 0.06,
+`b` 0.001, opóźnienie 10 min, czujnik 0.1 °C), 48 h przy 20 °C, potem cztery doby: 17 °C od 22:00
+i 21 °C od 6:00; trzy fazy regulacji, czyli dwanaście porannych dojść na przypadek. Porównanie z
+filtrem nastawy sprzed governora:
+
+| Woda | Czas do 20.9 °C | Minuty z wiążącym limitem | Wycofane epizody |
+|---|---|---|---|
+| bez danych o wodzie | 2.1 h (przedtem: 2.2 h) | 0.3 (przedtem: 37) | 0 |
+| 60 °C, z danymi | 2.2 h (przedtem: 2.1 h) | 0 (przedtem: 40) | 0 |
+| 45 °C, z danymi | 4.5 h (przedtem: 4.5 h) | 0 (przedtem: 27) | 0 |
+| 40 °C, z danymi | 7.9 h (przedtem: 7.9 h) | 0 (przedtem: 20) | 0 |
+| 45 °C, bez danych | 4.7 h (przedtem: 4.7 h) | 0 (przedtem: 16) | 0 |
+
+Chłodniejsza woda wydłuża dojście w obu wersjach; to fizyka grzejnika, nie regulacja. Przy wodzie
+40 °C jedno dojście z dwunastu nie osiągnęło 20.9 °C w 8 h. Test `test_smartpi_governor_water.py`
+sprawdza krótszą wersję (45 °C, trzy fazy regulacji)
+([Testy, §4.9](testing.md#49-zmiany-przejęte-z-nowego-kodu-autora)).
 
 ## 4. Kocioł, który nie jest wezwany do grzania
 

@@ -8,7 +8,7 @@ Obecny kod opiera się na trzech głównych pomysłach:
 
 1. wyznaczyć prosty model cieplny pierwszego rzędu z czasem martwym (opóźnieniem, zanim temperatura zacznie reagować),
 2. dopasowywać wysterowanie PI (moc w %) na podstawie tego modelu,
-3. zamrażać lub ograniczać część dostrajania, gdy stan pracy nie jest uznany za fizycznie wiarygodny.
+3. przyjmować albo odrzucać każde okno uczenia według stanu fizycznego, w którym powstało.
 
 Ten dokument opisuje działanie, które jest naprawdę zaimplementowane w obecnym kodzie SmartPI.
 
@@ -49,6 +49,10 @@ Stała czasowa (im jest większa, tym wolniej zmienia się temperatura pomieszcz
 $$ \tau = \frac{1}{b} $$
 
 Model jest celowo prosty. Czas martwy jest uczony osobno. Korzystają z niego reguły strojenia regulatora i zabezpieczenia.
+W instalacjach wyższego rzędu (na przykład z ciężką podłogówką) nauczone `a` jest więc zastępczym,
+lokalnym wzmocnieniem modelu 1R1C dla warunków pracy, z których pochodzą przyjęte okna, a nie jedną
+stałą fizyczną całej instalacji. Trzeba je sprawdzać w różnych typowych warunkach pracy, a nie
+stroić z jednej historii.
 
 **Znane wejścia.** Model jest rozszerzony o ciepło wymieniane ze strefami sąsiednimi i o ciepło
 dodane przez drugie źródło:
@@ -139,6 +143,14 @@ Kod nie używa już stałej `WINDOW_MIN_MINUTES`. Uczenie opiera się teraz na `
 
 - wymaga dostępnej temperatury zewnętrznej,
 - słucha nadzoru cieplnego (governance: reguł, które decydują, kiedy wolno się uczyć i zmieniać wzmocnienia), z wyjątkiem kalibracji,
+- odrzuca albo zaczyna od nowa okno grzania (uczenie `a`) dokładnie w tym pomiarze, w którym
+  użytkownik zmienia nastawę, więc okno nie łączy starego i nowego stanu,
+- po tym pomiarze wczesny, aktywny wzrost temperatury nadal może uczyć `a`, pod zwykłymi warunkami
+  (czas martwy, stała moc, pewne nachylenie, FF3, nadzór cieplny),
+- blokuje zwykłe uczenie `a`, gdy zaczyna działać późne hamowanie (trajektoria albo reference
+  governor), aż do końca przekazania sterowania,
+- uczenie `b` w stygnięciu (bez grzania) działa pod swoimi zwykłymi warunkami; kalibracja ma własne
+  zasady uczenia, a ta blokada przy zmianie nastawy nie dotyczy odpowiedzi na same zakłócenia,
 - blokuje zbieranie danych na starcie, dopóki potrzebne czasy martwe nie są wiarygodne,
 - robi przerwę po wznowieniu pracy (`LEARNING_PAUSE_RESUME_MIN = 20`),
 - w razie potrzeby ustawia początek okna po końcu czasu martwego,
@@ -257,9 +269,10 @@ oraz:
 
 $$ u_{ff1} = clamp(k_{ff} \cdot (SP - T_{ref}), 0, 1) \cdot warmup\_scale $$
 
-Bez znanych wejść `b_eff = b` i `T_ref = T_ext` (sekcja 2.1). FF3, trajektoria nastawy, bliźniak
-cieplny (model pomieszczenia liczony równolegle, do przewidywań), pasmo przy nastawie i okna korekty
-FF (FF trim) używają tych samych `b_eff` i `T_ref`.
+Bez znanych wejść `b_eff = b` i `T_ref = T_ext` (sekcja 2.1). FF3, trajektoria nastawy z jej
+reference governorem (sekcja 4.4), bliźniak cieplny (model pomieszczenia liczony równolegle, do
+przewidywań), pasmo przy nastawie i korekta FF (FF trim: jej okna i temperatura zewnętrzna jej
+pomiarów) używają tych samych `b_eff` i `T_ref`.
 
 W COOL $a < 0$, więc $k_{ff} < 0$. Gdy na zewnątrz jest cieplej niż
 nastawa, dwie ujemne wartości dają razem poprawnie dodatnią moc
@@ -330,17 +343,25 @@ Zasada jest taka:
 - gałąź I (całkująca) nadal używa niefiltrowanej nastawy,
 - gałąź P dostaje `filtered_setpoint`,
 - gałąź P zachowuje niefiltrowaną nastawę, dopóki nie zostanie osiągnięta przewidziana strefa hamowania,
-- duża zmiana nastawy raz uzbraja późne hamowanie; w HEAT późniejsze wejście w hamowanie porównuje przewidywany wzrost temperatury z odległością do `target - LANDING_SAFETY_MARGIN_C`, bez ponownego sprawdzania progu uzbrojenia,
+- duża zmiana nastawy raz uzbraja późne hamowanie; HEAT i COOL używają potem tych samych równań okna hamowania, ze znakiem zależnym od trybu,
 - wejście wywołane zakłóceniem nadal wymaga progu dużej różnicy temperatur,
 - do wykrycia strefy hamowania służą: dokładny nauczony model 1R1C, `deadtime_cool`, opóźnienie do końca bieżącego cyklu i moc już zadana na ten cykl,
-- potem, blisko celu, stosowana jest płynna trajektoria późnego hamowania, która zachowuje minimalne dodatnie żądanie części proporcjonalnej,
-- przy trajektoriach nastawy w HEAT limit lądowania (landing cap) może ograniczyć wewnętrzne wysterowanie po obliczeniu PI, gdy model przewiduje, że zgromadzone ciepło wystarczy do osiągnięcia celu,
+- płynna trajektoria późnego hamowania proponuje blisko celu własne, nominalne odniesienie dla gałęzi P,
+- przy trajektoriach nastawy w HEAT i COOL przewidujący reference governor (gubernator referencji: część, która z modelu wylicza bezpieczne odniesienie i limit wysterowania) wyznacza dopuszczalne odniesienie dla gałęzi P i może ograniczyć wewnętrzne wysterowanie po obliczeniu PI,
 - gdy hamowanie nie jest już potrzebne, filtrowane odniesienie stopniowo wraca do niefiltrowanego celu, zanim trajektoria się skończy,
 - w trajektorii wywołanej zmianą nastawy wejście w fazę `release` (zwalnianie) blokuje tę fazę do końca trajektorii, bez powrotu do `tracking` (nadążania),
+- przekroczenie celu nie kończy uzbrojonego epizodu nastawy (epizod: jedno dojście do nowej nastawy); governor dalej przyjmuje pomiary bez zapotrzebowania, aż przekazanie sterowania zostanie potwierdzone,
+- w czasie tego przekazania odniesienie dla gałęzi P nie wychodzi poza niefiltrowany cel: w HEAT nigdy go nie przekracza, w COOL nigdy nie schodzi poniżej,
 - `trajectory_active` mówi, czy analityczna trajektoria działa,
-- trajektoria kończy się dopiero wtedy, gdy przekazanie sterowania pozostaje bezuderzeniowe (bez skoku wysterowania), zmierzona temperatura jest dość blisko celu, a stan lądowania pozwala na zwolnienie; albo gdy warunki wiarygodności przestają być spełnione.
+- governor kończy epizod dopiero wtedy, gdy ograniczenie pozostaje nieaktywne w kilku ocenach rozłożonych w czasie na cały cykl regulacji; przy niepoprawnych danych governor przestaje ograniczać i nie przywraca starego limitu,
+- governor wycofuje też epizod, gdy jego własna prognoza końcowa okazuje się błędna (falsyfikacja prognozy): dopóki limit działa, każda prognoza jest porównywana z temperaturą zmierzoną po upływie czasu martwego stygnięcia; gdy pokój kilka razy zostaje poniżej obietnicy o więcej niż strefa nieczułości i największa rezerwa dynamiczna, przez co najmniej czas martwy stygnięcia plus jeden cykl, i przy tym nie rośnie w kierunku zapotrzebowania, limit przestaje działać z powodem `prediction_falsified_below_target` i wraca surowe żądanie PI.
 
-Limit lądowania używa dyskretnej postaci modelu 1R1C w wewnętrznej, liniowej skali wysterowania:
+Bliźniak cieplny, FF3, przewidywanie wejścia w hamowanie i governor używają tej samej prostej
+funkcji przewidywania 1R1C przy stałej mocy. Każdy z nich ma własne horyzonty, sposób liczenia
+opóźnienia i sprawdzanie danych wejściowych. Governor używa nominalnego modelu cieplnego, bez
+szacowanej poprawki na zakłócenia.
+
+Governor używa dyskretnej postaci modelu 1R1C w wewnętrznej, liniowej skali wysterowania:
 
 $$
 \alpha = e^{-b \cdot h}
@@ -350,29 +371,39 @@ $$
 T_{pred} = T_{ext} + (T - T_{ext}) \cdot \alpha + \frac{a}{b}(1-\alpha) \cdot u
 $$
 
-Limit wylicza największe wysterowanie, przy którym przewidywana temperatura zostaje poniżej `target - LANDING_SAFETY_MARGIN_C`. Działa po zwykłym obliczeniu PI i przed miękkimi ograniczeniami. Dzięki temu `u_pi` w diagnostyce pokazuje surowy wynik PI, a `landing_u_cap` wyjaśnia końcowe obniżenie wysterowania.
+Równania są liczone w kierunku bieżącego zapotrzebowania (`+1` w HEAT, `-1` w COOL). Rezerwa dynamiczna jest dobierana z mierzonego nachylenia i z drogi, jaką przewiduje model, ograniczana regułami i zamieniana na granicę temperatury celu. Ta granica dopuszcza za celem strefę nieczułości regulatora i odejmuje rezerwę dynamiczną, więc limit nigdy nie wymaga od modelu dokładniejszego dojścia niż pasmo, które regulator i tak akceptuje. Governor wylicza największe wysterowanie, które spełnia tę granicę, i przelicza ten limit na dopuszczalne odniesienie dla gałęzi P. Limit działa po zwykłym obliczeniu PI i przed miękkimi ograniczeniami. Dzięki temu `u_pi` w diagnostyce pokazuje surowy wynik PI, a anti-windup (ochrona całki przed narastaniem przy ograniczonym wyjściu) widzi faktycznie zadane wysterowanie.
+
+Pomiary cieplne są przygotowywane przed obliczeniem PI. Przeliczenie odniesienia używa
+niezmiennej migawki (zapisu wartości z danej chwili) efektywnego wzmocnienia proporcjonalnego,
+mocy z całki i części wyprzedzającej po tym obliczeniu. Rzut na część P stosuje te same reguły co
+regulator (strefa nieczułości, dopuszczenie P, utrzymanie przy krawędzi), ale nie zmienia drugi raz
+stanu regulatora. Odniesienia, które dają to samo wysterowanie P, nie tworzą ograniczenia samego
+odniesienia; limit wysterowania z modelu cieplnego i tak ma pierwszeństwo.
 
 Standardowy blok `live.setpoint` publikuje podsumowanie:
 
 - `filtered_setpoint`,
 - `trajectory_active`,
 - `trajectory_source`,
-- `landing_active`,
-- `landing_reason`,
-- `landing_u_cap`,
-- `landing_coast_required`.
+- `governor_active`,
+- `governor_phase`,
+- `governor_reason`,
+- `governor_command_cap`,
+- `governor_coast_required`.
 
-Te same dane, w obu trybach, pokazują szczegóły trajektorii i lądowania w
-`live.analysis.trajectory` i `live.analysis.landing`:
+Te same dane, w obu trybach, pokazują szczegóły trajektorii i governora w
+`live.analysis.trajectory` i `live.analysis.reference_governor`:
 
 - `start_setpoint`, `target_setpoint`, `tau_ref_min`, `elapsed_s` i `phase`,
 - `pending_target_change_braking`, `braking_needed` i `model_ready`,
 - `remaining_cycle_min`, `next_cycle_reference`, `bumpless_delta` i `bumpless_ready`,
-- `setpoint_for_p_cap`, `predicted_temperature`, `predicted_rise` i `target_margin`,
-- `release_allowed`, `time_to_target_min`, `release_blocked_by_slope`,
-- `command_before_cap` i `command_after_cap`.
+- `active`, `phase`, `reason`, `nominal_reference` i `admissible_reference`,
+- `command_cap`, `constraint_active`, `dynamic_reserve_c`, `predicted_terminal_temperature` i `target_bound`,
+- `coast_required` i `handoff_ready`,
+- `command_before_cap` i `command_after_cap`,
+- `prediction_shortfall_c`, `falsification_count` i `falsification_span_s`.
 
-Kształtowanie odniesienia nastawy dotyczy tylko gałęzi P. Dzięki temu część całkująca dostaje nienaruszoną nastawę, a uczenie nie jest zakłócane. Limit lądowania to osobny ogranicznik wysterowania, działający po PI, dla trajektorii nastawy w HEAT. Nie zmienia całki ani krzywej linearyzacji zaworu.
+Kształtowanie odniesienia nastawy dotyczy tylko gałęzi P. Dzięki temu część całkująca dostaje nienaruszoną nastawę, a uczenie nie jest zakłócane. Limit po PI nie zmienia całki ani krzywej linearyzacji zaworu.
 
 Obecny kod ma też wyraźną blokadę dodatniego narastania całki w fazach doganiania nastawy:
 
@@ -606,7 +637,7 @@ zarejestrowane: przeładowanie albo usunięcie wpisu nie zostawia Versatile Ther
 | `gains.py`             | liczenie i zamrażanie wzmocnień                             |
 | `controller.py`        | dyskretny PI, anti-windup, wstrzymanie, histereza           |
 | `deadband.py`          | strefa nieczułości i pasmo przy nastawie                    |
-| `setpoint.py`          | analityczna trajektoria nastawy i limit lądowania w HEAT    |
+| `setpoint.py`          | analityczna trajektoria nastawy i obsługa reference governora (HEAT i COOL) |
 | `integral_guard.py`    | blokada wzrostu dodatniej całki w fazach powrotu do nastawy |
 | `feedforward.py`       | koordynacja `u_ff1/u_ff2/u_ff3`                             |
 | `ff_trim.py`           | przyczynowa wolna korekta (bias) i ograniczone plany przypisania między korektę FF (trim) a całkę |
@@ -756,7 +787,7 @@ w przestrzeni elementu wykonawczego, zanim zostaną przeliczone na liniowy model
 - `build_debug_diagnostics()`: funkcja zgodności wstecznej, która zwraca te same standardowe dane.
 
 `diagnostic_history.py` opakowuje te dane w `schema_version`, `live` i stały
-blok `history` z ośmioma seriami. Zwykłe encje czujników wyłączają `live`
+blok `history` z jedenastoma seriami. Zwykłe encje czujników wyłączają `live`
 z zapisu Recordera; podklasa czujnika debug zapisuje go wprost. Tryb debug
 zmienia tylko czas przechowywania danych i nie dodaje drugiego bloku diagnostycznego.
 

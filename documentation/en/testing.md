@@ -108,6 +108,7 @@ door is open 7:00–9:00, 12:00–13:30 and 18:00–22:00.
 | N5 | cooling, the hall at 28 °C behind a door | `k` ±25 %; error below 0.3 °C from 60 h |
 | N6 | the hall's window open for an hour while the door is open, once for each reaction | no `k` learned during that time; the reaction applied (nothing, off, frost 7 °C, eco 17 °C); the device runs or stops to match; afterwards the room does not rise more than 0.6 °C above its setpoint (overshoot) |
 | N7 | a room between two always-open neighbours, the temperature of each jumping once | for each: `k` within ±35 %, or shown as "cannot be told apart" |
+| N3 morning | after the N3 learning (70 h), two nights at 17 °C, then 20 °C at 6:00; three control phases (two of them locally) | 19.9 °C within 3.6 h and an overshoot below 0.3 °C each morning (before the reference governor and with it: 3.0–3.3 h, 0.15–0.24 °C) |
 
 ### 3.2 A zone with two heat sources — `test_smartpi_sim_second_source.py`
 
@@ -286,6 +287,11 @@ working with it.
 | `test_smartpi_regulation_gaps.py` | a thermostat leaving the additional source's role integrates nothing for the time spent in it; a restart into the other HVAC mode resets the PI on the first calculation only |
 | `test_smartpi_ab_drift.py` (two tests added) | a state of the QAS pack's learned room, saved with one shared `learn_seq`, starts both drift counters from it; histories seeded from a zone's joint fit still let `b` follow a drift |
 | `test_smartpi_raw_slopes.py` | learning slopes come from the raw measured temperature: a slow ramp read by a 0.1 °C sensor gives its true slope, minus the rate of the known inputs; a zone held by a boiler that is not called keeps recording raw samples; a change of the boiler's call empties the raw and the filtered history |
+| `test_smartpi_governor_water.py` | the FF trim's causal power trace and the zone's dependency model record a cycle's power at the reference water; a morning approach limited by 45 °C water (three control phases) never has a binding governor cap while the water limits, and no episode is retired as a failed prediction |
+| `test_smartpi_governor_source_role.py` | leaving the additional source's role clears a setpoint trajectory and a reference governor episode from before it; a neighbour's window preset is the governor's target, and the window's close arms braking as a setpoint increase |
+| `test_smartpi_governor_humidity.py` | during a humidity event the braking release sees the held integral and releases nothing; an admissible FF trim window from either of the author's paths (cycle end, periodic) is rejected |
+| `test_smartpi_dependencies_algo.py` (substitution test extended) | the reference governor gets `b_eff` and `T_ref` through the setpoint filter, and the FF trim's measurements get `T_ref` as their outdoor temperature |
+| `test_smartpi_water_algo.py` (one test changed) | the cycle's power at the reference water goes to the causal power trace, where the author moved it from the FF trim observer |
 
 ### 4.10 Humidity events
 

@@ -260,7 +260,7 @@ Od tej chwili SmartPI:
 
 Blisko temperatury zadanej SmartPI stara się unikać ciągłych drobnych poprawek. Efektem powinna być spokojniejsza regulacja, z mniejszą liczbą zbędnych korekt niż w TPI ze stałymi współczynnikami.
 
-Gdy nastawa grzania rośnie, filtr nastawy używa też nauczonego modelu, żeby pokierować ostatnim odcinkiem dojścia do celu. Część proporcjonalna (reagująca na bieżący błąd) śledzi przefiltrowaną (wygładzoną) wartość odniesienia. Część całkująca (całka, która zbiera dawne błędy) nadal widzi surową nastawę. Blisko celu SmartPI może ograniczyć wewnętrzne zapotrzebowanie na grzanie, gdy model przewiduje, że ciepło już dostarczone wystarczy do osiągnięcia nastawy. To „lądowanie” (landing, łagodne dojście do celu) pomaga pokojowi zwolnić przed celem. Bez niego ogrzewanie grzałoby dalej tylko dlatego, że część wyprzedzająca albo zamrożony stan PI są nadal dodatnie.
+Przy zmianie nastawy w HEAT albo COOL filtr nastawy używa też nauczonego modelu, żeby pokierować ostatnim odcinkiem dojścia do celu. Część proporcjonalna (reagująca na bieżący błąd) śledzi odniesienie wyznaczone przez reference governor (gubernator referencji). Część całkująca (całka, która zbiera dawne błędy) nadal widzi surową nastawę. Blisko celu SmartPI może ograniczyć wewnętrzne zapotrzebowanie, gdy model przewiduje, że energia cieplna już zadana wystarczy do osiągnięcia nastawy. Rezerwa dynamiczna i potwierdzane w czasie przekazanie sterowania spowalniają dojście, ale nie trzymają pokoju w stałej odległości od celu.
 
 Z `FF3`, które jest domyślnie włączone, SmartPI może też blisko nastawy dodać małą korektę przewidującą, gdy rozpozna wiarygodną sytuację zewnętrznego zakłócenia.
 
@@ -318,7 +318,7 @@ Kolumna „Gdzie się ustawia” mówi, do czego należy każde ustawienie. **Ws
 | **Histereza włączenia** (Hysteresis on) | Próg ponownego włączenia grzania podczas uczenia w fazie startowej. | wspólne | `0.3°C` |
 | **Histereza wyłączenia** (Hysteresis off) | Próg wyłączenia grzania podczas uczenia w fazie startowej. | wspólne | `0.5°C` |
 | **Współczynnik tau zwolnienia** (Release tau factor) | Ustala opóźnienie zwolnienia całki w stosunku do nauczonej stałej czasowej (miary tego, jak szybko pokój reaguje). | wspólne | `0.5` |
-| **Użyj filtra nastawy** (Use setpoint filter) | Włącza kształtowanie nastawy dla części proporcjonalnej i kontrolę „lądowania” przy grzaniu blisko celu. | wspólne | `enabled` (włączone) |
+| **Użyj filtra nastawy** (Use setpoint filter) | Włącza kształtowanie nastawy dla części proporcjonalnej i przewidujące prowadzenie dojścia w HEAT i COOL blisko celu. | wspólne | `enabled` (włączone) |
 | **Użyj FF3** (Use FF3) | Włącza korektę przewidującą na krótki czas naprzód, blisko nastawy, gdy temperatura wraca do normy po zakłóceniu. | wspólne | `enabled` (włączone) |
 | **Zezwól na osłabione P przy krawędzi strefy nieczułości** (Allow damped P near deadband edge) | W strefie nieczułości zostawia słabsze działanie części proporcjonalnej blisko jej krawędzi. Gdy wyłączone, część proporcjonalna nie działa w całej strefie nieczułości. | wspólne | `disabled` (wyłączone) |
 | **Dojście po obniżeniu** (Recovery after a setback) | Strefa z dwoma źródłami ciepła: jak wraca do nastawy po niższej nastawie. Szybkie (Fast): w czasie obniżenia wolne źródło pozostaje ciepłe, więc strefa wraca szybciej, przy około 1–2 % więcej energii. Oszczędne (Economical): najgłębsze obniżenie i najmniej energii; strefa wraca dłużej. Każda strefa może je zmienić ([Zależności stref, §5.6](zone_dependencies.md#56-pętla-przydziału-i-hamowanie-z-wyprzedzeniem)). | wspólne | `Fast` (szybkie) |
@@ -354,7 +354,7 @@ Opis schematu diagnostyki i profili Recordera (części Home Assistant, która z
 
 Czujnik diagnostyczny SmartPI publikuje atrybuty w stałym układzie z numerem wersji. Pulpity i
 karty Markdown czytają pełną diagnostykę z `attributes.live`. Wykresy historii czytają stały,
-uzgodniony zestaw ośmiu serii danych z `attributes.history`.
+uzgodniony zestaw jedenastu serii danych z `attributes.history`.
 
 To główne miejsce, w którym sprawdzisz:
 
@@ -381,7 +381,7 @@ Inne przydatne bloki w `live`:
 - `temperature`: zmierzona temperatura, błąd, stan całki,
 - `model`: nauczone `a` i `b`, zaufanie do modelu i czasy martwe,
 - `feedforward`: stan części wyprzedzającej i FF3,
-- `setpoint`: przefiltrowana nastawa i informacje o „lądowaniu”,
+- `setpoint`: przefiltrowana nastawa i informacje o reference governorze,
 - `autocalib`: stan automatycznego nadzoru,
 - `calibration`: stan wymuszonej kalibracji,
 - `dependencies`: zależności stref i strefa z dwoma źródłami ciepła, gdy są ustawione ([Zależności stref, §9](zone_dependencies.md#9-diagnostyka)),
@@ -393,10 +393,11 @@ W trybie normalnym blok `setpoint` może pokazywać:
 - `filtered_setpoint`: wartość odniesienia, którą śledzi część proporcjonalna,
 - `trajectory_active`: czy działa trajektoria nastawy,
 - `trajectory_source`: dlaczego trajektoria działa,
-- `landing_active`: czy działa kontrola „lądowania” przy grzaniu,
-- `landing_reason`: powód stanu „lądowania”,
-- `landing_u_cap`: wewnętrzny limit zapotrzebowania na grzanie w czasie „lądowania”,
-- `landing_coast_required`: czy SmartPI pozwala pokojowi dojść do celu bez grzania, bo model przewiduje, że zgromadzone ciepło wystarczy.
+- `governor_active`: czy działa przewidujące kształtowanie odniesienia albo wysterowania,
+- `governor_phase`: bieżąca faza: `idle` (spoczynek), `governed` (ograniczanie) albo `handoff` (przekazanie sterowania),
+- `governor_reason`: powód ostatniej decyzji governora,
+- `governor_command_cap`: wewnętrzny limit zapotrzebowania w HEAT i COOL,
+- `governor_coast_required`: czy prognoza wymaga wysterowania zero (pokój dojdzie do celu bez grzania albo chłodzenia).
 
 Zaawansowane wartości, z których korzysta dołączona karta, są zawsze dostępne w
 `live.analysis`. Tryb debugowania nie dodaje ani nie usuwa publikowanych pól. Pozwala
@@ -407,11 +408,16 @@ Jest też karta Markdown dla Home Assistant, która pokazuje diagnostykę SmartP
 
 https://github.com/KipK/vtherm_smartpi/tree/master/cards
 
+Karty tej wersji są w [`cards/`](../../cards), po angielsku, francusku i polsku
+(`smartpi_diags-en.md`, `smartpi_diags-fr.md`, `smartpi_diags-pl.md`). Oprócz sekcji autora pokazują
+znane wejścia (`dependencies`), wodę (`water`) i wezwanie kotła (`boiler`), gdy SmartPI publikuje te
+bloki.
+
 ## Panel regulacji w Equinox
 
 SmartPI publikuje też w encji termostatu podsumowanie `specific_states.smart_pi` i odnośnik do encji `specific_states.regulation_diagnostics`. Gdy SmartPI korzysta z danych o wodzie, zapisuje też `specific_states.water_factor`. To współczynnik wody, którego używa: ile ciepła daje emiter przy obecnej wodzie w porównaniu z wodą odniesienia. To wyjście SmartPI dla każdej integracji, która je odczytuje ([Wejścia wody i kotła, §3.4](water_input.md#34-użycie-w-smartpi)). [Karta Lovelace Equinox](https://github.com/KipK/equinox) używa tych atrybutów, żeby w menu karty termostatu (climate) pokazać osobny panel **Regulation** (regulacja).
 
-W Equinox możesz śledzić postęp uczenia SmartPI, zaufanie do modelu, rozbicie mocy na składniki, „lądowanie” przy nastawie, wykresy historii i dostępne działania serwisowe. Nie musisz przy tym kopiować karty diagnostycznej Markdown.
+W Equinox możesz śledzić postęp uczenia SmartPI, zaufanie do modelu, rozbicie mocy na składniki, prowadzenie dojścia do nastawy, wykresy historii i dostępne działania serwisowe. Nie musisz przy tym kopiować karty diagnostycznej Markdown.
 
 ![Equinox SmartPI Regulation dashboard overview](https://github.com/KipK/equinox/raw/master/assets/screens/regul-overview.png)
 

@@ -66,7 +66,7 @@ Le bloc `live` est organisé par responsabilité :
 | `learning` | Étape d'apprentissage, progression du bootstrap, mises à jour acceptées et état de dérive |
 | `governance` | Régime thermique et décision de mise à jour du modèle |
 | `feedforward` | État FF3, source de bande morte et diagnostics FFTrim canoniques |
-| `setpoint` | Consigne filtrée, trajectoire, boost et résumé d'atterrissage |
+| `setpoint` | Consigne filtrée, trajectoire, boost et résumé du gouverneur de référence |
 | `autocalib` | État du superviseur de calibration automatique |
 | `calibration` | État, nombre d'essais et date de la dernière calibration |
 | `analysis` | Champs avancés utilisés par les cartes de diagnostic fournies |
@@ -75,7 +75,7 @@ Le bloc `live` est organisé par responsabilité :
 | `boiler` | Seulement pour un type de chauffage à eau avec une source de l'appel de la chaudière choisie : la source, l'appel et le mode d'apprentissage qui en découle |
 
 `analysis` regroupe les valeurs live avancées dans `control`, `learning`,
-`trajectory`, `landing`, `deadtime`, `governance`, `feedforward` et, lorsqu'il
+`trajectory`, `reference_governor`, `deadtime`, `governance`, `feedforward` et, lorsqu'il
 est disponible, `twin`.
 
 FFTrim utilise des blocs canoniques imbriqués :

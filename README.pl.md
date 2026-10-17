@@ -24,7 +24,7 @@ SmartPI to zaawansowany algorytm regulacji temperatury typu PI. Opiera się na m
 - **Model cieplny 1R1C**: uczy się z rzeczywistych obserwacji wzmocnienia grzania, tempa strat ciepła i czasów martwych reakcji pokoju — bez ręcznego strojenia
 - **Samodzielnie strojone wzmocnienia PI**: wylicza Kp i Ki automatycznie z nauczonej stałej czasowej i czasu martwego, według reguł IMC (strojenia na podstawie modelu) i reguł praktycznych (heurystycznych)
 - **Część wyprzedzająca oparta na modelu (feed-forward)**: szacuje moc potrzebną do stałego utrzymania nastawy (temperatury zadanej); łączy to z powolną korektą przesunięcia i z korektą przewidującą FF3, domyślnie włączoną, która pomaga wrócić do normy po zakłóceniu
-- **Trajektoria nastawy wyliczana ze wzoru**: kształtuje wartość odniesienia dla części proporcjonalnej, a przy grzaniu stosuje oparty na modelu limit „lądowania”, żeby szybko dojść do celu i ograniczyć przeregulowanie (przekroczenie celu)
+- **Trajektoria nastawy wyliczana ze wzoru**: kształtuje wartość odniesienia dla części proporcjonalnej, a przy grzaniu i chłodzeniu oparty na modelu reference governor (gubernator referencji) ogranicza wysterowanie blisko celu, żeby szybko do niego dojść i ograniczyć przeregulowanie (przekroczenie celu)
 - **Nadzór z bezpieczeństwem na pierwszym miejscu**: tabela decyzji oparta na reżimach pracy (rodzajach bieżącej sytuacji) zamraża albo odblokowuje uczenie i dopasowanie wzmocnień, zależnie od tego, co się teraz dzieje
 - **Automatyczna kalibracja**: z czasem pilnuje jakości modelu i uruchamia ponowną kalibrację, gdy uczenie stoi w miejscu
 - **Linearyzacja krzywej zaworu**: przelicza zapotrzebowanie SmartPI na położenie zaworu dopasowane do nierównego (nieliniowego) działania głowic grzejnikowych (TRV)

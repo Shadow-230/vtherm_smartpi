@@ -115,6 +115,7 @@ Une pièce avec un capteur de 0.01 °C, à côté d'un couloir. L'échange de ch
 | N5 | mode refroidissement, le couloir à 28 °C derrière une porte | `k` ±25 % ; erreur sous 0.3 °C à partir de 60 h |
 | N6 | la fenêtre du couloir ouverte pendant une heure pendant que la porte est ouverte, une fois pour chaque réaction | aucun `k` appris pendant ce temps ; la réaction appliquée (rien, arrêt, hors-gel 7 °C, éco 17 °C) ; l'appareil marche ou s'arrête en conséquence ; ensuite, la pièce ne monte pas de plus de 0.6 °C au-dessus de sa consigne (dépassement) |
 | N7 | une pièce entre deux voisins toujours ouverts, la température de chacun sautant une fois | pour chacun : `k` à ±35 %, ou affiché comme « impossible à distinguer » |
+| N3 matin | après l'apprentissage N3 (70 h), deux nuits à 17 °C, puis 20 °C à 6:00 ; trois phases de régulation (deux en local) | 19.9 °C en moins de 3.6 h et un dépassement sous 0.3 °C chaque matin (avant le gouverneur de référence et avec lui : 3.0–3.3 h, 0.15–0.24 °C) |
 
 ### 3.2 Une zone à deux sources de chaleur — `test_smartpi_sim_second_source.py`
 
@@ -298,6 +299,11 @@ ajouts du fork fonctionnent toujours avec lui.
 | `test_smartpi_regulation_gaps.py` | un thermostat qui quitte le rôle de source additionnelle n'intègre rien pour le temps passé dans ce rôle ; un redémarrage dans l'autre mode HVAC réinitialise le PI au premier calcul seulement |
 | `test_smartpi_ab_drift.py` (deux tests ajoutés) | l'état de la pièce apprise du paquet QAS, enregistré avec un seul `learn_seq` commun, initialise les deux compteurs de dérive ; des historiques semés par l'ajustement conjoint d'une zone laissent toujours `b` suivre une dérive |
 | `test_smartpi_raw_slopes.py` | les pentes d'apprentissage viennent de la température mesurée brute : une rampe lente lue par un capteur de 0.1 °C donne sa vraie pente, moins la vitesse due aux entrées connues ; une zone retenue par une chaudière non appelée continue d'enregistrer des échantillons bruts ; un changement de l'appel de la chaudière vide l'historique brut et l'historique filtré |
+| `test_smartpi_governor_water.py` | la trace causale de puissance de la correction du feed-forward et le modèle de dépendances de la zone enregistrent la puissance d'un cycle à l'eau de référence ; une approche du matin limitée par une eau à 45 °C (trois phases de régulation) n'a jamais de plafond du gouverneur qui contraint pendant que l'eau limite, et aucun épisode n'est retiré comme prédiction ratée |
+| `test_smartpi_governor_source_role.py` | quitter le rôle de source additionnelle efface une trajectoire de consigne et un épisode du gouverneur de référence d'avant ce rôle ; le préréglage imposé par la fenêtre d'un voisin est la cible du gouverneur, et la fermeture de la fenêtre arme le freinage comme une hausse de consigne |
+| `test_smartpi_governor_humidity.py` | pendant un événement d'humidité, la libération du freinage voit l'intégrale retenue et ne libère rien ; une fenêtre admissible de la correction du feed-forward, venant de l'un ou l'autre chemin de l'auteur (fin de cycle, périodique), est rejetée |
+| `test_smartpi_dependencies_algo.py` (test de substitution étendu) | le gouverneur de référence reçoit `b_eff` et `T_ref` par le filtre de consigne, et les mesures de la correction du feed-forward reçoivent `T_ref` comme température extérieure |
+| `test_smartpi_water_algo.py` (un test modifié) | la puissance du cycle à l'eau de référence va à la trace causale de puissance, où l'auteur l'a déplacée depuis l'observateur de la correction du feed-forward |
 
 ### 4.10 Événements d'humidité
 

@@ -304,7 +304,7 @@ coefficient and its outdoor temperature:
 
 | Part of SmartPI | Uses |
 |---|---|
-| FF1 (`k_ff = b/a`), FF3, setpoint trajectory, thermal twin, near band, FF trim windows | `b_eff`, `T_ref` |
+| FF1 (`k_ff = b/a`), FF3, setpoint trajectory and reference governor, thermal twin, near band, FF trim windows and measurements | `b_eff`, `T_ref` |
 | Integral time of the gains | `Ti = 1 / (loss + Σ g)`, with `loss` as in section 3.2 (`1/tau` without always-connected neighbours) |
 | Learning of `a`, `b` and dead times, governance, safety | raw `b` and `T_ext`; each learning window is corrected by the rate the known inputs add (`known_rate`) |
 
@@ -1021,7 +1021,8 @@ sequenceDiagram
 - **Back to its own regulation.** While it applies the main source's command, the additional
   source's own SmartPI regulates nothing. When it leaves that role (the main source is silent or
   detached, or the zone is removed), its time tracking starts again: its first own calculation
-  integrates nothing for the time spent in the role.
+  integrates nothing for the time spent in the role. Its setpoint handling starts afresh too: a
+  setpoint trajectory or reference governor episode from before the role does not resume.
 - **Water.** The main source's command is a power at the reference water. The additional source
   reads its own water data at each control call and gives its emitter `power / factor` (at most 1),
   as its own SmartPI would. It publishes its **power cap**: the most power that a full command gives

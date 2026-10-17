@@ -66,7 +66,7 @@ The `live` block is organized by responsibility:
 | `learning` | Learning stage, bootstrap progress, accepted updates and drift state |
 | `governance` | Thermal regime and model-update decision |
 | `feedforward` | FF3 status, dead-band source and canonical FFTrim diagnostics |
-| `setpoint` | Filtered setpoint, trajectory, boost and landing summary |
+| `setpoint` | Filtered setpoint, trajectory, boost and reference-governor summary |
 | `autocalib` | Automatic calibration supervisor state |
 | `calibration` | Calibration state, retry count and last completion time |
 | `analysis` | Advanced fields used by the supplied diagnostic cards |
@@ -75,7 +75,7 @@ The `live` block is organized by responsibility:
 | `boiler` | Only for a water heating type with a boiler's call source chosen: the source, the call and the learning mode that follows from it |
 
 `analysis` groups the advanced live values into `control`, `learning`,
-`trajectory`, `landing`, `deadtime`, `governance`, `feedforward` and, when
+`trajectory`, `reference_governor`, `deadtime`, `governance`, `feedforward` and, when
 available, `twin`.
 
 FFTrim uses nested canonical blocks:

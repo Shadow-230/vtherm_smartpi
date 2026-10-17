@@ -313,7 +313,7 @@ coefficient de déperdition et sa température extérieure :
 
 | Partie de SmartPI | Utilise |
 |---|---|
-| FF1 (`k_ff = b/a`), FF3, trajectoire de consigne, jumeau thermique, near-band, fenêtres de la correction du feed-forward (FFTrim) | `b_eff`, `T_ref` |
+| FF1 (`k_ff = b/a`), FF3, trajectoire de consigne et gouverneur de référence, jumeau thermique, near-band, fenêtres et mesures de la correction du feed-forward (FFTrim) | `b_eff`, `T_ref` |
 | Temps d'intégration des gains | `Ti = 1 / (loss + Σ g)`, avec `loss` comme en section 3.2 (`1/tau` sans voisins toujours connectés) |
 | Apprentissage de `a`, `b` et des temps morts, gouvernance, sécurité | `b` et `T_ext` bruts ; chaque fenêtre d'apprentissage est corrigée de la vitesse qu'ajoutent les entrées connues (`known_rate`) |
 
@@ -1079,7 +1079,9 @@ sequenceDiagram
 - **Retour à sa propre régulation.** Tant qu'elle applique la commande de la source principale, le
   SmartPI propre de la source additionnelle ne régule rien. Quand elle quitte ce rôle (la source
   principale est muette ou détachée, ou la zone est supprimée), son suivi du temps repart de zéro :
-  son premier calcul propre n'intègre rien pour le temps passé dans ce rôle.
+  son premier calcul propre n'intègre rien pour le temps passé dans ce rôle. Sa gestion de la
+  consigne repart aussi de zéro : une trajectoire de consigne ou un épisode du gouverneur de
+  référence d'avant ce rôle ne reprend pas.
 - **L'eau.** La commande de la source principale est une puissance à l'eau de référence. La source
   additionnelle lit ses propres données d'eau à chaque appel de régulation et donne à son émetteur
   `power / factor` (au plus 1), comme le ferait son propre SmartPI. Elle publie son **plafond de
