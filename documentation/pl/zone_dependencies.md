@@ -314,7 +314,7 @@ strat i jego temperaturę zewnętrzną:
 
 | Część SmartPI | Używa |
 |---|---|
-| FF1 (`k_ff = b/a`), FF3, trajektoria nastawy, bliźniak cieplny, pasmo przy nastawie (near band), okna korekty FF (FF trim) | `b_eff`, `T_ref` |
+| FF1 (`k_ff = b/a`), FF3, trajektoria nastawy i reference governor, bliźniak cieplny, pasmo przy nastawie (near band), okna i pomiary korekty FF (FF trim) | `b_eff`, `T_ref` |
 | Czas całkowania we wzmocnieniach regulatora | `Ti = 1 / (loss + Σ g)`, z `loss` jak w sekcji 3.2 (`1/tau` bez sąsiadów połączonych na stałe) |
 | Uczenie `a`, `b` i czasów martwych, nadzór (governance), bezpieczeństwo | surowe `b` i `T_ext`; każde okno uczenia jest korygowane o tempo, które dodają znane wejścia (`known_rate`) |
 
@@ -1050,7 +1050,8 @@ sequenceDiagram
 - **Powrót do własnej regulacji.** Gdy dodatkowe źródło wykonuje polecenie głównego, jego własny
   SmartPI niczego nie reguluje. Gdy wychodzi z tej roli (główne źródło milczy albo zostało
   odłączone, albo strefę usunięto), liczenie czasu zaczyna się od nowa: pierwsze własne obliczenie
-  niczego nie całkuje za czas spędzony w tej roli.
+  niczego nie całkuje za czas spędzony w tej roli. Obsługa nastawy też zaczyna się od nowa:
+  trajektoria nastawy ani epizod reference governora sprzed tej roli nie wracają.
 - **Woda.** Wysterowanie głównego źródła to moc przy wodzie odniesienia. Dodatkowe źródło przy
   każdym wywołaniu sterowania czyta własne dane o wodzie i daje swojemu emiterowi `power / factor`
   (najwyżej 1), tak jak zrobiłby to jego własny SmartPI. Publikuje swój **limit mocy**: największą

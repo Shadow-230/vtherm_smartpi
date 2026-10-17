@@ -87,7 +87,7 @@ async def test_known_exchange_corrects_the_learning(monkeypatch) -> None:
 
 
 async def test_substitution_reaches_every_control_component(monkeypatch) -> None:
-    """Feed-forward, FF3, trajectory, twin, near-band and gains use (b_eff, T_ref); learning stays raw."""
+    """Feed-forward, FF3, reference governor, twin, near-band, gains and FF trim use (b_eff, T_ref); learning stays raw."""
     provider = _Switchable()
     sim = await _learned(monkeypatch, _zone(), provider)
     provider.inputs = _exchange()
@@ -124,10 +124,12 @@ async def test_substitution_reaches_every_control_component(monkeypatch) -> None
     monkeypatch.setattr(algo, "update_learning", spy("learning", algo.update_learning, lambda **kw: (kw["known_rate"], kw["ext_temp"])))
     trim = algo._fftrim_observer
     monkeypatch.setattr(trim, "try_complete_window", spy("fftrim", trim.try_complete_window, lambda **kw: (kw["b"], None)))
+    measurements = algo._thermal_measurements
+    monkeypatch.setattr(measurements, "observe", spy("measurement", measurements.observe, lambda **kw: (None, kw["outside_temperature"])))
 
     await sim.run_for(2.0)
 
-    assert {"ff1", "ff3", "setpoint", "twin", "near_band", "gains", "learning", "fftrim"} <= set(seen)
+    assert {"ff1", "ff3", "setpoint", "twin", "near_band", "gains", "learning", "fftrim", "measurement"} <= set(seen)
     for name in ("ff3", "setpoint", "twin", "near_band"):
         for (b, ext), model, _tau in seen[name]:
             assert b == pytest.approx(model.b)
@@ -140,6 +142,9 @@ async def test_substitution_reaches_every_control_component(monkeypatch) -> None
         assert ext == pytest.approx(model.ext_temp)
     for (b, _none), model, _tau in seen["fftrim"]:
         assert b == pytest.approx(model.b)
+    # The FF trim's measured balance pairs the room with T_ref, as its model uses b_eff.
+    for (_none, ext), model, _tau in seen["measurement"]:
+        assert ext == pytest.approx(model.ext_temp)
     # An unreliable time constant is passed on as is (9999 min), with or without inputs.
     reliable_gains = [entry for entry in seen["gains"] if entry[2] < 9999.0]
     assert reliable_gains

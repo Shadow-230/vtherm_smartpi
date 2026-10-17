@@ -317,9 +317,18 @@ when the supply sensor is gone.
      to an electric type offers nothing.
 7. **Power in the diagnostics.** With water data, the values of the `power` block (`pi_percent`,
    `ff_percent`, `command_percent`, `limited_percent`, `applied_percent`, the `linear_*` values)
-   and the history series `power.command_percent` and `power.applied_percent` are power at the
+   and the history series `power.command_percent`, `power.applied_percent`,
+   `power.governor_cap_percent` and `power.before_governor_cap_percent` are power at the
    reference water. `current_cycle_percent` and `next_cycle_percent` are the command sent to the
    emitter.
+8. **Reference governor.** Near the end of a setpoint change, the reference governor
+   ([Technical documentation, §4.4](technical_doc.md#44-setpoint-management)) may cap the power so
+   that the heat already given is not too much. It predicts with the model at the reference water,
+   and it does not know the water limit of point 3. This needs no change: when cool water limits
+   the command, the cap does not bind (it would only cut a power the water already cuts). The
+   governor then promises nothing that a later measurement could prove wrong, so it does not
+   retire its episode as a failed prediction. In short: under a water limit, the governor does not
+   brake (section 3.6).
 
 ### 3.5 Lifecycle of the data
 
@@ -366,6 +375,25 @@ Setup: a radiator on a boiler with a heating curve, outdoor 3 °C ± 3 °C, 48 h
 learns less than half of the radiator's power at the reference water: the cooler water from the
 curve looks like a weaker radiator. With water data, from entities or from a provider, it learns
 between 0.5 and 1.2 of that power, and more than 1.5 times the value it learns without them.
+
+**Reference governor with water** (measured on 2026-10-17; script
+`analysis/spinew/measure_governor_water.py` on the analysis branch). A radiator room (`a` 0.06,
+`b` 0.001, 10 min delay, 0.1 °C sensor), 48 h at 20 °C, then four days with 17 °C from 22:00 and
+21 °C from 6:00; three control phases, so twelve morning approaches per case. Compared with the
+setpoint filter before the governor:
+
+| Water | Time to 20.9 °C | Minutes with a binding cap | Episodes retired |
+|---|---|---|---|
+| no water data | 2.1 h (before: 2.2 h) | 0.3 (before: 37) | 0 |
+| 60 °C, with data | 2.2 h (before: 2.1 h) | 0 (before: 40) | 0 |
+| 45 °C, with data | 4.5 h (before: 4.5 h) | 0 (before: 27) | 0 |
+| 40 °C, with data | 7.9 h (before: 7.9 h) | 0 (before: 20) | 0 |
+| 45 °C, no data | 4.7 h (before: 4.7 h) | 0 (before: 16) | 0 |
+
+Cooler water makes the approach longer in both versions; that is the radiator's physics, not the
+regulation. With 40 °C water, one approach out of twelve did not reach 20.9 °C within 8 h. The
+test `test_smartpi_governor_water.py` checks a shorter version (45 °C, three control phases)
+([Tests, §4.9](testing.md#49-changes-taken-from-the-authors-new-code)).
 
 ## 4. A boiler that is not called
 

@@ -114,6 +114,7 @@ from .smartpi.governance import SmartPIGovernance
 from .smartpi.setpoint import SmartPISetpointManager
 from .smartpi.guards import SmartPIGuards
 from .smartpi.controller import SmartPIController
+from .smartpi.braking_release import evaluate_braking_release
 from .smartpi.learning_window import LearningWindowManager
 from .smartpi.dependencies import DependencyState
 from .smartpi.dependency_inputs import DependencyReadings
@@ -128,10 +129,14 @@ from .smartpi.ff3_eligibility import (
     build_ff3_disturbance_context,
     get_ff3_twin_unavailability_reason,
 )
+from .smartpi.causal_power_trace import (
+    CausalPowerTrace,
+    ControlOwnershipSnapshot,
+)
+from .smartpi.thermal_measurement import ThermalMeasurementSource
 from .smartpi.ff_trim import (
     CausalFFTrimObserver,
     CausalFFTrimResult,
-    ControlOwnershipSnapshot,
     FFTrim,
     FFTrimPersistentResult,
     FFTrimThermalSample,
@@ -145,6 +150,7 @@ from .smartpi.command_ownership import (
     CommandOwnershipSnapshot,
     CommandOwnershipTracker,
     CycleCommandProjection,
+    project_cycle_command,
     project_valve_actuator_power,
 )
 from .smartpi.tint_filter import AdaptiveTintFilter
@@ -450,7 +456,12 @@ class SmartPI:
 
         # --- FFv2: trim bias + AB confidence ---
         self._ff_trim: FFTrim = FFTrim()
-        self._fftrim_observer = CausalFFTrimObserver(cycle_min)
+        self._causal_power_trace = CausalPowerTrace()
+        self._thermal_measurements = ThermalMeasurementSource()
+        self._fftrim_observer = CausalFFTrimObserver(
+            cycle_min,
+            self._causal_power_trace,
+        )
         self._fftrim_periodic_observer = PeriodicFFTrimObserver(cycle_min)
         self._fftrim_observation_mode = "stationary"
         self._ab_confidence = ABConfidence()
@@ -613,9 +624,7 @@ class SmartPI:
         if self.integral_guard:
             self.integral_guard.reset()
         self._ff_trim.reset()
-        self._fftrim_observer.reset_runtime()
-        self._fftrim_periodic_observer.reset_runtime()
-        self._fftrim_observation_mode = "stationary"
+        self._reset_causal_observation_runtime()
         self._ab_confidence.reset()
         self._recovery_hold_armed = False
         self._last_restart_reason = "none"
@@ -722,6 +731,14 @@ class SmartPI:
         """
         self.learn_win.reset()
 
+    def _reset_causal_observation_runtime(self) -> None:
+        """Reset causal power, measurement identity, and logical windows."""
+        self._causal_power_trace.reset()
+        self._thermal_measurements.reset()
+        self._fftrim_observer.reset_runtime(reset_physical_trace=False)
+        self._fftrim_periodic_observer.reset_runtime()
+        self._fftrim_observation_mode = "stationary"
+
     def reset_cycle_state(self) -> None:
         """Reset cycle tracking state (called when resuming from OFF).
 
@@ -731,9 +748,7 @@ class SmartPI:
         self._reset_learning_window()
         self._ff_trim.clear_pending()
         self._ff_trim.clear_last_transaction()
-        self._fftrim_observer.reset_runtime()
-        self._fftrim_periodic_observer.reset_runtime()
-        self._fftrim_observation_mode = "stationary"
+        self._reset_causal_observation_runtime()
         self.reset_command_ownership("ownership_discontinuity")
         _LOGGER.debug("%s - SmartPI: cycle state reset (learning window cleared)", self._name)
 
@@ -911,6 +926,12 @@ class SmartPI:
         if not self._learning_enabled:
             return
 
+        a_learning_block_reason = None
+        if setpoint_changed:
+            a_learning_block_reason = "skip: setpoint transition"
+        elif self.sp_mgr.setpoint_landing_active:
+            a_learning_block_reason = "skip: setpoint landing"
+
         # Delegate to LearningWindowManager
         self._deadtime_skip_count_a, self._deadtime_skip_count_b = self.learn_win.update(
             dt_min=dt_min,
@@ -935,6 +956,8 @@ class SmartPI:
             hvac_mode=hvac_mode,
             target_temp=target_temp,
             known_rate=known_rate,
+            a_learning_allowed=a_learning_block_reason is None,
+            a_learning_block_reason=a_learning_block_reason,
         )
 
     def stage_cycle_command(
@@ -1031,10 +1054,15 @@ class SmartPI:
             > self._transfer_pending_request_sequence
         )
 
-        self._fftrim_observer.start_applied_cycle(
+        self._causal_power_trace.start_applied_cycle(
             now_monotonic=cycle_start_now,
             linear_power=linear_on_percent,
             ownership=ownership,
+            quality=(
+                "valve_segmented_linear"
+                if self._valve_mode_enabled
+                else "switch_cycle_average"
+            ),
         )
         if transfer_engaged:
             self._transfer_pending_engagement = False
@@ -1074,6 +1102,10 @@ class SmartPI:
             self._last_hvac_mode
         )
         if e_eff is None:
+            self._causal_power_trace.mark_discontinuity(
+                cycle_end_now,
+                "missing_e_eff",
+            )
             self._command_ownership.invalidate_active("missing_e_eff")
             self._pending_bumpless_persistent = None
             self._fftrim_periodic_observer.invalidate(
@@ -1088,6 +1120,10 @@ class SmartPI:
             )
             self._apply_fftrim_observer_result(result, count_window=False)
         elif elapsed_ratio < 1.0:
+            self._causal_power_trace.mark_discontinuity(
+                cycle_end_now,
+                "partial_cycle",
+            )
             self._command_ownership.invalidate_active("partial_cycle")
             self._pending_bumpless_persistent = None
             self._fftrim_periodic_observer.invalidate(
@@ -1138,7 +1174,7 @@ class SmartPI:
         e_eff: float | None,
     ) -> None:
         """Commit the completed cycle to the causal power timeline."""
-        self._fftrim_observer.complete_applied_cycle(
+        self._causal_power_trace.complete_applied_cycle(
             now_monotonic=cycle_end_now,
             realized_linear_power=(
                 clamp(float(e_eff), 0.0, 1.0) * self._water_factor if e_eff is not None else None
@@ -1155,8 +1191,8 @@ class SmartPI:
             flags.append("saturated_low")
         if self.sp_mgr.trajectory_active:
             flags.append("trajectory")
-        if self.sp_mgr.landing_active:
-            flags.append("landing")
+        if self.sp_mgr.governor_active:
+            flags.append("reference_governor")
         current_phase = self.phase
         if current_phase != SmartPIPhase.STABLE:
             flags.append(f"phase_{current_phase.value}")
@@ -1293,7 +1329,7 @@ class SmartPI:
     ) -> None:
         """Evaluate one phase-closed periodic window at a cycle boundary."""
         window = self._fftrim_periodic_observer.try_close_window(
-            earliest_power_start=self._fftrim_observer.earliest_power_start,
+            earliest_power_start=self._causal_power_trace.earliest_power_start,
             deadtime_s=deadtime_s,
             deadtime_reliable=deadtime_reliable,
         )
@@ -1579,8 +1615,8 @@ class SmartPI:
             return "application_saturated"
         if self.sp_mgr.trajectory_active:
             return "application_trajectory"
-        if self.sp_mgr.landing_active:
-            return "application_landing"
+        if self.sp_mgr.governor_active:
+            return "application_reference_governor"
         if self.calibration_mgr.state != SmartPICalibrationPhase.IDLE:
             return "application_calibration"
         if self.guards.guard_cut_active or self.guards.guard_kick_active:
@@ -1689,19 +1725,17 @@ class SmartPI:
         hvac_mode: VThermHvacMode,
         setpoint_changed: bool,
     ) -> None:
-        """Record one VT sensor measurement and evaluate the causal window."""
-        if measurement_id is None:
-            # Generic VT recalculations do not carry plugin-specific measurement
-            # metadata. They are not thermal observations and must not discard a
-            # causal window assembled from handler-provided sensor timestamps.
+        """Acquire one distinct VT measurement, then apply FF-trim gates."""
+        measurement = self._thermal_measurements.observe(
+            now_monotonic=now_monotonic,
+            measurement_id=measurement_id,
+            indoor_temperature=current_temp,
+            outside_temperature=ext_current_temp,
+        )
+        if measurement is None:
             return
 
         deadtime_s, deadtime_reliable = self._fftrim_deadtime_context(hvac_mode)
-        if hasattr(measurement_id, "isoformat"):
-            normalized_measurement_id = measurement_id.isoformat()
-        else:
-            normalized_measurement_id = str(measurement_id)
-
         mode = (
             "heat"
             if hvac_mode == VThermHvacMode_HEAT
@@ -1714,9 +1748,9 @@ class SmartPI:
             return
 
         sample = FFTrimThermalSample(
-            observed_monotonic=now_monotonic,
-            measurement_id=normalized_measurement_id,
-            temperature=float(current_temp),
+            observed_monotonic=measurement.observed_monotonic,
+            measurement_id=measurement.measurement_id,
+            temperature=measurement.indoor_temperature,
             target=float(target_temp),
             ff1=float(ff_result.u_ff1),
             regime=self.gov.regime,
@@ -1727,14 +1761,14 @@ class SmartPI:
             trajectory_active=self.sp_mgr.trajectory_active,
             ff3_active=self._ff3_active_cycle,
             setpoint_changed=setpoint_changed,
-            outside_temperature_available=ext_current_temp is not None,
+            outside_temperature_available=(
+                measurement.outside_temperature is not None
+            ),
             model_reliable=(
                 self._ab_confidence.state == ABConfidenceState.AB_OK
                 and self.est.tau_reliability().reliable
             ),
-            outside_temperature=(
-                float(ext_current_temp) if ext_current_temp is not None else None
-            ),
+            outside_temperature=measurement.outside_temperature,
             trim_frozen_reason=(
                 self._ff_trim.freeze_reason if self._ff_trim.frozen else None
             ),
@@ -2037,6 +2071,9 @@ class SmartPI:
 
     def leave_source_role(self) -> None:
         self._executive = None
+        # The role regulated nothing: a setpoint episode from before it (trajectory,
+        # reference governor) must not resume on the first own tick.
+        self.sp_mgr.reset()
 
     @property
     def source_power_cap(self) -> float:
@@ -3002,7 +3039,7 @@ class SmartPI:
             if binding.status == CommandOwnershipBindingStatus.BOUND
             else None
         )
-        self._fftrim_observer.update_applied_power(
+        self._causal_power_trace.update_applied_power(
             now_monotonic=now,
             linear_power=linear_on_percent,
             ownership=self._to_fftrim_ownership_snapshot(
@@ -3010,6 +3047,7 @@ class SmartPI:
                 linear_on_percent,
                 quality="valve_segmented_linear",
             ),
+            quality="valve_segmented_linear",
         )
         if (
             self._transfer_pending_engagement
@@ -3110,9 +3148,7 @@ class SmartPI:
         self._committed_on_percent = 0.0
         self._actuator_committed_on_percent = 0.0
         self.reset_command_ownership("ownership_discontinuity")
-        self._fftrim_observer.reset_runtime()
-        self._fftrim_periodic_observer.reset_runtime()
-        self._fftrim_observation_mode = "stationary"
+        self._reset_causal_observation_runtime()
         self._last_u_applied = 0.0
         self._last_actuator_applied = 0.0
         self._recovery_hold_armed = False
@@ -3491,11 +3527,6 @@ class SmartPI:
             )
 
         if self.phase == SmartPIPhase.STABLE and not resumed_from_off and not startup_first_run:
-            u_ff_eff_for_landing = (
-                self._last_ff_result.u_ff_eff
-                if self._last_ff_result is not None
-                else self._last_u_ff
-            )
             target_temp_filt = self.sp_mgr.filter_setpoint(
                 target_temp=target_temp,
                 current_temp=current_temp,
@@ -3514,9 +3545,6 @@ class SmartPI:
                 remaining_cycle_min=remaining_cycle_min,
                 now_monotonic=now_monotonic,
                 allow_disturbance_trigger=allow_disturbance_trigger,
-                u_ff_eff=u_ff_eff_for_landing,
-                ki=self.Ki,
-                integral=self.integral,
                 temperature_slope_h=slope_h,
             )
         else:
@@ -3798,6 +3826,85 @@ class SmartPI:
         self._set_linear_output(clamp(u_limited, 0.0, upper))
         return self._on_percent
 
+    def _try_release_terminal_braking(
+        self, *, now: float, current_temp: float, hvac_mode: VThermHvacMode,
+        error_i: float, dt_min: float, integrator_hold: bool,
+        block_positive_integral: bool, block_negative_integral: bool,
+        trajectory_shaping_active: bool,
+    ) -> float | None:
+        """Retire a completed braking episode only with a safe raw-P request."""
+        manager = self.sp_mgr
+        ctl = self.ctl
+        context = manager._reference_governor_authority.pending_context
+        pi = ctl.pi_output_snapshot
+        if context is None or pi is None:
+            return None
+        def finite(value: object) -> bool:
+            return type(value) in (int, float) and isfinite(value)
+
+        previous_limited = self._last_u_limited
+        if (not finite(previous_limited) or not 0.0 <= previous_limited <= 1.0
+                or not finite(self._cycle_min) or self._cycle_min <= 0.0):
+            return None
+        previous_projected = project_cycle_command(
+            previous_limited, self._cycle_min
+        ).projected_power
+        direction = -1.0 if hvac_mode == VThermHvacMode_COOL else 1.0
+        raw_error = direction * (context.target_temp - context.current_temp)
+        current = (
+            manager._reference_governor_prepared_at == now
+            and now == self._last_calculate_time
+            and context.current_temp == current_temp
+            and context.hvac_mode == hvac_mode
+            and context.target_temp == manager._last_user_target_temp
+            and error_i == raw_error
+            and manager.reference_governor_authority_selected
+            and manager._reference_governor_authority_episode
+        )
+        branch_complete = (
+            ctl.last_i_mode == "I:RUN" and ctl.last_sat == "NO_SAT"
+            and not ctl.sat_p and not ctl.sat_i
+            and integrator_hold is False and not ctl.integral_hold_active
+            and block_positive_integral is False
+            and block_negative_integral is False
+            and trajectory_shaping_active is False
+        )
+        decision = evaluate_braking_release(
+            context=context, pi_snapshot=pi, phase=manager.trajectory_phase,
+            profile_nominal=manager._trajectory.current_setpoint,
+            deadband_c=self.deadband_c, cycle_min=self._cycle_min,
+            previous_requested_power=self._last_u_cmd,
+            previous_projected_power=previous_projected,
+            guard_active=(self.integral_guard.active or self.guards.guard_cut_active
+                          or self.guards.guard_kick_active),
+            context_is_current=bool(current),
+            post_pi_branch_complete=bool(branch_complete),
+            zero_delay_switch=(self._valve_mode_enabled is False
+                               and self._minimal_activation_delay == 0
+                               and self._minimal_deactivation_delay == 0),
+        )
+        if not decision.release_candidate:
+            return None
+        raw_p = pi.project_p(raw_error)
+        raw_command = pi.u_i + pi.u_ff + raw_p
+        if (
+            not finite(raw_command) or not 0.0 <= raw_command <= 1.0
+            or raw_p < ctl.u_p or not 0.0 <= pi.u_ff + raw_p <= 1.0
+            or not finite(dt_min) or dt_min <= 0.0
+            or not self._output_initialized
+            or abs(raw_command - previous_limited) > MAX_STEP_PER_MINUTE * dt_min
+            or (self._max_on_percent is not None
+                and (not finite(self._max_on_percent)
+                     or raw_command > self._max_on_percent))
+            or raw_command != decision.raw_requested_power
+        ):
+            return None
+        u_cmd = ctl.restore_proportional_reference(raw_error)
+        self._last_error_p = raw_error
+        manager.set_passthrough(context.target_temp)
+        _LOGGER.debug("%s - Terminal braking released with raw P", self._name)
+        return u_cmd
+
     def calculate(  # pylint: disable=keyword-arg-before-vararg
         self,
         target_temp: float | None,
@@ -3884,9 +3991,7 @@ class SmartPI:
             model_reset = self.est.ensure_hvac_mode(hvac_mode)
             self.dt_est.ensure_hvac_mode(hvac_mode)
             if mode_changed or model_reset is True:
-                self._fftrim_observer.reset_runtime()
-                self._fftrim_periodic_observer.reset_runtime()
-                self._fftrim_observation_mode = "stationary"
+                self._reset_causal_observation_runtime()
                 self.reset_command_ownership("ownership_context_changed")
             if model_reset is True:
                 self._ab_confidence.reset()
@@ -4239,11 +4344,36 @@ class SmartPI:
             integrator_hold_source=integrator_hold_source,
         )
 
-        # --- 11b. Setpoint landing command cap (post-PI governor) ---
-        u_cmd = self.ctl.apply_command_cap(
-            self.sp_mgr.landing_u_cap if self.sp_mgr.landing_active else None
+        released_u = self._try_release_terminal_braking(
+            now=now, current_temp=current_temp, hvac_mode=hvac_mode,
+            error_i=error_i, dt_min=dt_min, integrator_hold=integrator_hold,
+            block_positive_integral=block_positive_integral,
+            block_negative_integral=block_negative_integral,
+            trajectory_shaping_active=trajectory_i_active and block_positive_integral,
         )
-        self.sp_mgr.record_landing_command_cap(self.ctl.u_cmd_before_cap, u_cmd)
+        if released_u is not None:
+            u_cmd = released_u
+
+        # --- 11b. Setpoint-response command cap (post-PI governor) ---
+        authority_selected = self.sp_mgr.reference_governor_authority_selected
+        authority_decision = None
+        if self.sp_mgr.reference_governor_authority_pending:
+            authority_decision = self.sp_mgr.resolve_reference_governor(
+                requested_u=u_cmd,
+                now_monotonic=now,
+                cycle_min=self._cycle_min,
+                pi_snapshot=self.ctl.pi_output_snapshot,
+            )
+        command_cap = (
+            authority_decision.command_cap
+            if authority_selected and authority_decision is not None
+            else None
+        )
+        u_cmd = self.ctl.apply_command_cap(command_cap)
+        self.sp_mgr.record_reference_governor_command(
+            self.ctl.u_cmd_before_cap,
+            u_cmd,
+        )
 
         # --- 12. Soft Constraints ---
         u_limited = self._apply_soft_constraints(u_cmd, dt_min, setpoint_changed)

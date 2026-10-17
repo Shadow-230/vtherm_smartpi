@@ -25,7 +25,7 @@
 {% set analysis_control = analysis.get('control', {}) %}
 {% set analysis_learning = analysis.get('learning', {}) %}
 {% set analysis_trajectory = analysis.get('trajectory', {}) %}
-{% set analysis_landing = analysis.get('landing', {}) %}
+{% set analysis_governor = analysis.get('reference_governor', {}) %}
 {% set analysis_deadtime = analysis.get('deadtime', {}) %}
 {% set analysis_governance = analysis.get('governance', {}) %}
 {% set analysis_ff = analysis.get('feedforward', {}) %}
@@ -174,10 +174,11 @@
 {% set trajectory_active = setpoint.get('trajectory_active', false) %}
 {% set published_filtered_sp = setpoint.get('filtered_setpoint') %}
 {% set trajectory_source_pub = setpoint.get('trajectory_source', 'none') %}
-{% set landing_active = setpoint.get('landing_active', false) %}
-{% set landing_reason = setpoint.get('landing_reason', 'inactive') %}
-{% set landing_u_cap = setpoint.get('landing_u_cap') %}
-{% set landing_coast = setpoint.get('landing_coast_required', false) %}
+{% set governor_active = setpoint.get('governor_active', false) %}
+{% set governor_phase = setpoint.get('governor_phase', 'idle') %}
+{% set governor_reason = setpoint.get('governor_reason', 'inactive') %}
+{% set governor_command_cap = setpoint.get('governor_command_cap') %}
+{% set governor_coast = setpoint.get('governor_coast_required', false) %}
 
 {% set autocalib_state = autocalib.get('state', 'unknown') %}
 {% set autocalib_degraded = autocalib.get('model_degraded', false) %}
@@ -288,17 +289,16 @@
 {% set traj_next_cycle_u_ref = analysis_trajectory.get('next_cycle_reference') %}
 {% set traj_bumpless_u_delta = analysis_trajectory.get('bumpless_delta') %}
 {% set traj_bumpless_ready = analysis_trajectory.get('bumpless_ready') %}
-{% set landing_sp_for_p_cap = analysis_landing.get('setpoint_for_p_cap') %}
-{% set landing_predicted_temperature = analysis_landing.get('predicted_temperature') %}
-{% set landing_predicted_rise = analysis_landing.get('predicted_rise') %}
-{% set landing_target_margin = analysis_landing.get('target_margin') %}
-{% set landing_release_allowed = analysis_landing.get('release_allowed', true) %}
-{% set landing_coast_required = setpoint.get('landing_coast_required', false) %}
-{% set landing_time_to_target_min = analysis_landing.get('time_to_target_min') %}
-{% set landing_release_blocked_by_slope = analysis_landing.get('release_blocked_by_slope', false) %}
+{% set governor_nominal_reference = analysis_governor.get('nominal_reference') %}
+{% set governor_admissible_reference = analysis_governor.get('admissible_reference') %}
+{% set governor_constraint_active = analysis_governor.get('constraint_active', false) %}
+{% set governor_dynamic_reserve = analysis_governor.get('dynamic_reserve_c') %}
+{% set governor_predicted_temperature = analysis_governor.get('predicted_terminal_temperature') %}
+{% set governor_target_bound = analysis_governor.get('target_bound') %}
+{% set governor_handoff_ready = analysis_governor.get('handoff_ready', false) %}
 {% set temperature_slope_h = analysis_control.get('temperature_slope_h') %}
-{% set landing_u_cmd_before_cap = analysis_landing.get('command_before_cap') %}
-{% set landing_u_cmd_after_cap = analysis_landing.get('command_after_cap') %}
+{% set governor_u_cmd_before_cap = analysis_governor.get('command_before_cap') %}
+{% set governor_u_cmd_after_cap = analysis_governor.get('command_after_cap') %}
 {% set learn_u_avg = analysis_learning.get('window_mean_power') %}
 {% set learn_u_cv = analysis_learning.get('window_power_cv') %}
 {% set learn_u_std = analysis_learning.get('window_power_std') %}
@@ -486,7 +486,7 @@
 {%- if has_analysis %} · {{ cycle_min }} min{% endif %}
  · `{{ mode }}`
 {%- if trajectory_active %} · 🎯 trajectory{% endif %}
-{%- if landing_active %} · 🛬 landing{% if landing_coast %} (coast){% endif %}{% endif %}
+{%- if governor_active %} · 🎛️ governor{% if governor_coast %} (coast){% endif %}{% endif %}
 {%- if ff3_status == 'active' %} · 🔮 FF3{% endif %}
 {%- if has_analysis and control.get('in_deadband', false) %} · 💤 DB{% elif has_analysis and control.get('in_near_band', false) %} · 〰️ NB{% endif %}
 {%- if autocalib_degraded %} · ⚠️ degraded model{% endif %}
@@ -541,24 +541,25 @@
 {% endif %}
 
 {% if has_analysis %}
-### 🛬 Setpoint landing
+### 🎛️ Reference governor
 
 | Signal | Value |
 |---|---:|
-| Active | {% if landing_active %}yes{% else %}no{% endif %} |
-| Reason | `{{ landing_reason }}` |
-| `u_cap` | {% if landing_u_cap is not none %}{{ (landing_u_cap | float * 100) | round(2) }}%{% else %}—{% endif %} |
-| `SP_for_P` cap | {% if landing_sp_for_p_cap is not none %}{{ landing_sp_for_p_cap | float | round(3) }}°C{% else %}—{% endif %} |
-| Predicted temperature | {% if landing_predicted_temperature is not none %}{{ landing_predicted_temperature | float | round(3) }}°C{% else %}—{% endif %} |
-| Predicted rise | {% if landing_predicted_rise is not none %}{{ landing_predicted_rise | float | round(3) }}°C{% else %}—{% endif %} |
-| Target margin | {% if landing_target_margin is not none %}{{ landing_target_margin | float | round(3) }}°C{% else %}—{% endif %} |
-| Coast required | {% if landing_coast_required %}yes{% else %}no{% endif %} |
-| Release allowed | {% if landing_release_allowed %}yes{% else %}no{% endif %} |
+| Active | {% if governor_active %}yes{% else %}no{% endif %} |
+| Phase | `{{ governor_phase }}` |
+| Reason | `{{ governor_reason }}` |
+| Command cap | {% if governor_command_cap is not none %}{{ (governor_command_cap | float * 100) | round(2) }}%{% else %}—{% endif %} |
+| Nominal reference | {% if governor_nominal_reference is not none %}{{ governor_nominal_reference | float | round(3) }}°C{% else %}—{% endif %} |
+| Admissible reference | {% if governor_admissible_reference is not none %}{{ governor_admissible_reference | float | round(3) }}°C{% else %}—{% endif %} |
+| Predicted terminal temperature | {% if governor_predicted_temperature is not none %}{{ governor_predicted_temperature | float | round(3) }}°C{% else %}—{% endif %} |
+| Target bound | {% if governor_target_bound is not none %}{{ governor_target_bound | float | round(3) }}°C{% else %}—{% endif %} |
+| Dynamic reserve | {% if governor_dynamic_reserve is not none %}{{ governor_dynamic_reserve | float | round(3) }}°C{% else %}—{% endif %} |
+| Constraint active | {% if governor_constraint_active %}yes{% else %}no{% endif %} |
+| Coast required | {% if governor_coast %}yes{% else %}no{% endif %} |
+| Handoff ready | {% if governor_handoff_ready %}yes{% else %}no{% endif %} |
 | Temperature slope | {% if temperature_slope_h is not none %}{{ temperature_slope_h | float | round(3) }}°C/h{% else %}—{% endif %} |
-| Time to target | {% if landing_time_to_target_min is not none %}{{ landing_time_to_target_min | float | round(2) }} min{% else %}—{% endif %} |
-| Release blocked by slope | {% if landing_release_blocked_by_slope %}yes{% else %}no{% endif %} |
-| `u_cmd` before cap | {% if landing_u_cmd_before_cap is not none %}{{ (landing_u_cmd_before_cap | float * 100) | round(2) }}%{% else %}—{% endif %} |
-| `u_cmd` after cap | {% if landing_u_cmd_after_cap is not none %}{{ (landing_u_cmd_after_cap | float * 100) | round(2) }}%{% else %}—{% endif %} |
+| `u_cmd` before cap | {% if governor_u_cmd_before_cap is not none %}{{ (governor_u_cmd_before_cap | float * 100) | round(2) }}%{% else %}—{% endif %} |
+| `u_cmd` after cap | {% if governor_u_cmd_after_cap is not none %}{{ (governor_u_cmd_after_cap | float * 100) | round(2) }}%{% else %}—{% endif %} |
 
 ---
 
@@ -584,8 +585,8 @@
 {% if not has_analysis -%}
 | Restart | `{{ restart_reason }}` |
 {% endif -%}
-{% if landing_u_cap is not none -%}
-| Landing cap | {{ (landing_u_cap | float * 100) | round(1) }}% |
+{% if governor_command_cap is not none -%}
+| Governor cap | {{ (governor_command_cap | float * 100) | round(1) }}% |
 {% endif -%}
 {% if valve_linearization_enabled -%}
 | SmartPI demand | {{ linear_next_cycle | round(1) }}% |
@@ -710,6 +711,80 @@
 | Calibration | `{{ calibration_state }}` |
 | Retries | {{ calibration_retry }} |
 | Last calibration | {% if calibration_last %}`{{ calibration_last }}`{% else %}—{% endif %} |
+
+{% set deps = spi.get('dependencies') %}
+{% set water = spi.get('water') %}
+{% set boiler = spi.get('boiler') %}
+{% set humidity = spi.get('humidity') %}
+{% if deps %}
+---
+
+### 🔗 Known inputs
+
+| Signal | Value |
+|---|---|
+{% if deps.get('role') == 'second_source' -%}
+| Role | additional source of `{{ deps.get('lead') }}` |
+| Command applied | {% if deps.get('command') is not none %}{{ deps.get('command') | float | round(3) }}{% else %}—{% endif %} |
+{% else -%}
+| `b_eff` / `T_ref` | {% if deps.get('b_eff') is not none %}{{ deps.get('b_eff') | float | round(6) }}{% else %}—{% endif %} / {% if deps.get('t_ref') is not none %}{{ deps.get('t_ref') | float | round(2) }}°C{% else %}—{% endif %} |
+| Inputs active | {% if deps.get('inputs_active') is sameas true %}yes{% elif deps.get('inputs_active') is sameas false %}no{% else %}—{% endif %} |
+| Learning gate | `{{ deps.get('learning_gate') or '—' }}` |
+| Neighbour window action | `{{ deps.get('neighbour_window_action') or '—' }}` |
+{% for item in deps.get('items', []) -%}
+| Neighbour `{{ item.get('id') }}` | {% if item.get('available') is sameas false %}unavailable{% else %}{{ item.get('t_neighbour', '—') }}°C · exchange `k` {{ item.get('k') if item.get('k') is not none else '—' }}{% endif %} |
+{% endfor -%}
+{% set source = deps.get('second_source') -%}
+{% if source -%}
+| Additional source | `{{ source.get('entity') }}` · Mode `{{ source.get('mode') }}` |
+| Command / heat now | {% if source.get('command') is not none %}{{ source.get('command') | float | round(3) }}{% else %}—{% endif %} / {% if source.get('x_f') is not none %}{{ source.get('x_f') | float | round(3) }}{% else %}—{% endif %} |
+| Power cap | {% if source.get('power_cap') is not none %}{{ source.get('power_cap') | float | round(3) }}{% else %}—{% endif %} |
+| Recovery / setback now | `{{ source.get('recovery') or '—' }}` / {% if source.get('setback') is sameas true %}yes{% elif source.get('setback') is sameas false %}no{% else %}—{% endif %} |
+| Zone fit | {% if (source.get('zone_fit') or {}).get('published') is sameas true %}yes{% else %}no{% endif %} |
+{% endif -%}
+{% endif %}
+{% endif %}
+
+{% if water %}
+---
+
+### 💧 Water
+
+| Signal | Value |
+|---|---|
+| Heating type | `{{ water.get('heating_type') }}` |
+| Water factor | {% if water.get('factor') is not none %}{{ water.get('factor') | float | round(3) }}{% else %}—{% endif %} |
+| Factor source | `{{ water.get('source') }}` |
+| Averaged supply | {% if water.get('supply_avg_c') is not none %}{{ water.get('supply_avg_c') | float | round(1) }}°C{% else %}—{% endif %} |
+| Hot water / water too cool | {% if water.get('no_heat') is sameas true %}yes{% elif water.get('no_heat') is sameas false %}no{% else %}—{% endif %} / {% if water.get('low_heat') is sameas true %}yes{% elif water.get('low_heat') is sameas false %}no{% else %}—{% endif %} |
+| Water too cold for the demand | {% if water.get('water_too_cold') is sameas true %}yes{% elif water.get('water_too_cold') is sameas false %}no{% else %}—{% endif %} |
+{% endif %}
+
+{% if boiler %}
+---
+
+### 🔥 Boiler's call
+
+| Signal | Value |
+|---|---|
+| Source | `{{ boiler.get('source') }}` |
+| Called for heat | {% if boiler.get('called') is sameas true %}yes{% elif boiler.get('called') is sameas false %}no{% else %}unknown{% endif %} |
+| Reason it is not | `{{ boiler.get('reason') or '—' }}` |
+| Learning mode | `{{ boiler.get('learning') or '—' }}` |
+{% endif %}
+
+{% if humidity %}
+---
+
+### 🚿 Humidity
+
+| Signal | Value |
+|---|---|
+| Humidity | {% if humidity.get('humidity') is not none %}{{ humidity.get('humidity') | float | round(1) }} %{% else %}—{% endif %} |
+| Event state | `{{ humidity.get('state') }}` |
+| Baseline / peak | {% if humidity.get('baseline') is not none %}{{ humidity.get('baseline') | float | round(1) }} %{% else %}—{% endif %} / {% if humidity.get('peak') is not none %}{{ humidity.get('peak') | float | round(1) }} %{% else %}—{% endif %} |
+| Events since the start | {{ humidity.get('events', 0) }} |
+{% endif %}
 
 {% if has_analysis %}
 ---

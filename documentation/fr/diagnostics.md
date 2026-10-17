@@ -26,18 +26,32 @@ Le mode debug enregistre `live` et `history`. Le contenu n'est pas dupliqué
 dans `history` : le contrat historique reste identique dans les deux modes. Le
 mode debug change donc la conservation, pas la publication.
 
-Le bloc `history` contient ces huit séries :
+Le bloc `history` contient ces onze séries :
 
 | Chemin sous `history` | Signification |
 |---|---|
 | `temperature.indoor` | Température intérieure |
 | `setpoint.filtered_setpoint` | Consigne filtrée utilisée par la régulation |
-| `power.applied_percent` | Puissance physiquement appliquée |
+| `setpoint.nominal_reference` | Référence nominale du profil évaluée par le gouverneur |
+| `power.applied_percent` | Commande appliquée après les contraintes de sortie |
 | `power.command_percent` | Commande demandée avant les effets de l'actionneur |
 | `power.pi_percent` | Contribution PI |
 | `power.ff_percent` | Contribution feed-forward |
+| `power.governor_cap_percent` | Plafond de commande du gouverneur, en % |
+| `power.before_governor_cap_percent` | Demande PI avant application du cap, en % |
 | `model.a` | Gain de chauffe appris |
 | `model.b` | Coefficient de déperdition appris |
+
+La référence nominale est enregistrée à 0,01 °C, le cap et la demande avant cap
+à 0,1 %. Ces trois champs s'ajoutent au schéma v2 ; leurs sources restent dans
+`live.analysis.reference_governor`. Une référence ou un cap absent vaut `null`,
+pas zéro. Un cap réellement nul vaut 0 %. Après la fin du freinage, la demande
+avant cap peut rester renseignée alors que référence nominale et cap disparaissent.
+
+La demande avant cap utilise déjà la référence P filtrée ; ce n'est pas une
+simulation PI sur la consigne utilisateur. La commande appliquée ne mesure
+pas la chaleur délivrée. Les graphiques doivent interrompre la courbe du cap
+sur `null` et tolérer l'absence de ces champs sur les anciennes versions.
 
 ## Diagnostics live
 
@@ -52,7 +66,7 @@ Le bloc `live` est organisé par responsabilité :
 | `learning` | Étape d'apprentissage, progression du bootstrap, mises à jour acceptées et état de dérive |
 | `governance` | Régime thermique et décision de mise à jour du modèle |
 | `feedforward` | État FF3, source de bande morte et diagnostics FFTrim canoniques |
-| `setpoint` | Consigne filtrée, trajectoire, boost et résumé d'atterrissage |
+| `setpoint` | Consigne filtrée, trajectoire, boost et résumé du gouverneur de référence |
 | `autocalib` | État du superviseur de calibration automatique |
 | `calibration` | État, nombre d'essais et date de la dernière calibration |
 | `analysis` | Champs avancés utilisés par les cartes de diagnostic fournies |
@@ -61,7 +75,7 @@ Le bloc `live` est organisé par responsabilité :
 | `boiler` | Seulement pour un type de chauffage à eau avec une source de l'appel de la chaudière choisie : la source, l'appel et le mode d'apprentissage qui en découle |
 
 `analysis` regroupe les valeurs live avancées dans `control`, `learning`,
-`trajectory`, `landing`, `deadtime`, `governance`, `feedforward` et, lorsqu'il
+`trajectory`, `reference_governor`, `deadtime`, `governance`, `feedforward` et, lorsqu'il
 est disponible, `twin`.
 
 FFTrim utilise des blocs canoniques imbriqués :

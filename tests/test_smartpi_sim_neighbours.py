@@ -7,6 +7,7 @@ and learns the exchange itself.
 
 from __future__ import annotations
 
+import os
 from dataclasses import replace
 
 import pytest
@@ -24,6 +25,11 @@ from sim.weather import Weather
 K = 0.002
 OUTDOOR = Weather(base_c=3.0, daily_amplitude_c=3.0)
 N3_OUTDOOR = Weather(base_c=5.0, daily_amplitude_c=3.0)
+# Further control phases of a scenario, run locally (about 16 s each).
+LOCAL = pytest.mark.skipif(
+    os.environ.get("SMARTPI_SIM_LOCAL") != "1",
+    reason="further control phase, run locally with SMARTPI_SIM_LOCAL=1",
+)
 
 
 def _doors(days: int) -> tuple[tuple[float, float], ...]:
@@ -235,3 +241,39 @@ async def test_n7_zone_between_two_always_neighbours(monkeypatch) -> None:
             assert item["indistinguishable"]
         else:
             assert item["k"] == pytest.approx(truth, rel=0.35)
+
+
+@pytest.mark.parametrize("phase_s", [0.0, pytest.param(170.0, marks=LOCAL), pytest.param(340.0, marks=LOCAL)])
+async def test_landing_with_a_neighbour_exchange(monkeypatch, phase_s) -> None:
+    """With a learned always-connected neighbour, the reference governor brings the zone back
+    from a night at 17 degC as the setpoint filter did before it.
+
+    Two mornings after the N3 learning, in three control phases (two of them locally). Before the reference
+    governor (dev2 9868b33) and with it: 2.96-3.04 h and 3.26-3.27 h to 19.9 degC,
+    overshoot 0.23-0.24 degC and 0.15 degC. The bounds leave 0.06 degC and 0.3 h of margin.
+    """
+    zone = _zone(
+        SimNeighbour("hall", 20.0, 0.0015, mode="always", steps=((30.0, 4.0), (66.0, -4.0))),
+        setpoint_c=20.0,
+        control_phase_s=phase_s,
+    )
+    sim = Simulation(monkeypatch, zone, N3_OUTDOOR, dependency_layer=True)
+    await sim.run_for(70.0)
+    assert _item(sim, "hall")["k"] is not None
+
+    async def setpoint(value: float) -> None:
+        sim.thermostat.target_temperature = value
+        sim.zone.setpoint_c = value
+        await sim.thermostat.async_control_heating(force=True)
+
+    for _night in range(2):
+        await setpoint(17.0)
+        await sim.run_for(8.0)
+        start_h = sim.clock.elapsed_s / 3600.0
+        await setpoint(20.0)
+        await sim.run_for(8.0)
+        morning = [p for p in sim.trace if p.t_h >= start_h]
+        reach_h = next(p.t_h - start_h for p in morning if p.zone_c >= 19.9)
+        assert reach_h < 3.6
+        assert max(p.zone_c for p in morning) - 20.0 < 0.30
+        await sim.run_for(8.0)

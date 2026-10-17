@@ -4,6 +4,23 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+- The setpoint filter's landing is replaced by the reference governor, in heating and in cooling
+  (taken from the author's newer code). Near the end of a setpoint change it caps the command when
+  the model predicts that the heat already given is enough; the cap tolerates the deadband beyond
+  the target, and an episode whose prediction the room keeps missing is retired. The diagnostics
+  show the governor under `setpoint` and `analysis.reference_governor`, and the history has three
+  more series (the nominal reference, the cap and the request before it). The fork's inputs reach
+  the new parts: the governor, FF3, the twin and the feed-forward trim's measurements use `b_eff`
+  and `T_ref`, and the trim's causal power trace records the power at the reference water. A
+  thermostat that leaves the additional source's role starts its setpoint handling afresh. In the
+  simulator with water data, the cap never binds while cool water limits the command, and no
+  episode is retired (twelve morning approaches for each water temperature). The diagnostic cards,
+  in English, French and now Polish, also show the known inputs, the water, the boiler's call and
+  the humidity.
+  The coverage baseline is now this stage's report: 93.3 % for the whole plugin, and 97.7 % of the
+  lines and 93.5 % of the branches for the fork's lines, which now include the author's governor.
+  New tests run edge paths of the author's code, so that no file falls below its earlier coverage.
+
 - The code coverage of `dev2` is kept as a baseline in `tests/coverage/baseline.json` (the full
   coverage.py report of the long local set, without the QAS checks for now), and
   `tests/coverage/compare.py` compares a new report with it: no file may fall below the baseline,

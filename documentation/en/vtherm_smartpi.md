@@ -260,7 +260,7 @@ At that point, SmartPI:
 
 Near the target temperature, SmartPI tries to avoid constant micro-corrections. The result should be steadier regulation with fewer unnecessary corrections than a fixed TPI.
 
-During a heating setpoint increase, the setpoint filter also uses the learned model to manage the final approach to the target. The proportional branch follows a filtered reference, while the raw setpoint remains available to the integral branch. Near the target, SmartPI can cap the internal heating demand when the model predicts that the already injected heat is enough to reach the setpoint. This landing behavior helps the room slow down before the target instead of continuing to heat only because the feed-forward or frozen PI state is still positive.
+During a setpoint change in HEAT or COOL, the setpoint filter also uses the learned model to manage the final approach to the target. The proportional branch follows a governed reference, while the raw setpoint remains available to the integral branch. Near the target, SmartPI can cap the internal demand when the model predicts that committed thermal energy is enough to reach the setpoint. The dynamic reserve and time-confirmed handoff slow the approach without holding the room at a fixed offset from the target.
 
 With `FF3`, enabled by default, SmartPI can also apply a small predictive correction near the setpoint when it detects a credible external disturbance context.
 
@@ -318,7 +318,7 @@ The column "Where it is set" says where each setting belongs. **Shared**: in the
 | **Hysteresis on** | Restart threshold during bootstrap learning. | shared | `0.3°C` |
 | **Hysteresis off** | Stop threshold during bootstrap learning. | shared | `0.5°C` |
 | **Release tau factor** | Scales the integral release delay relative to the learned time constant. | shared | `0.5` |
-| **Use setpoint filter** | Enables proportional setpoint shaping and heating landing control near the target. | shared | `enabled` |
+| **Use setpoint filter** | Enables proportional setpoint shaping and predictive HEAT/COOL governance near the target. | shared | `enabled` |
 | **Use FF3** | Enables short-horizon predictive correction near the setpoint in disturbance recovery conditions. | shared | `enabled` |
 | **Allow damped P near deadband edge** | Inside the deadband, keeps a reduced proportional action near its edge. When disabled, the proportional branch is off in the whole deadband. | shared | `disabled` |
 | **Recovery after a setback** | A zone with two heat sources: how it comes back to its setpoint after a lower one. Fast: during a setback the slow source keeps warm, so the zone is back sooner, with about 1–2 % more energy. Economical: the deepest setback and the least energy; the zone takes longer to come back. Each zone may override it ([Zone dependencies, §5.6](zone_dependencies.md#56-allocation-loop-and-predictive-brake)). | shared | `Fast` |
@@ -354,7 +354,7 @@ For the diagnostic schema and Recorder profiles, see the [SmartPI Diagnostics Gu
 
 The SmartPI diagnostic sensor publishes a versioned envelope. Dashboards and
 Markdown cards read complete diagnostics from `attributes.live`; historical
-graphs read the stable eight-series contract from `attributes.history`.
+graphs read the stable eleven-series contract from `attributes.history`.
 
 This is the main place to check:
 
@@ -381,7 +381,7 @@ Other useful blocks under `live`:
 - `temperature`: measured temperature, error, integral state,
 - `model`: learned `a`, `b`, confidence, and dead times,
 - `feedforward`: feed-forward and FF3 status,
-- `setpoint`: filtered setpoint and landing information,
+- `setpoint`: filtered setpoint and reference-governor information,
 - `autocalib`: automatic supervision state,
 - `calibration`: forced calibration state,
 - `dependencies`: zone dependencies and the zone with two heat sources, when configured ([Zone dependencies, §9](zone_dependencies.md#9-diagnostics)),
@@ -393,10 +393,11 @@ In normal mode, the `setpoint` block can show:
 - `filtered_setpoint`: reference followed by the proportional branch,
 - `trajectory_active`: whether a setpoint trajectory is active,
 - `trajectory_source`: why the trajectory is active,
-- `landing_active`: whether heating landing control is active,
-- `landing_reason`: reason for the landing state,
-- `landing_u_cap`: internal heating-demand cap applied during landing,
-- `landing_coast_required`: whether SmartPI is coasting because the model predicts enough stored heat.
+- `governor_active`: whether predictive reference or command shaping is active,
+- `governor_phase`: current `idle`, `governed`, or `handoff` phase,
+- `governor_reason`: reason for the latest governor decision,
+- `governor_command_cap`: internal HEAT/COOL demand cap,
+- `governor_coast_required`: whether zero command is required by the prediction.
 
 Advanced values used by the supplied card are always available under
 `live.analysis`. Debug mode does not add or remove published fields: it allows
@@ -407,11 +408,16 @@ A Home Assistant Markdown card is also available to display SmartPI diagnostics 
 
 https://github.com/KipK/vtherm_smartpi/tree/master/cards
 
+This version's cards are in [`cards/`](../../cards), in English, French and Polish
+(`smartpi_diags-en.md`, `smartpi_diags-fr.md`, `smartpi_diags-pl.md`). Besides the author's
+sections, they show the known inputs (`dependencies`), the water (`water`), the boiler's call
+(`boiler`) and the humidity (`humidity`) when SmartPI publishes these blocks.
+
 ## Regulation panel with Equinox
 
 SmartPI also publishes the `specific_states.smart_pi` summary and the `specific_states.regulation_diagnostics` entity reference on the thermostat entity. While SmartPI uses water data, it also writes `specific_states.water_factor`: the water factor it applies (the heat the emitter gives with the current water, compared with a reference water). This is SmartPI's output for any integration that reads it ([Water and boiler inputs, §3.4](water_input.md#34-use-in-smartpi)). The [Equinox Lovelace card](https://github.com/KipK/equinox) uses these attributes to show a dedicated **Regulation** panel from the climate card menu.
 
-With Equinox, you can follow SmartPI learning progress, model confidence, power breakdown, setpoint landing, history graphs, and available maintenance actions without copying the Markdown diagnostic card.
+With Equinox, you can follow SmartPI learning progress, model confidence, power breakdown, setpoint governance, history graphs, and available maintenance actions without copying the Markdown diagnostic card.
 
 ![Equinox SmartPI Regulation dashboard overview](https://github.com/KipK/equinox/raw/master/assets/screens/regul-overview.png)
 
