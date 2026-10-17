@@ -30,7 +30,7 @@ sesji w chmurze), sesja mówi o tym właścicielowi. Wzorzec testów `dev2@705b3
 | B3 | `feat/spinew-b3-service-targets` | #27 | scalone 2026-10-16 |
 | B4 | `fix/spinew-b4-events` | #22 | scalone 2026-10-16 |
 | H1 | `feat/humidity-events` | #28 | scalone 2026-10-16 |
-| C1 | `feat/spinew-c1-reference-governor` (od `9868b33`) | – | commity lokalne 2026-10-17; push i PR czekają na „tak” |
+| C1 | `feat/spinew-c1-reference-governor` (od `9868b33`) | #30 | PR otwarty 2026-10-17 |
 | C2 | `feat/spinew-c2-cool` (od głowicy C1) | – | commity lokalne 2026-10-17; PR po scaleniu C1 |
 
 Konflikty przy scalaniu były tylko w `CHANGELOG.md` i `testing.md` §4 (wpisy obu stron zostały,
@@ -40,8 +40,8 @@ Narzędzie: `tools/union_resolve.py`.
 
 Gałęzie A1–H1 są scalone i usunięte (lokalnie i na GitHubie, 2026-10-16). Wyniki fazy C: `ANALIZA.md` §23.
 
-**Następny krok:** push gałęzi C1 i PR do `dev2` za „tak” właściciela; po scaleniu C1 gałąź C2
-przenieść na nowe `dev2` i PR. Faza C wykonana lokalnie 2026-10-17 (`ANALIZA.md` §23); sprawdzenie
+**Następny krok:** scalenie PR #30 (C1) za „tak” właściciela; potem gałąź C2 na nowe `dev2`,
+nowa baza pokrycia i PR. Faza C wykonana lokalnie 2026-10-17 (`ANALIZA.md` §23); sprawdzenie
 C-j (H1) z testami zrobione.
 
 Odtworzenie środowiska i pomiarów: `ANALIZA.md` §3, `tools/` (skrypty), `results/` (wyniki).
