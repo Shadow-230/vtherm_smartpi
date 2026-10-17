@@ -12,6 +12,7 @@ All notable changes to this project will be documented in this file.
   setpoint change during a cycle, also the preset of a neighbour's open window, flags the cycle,
   and the feed-forward trim makes no transfer then. FF3 no longer takes the unused cooling dead
   time. The fork's known inputs still reach the braking in cooling.
+  The coverage baseline is now this stage's report (93.3 % for the whole plugin; no file falls).
 
 - The setpoint filter's landing is replaced by the reference governor, in heating and in cooling
   (taken from the author's newer code). Near the end of a setpoint change it caps the command when
