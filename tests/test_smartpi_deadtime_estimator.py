@@ -407,3 +407,37 @@ def test_smartpi_routes_raw_temperature_to_tin_history(stable: bool) -> None:
     assert t_int_lp != pytest.approx(19.5)
     assert smartpi.dt_est.tin_history[-1][1] == 19.5
     assert smartpi.dt_est._tin_lp_history[-1][1] == pytest.approx(t_int_lp)
+
+
+@pytest.mark.parametrize("response", ["heat", "cool"])
+def test_a_wait_longer_than_the_filtered_history_counts_the_dead_time_until_detection(response: str) -> None:
+    """When the extreme temperature has left the 300-sample history, the response time runs until detection."""
+    est = DeadTimeEstimator()
+    sign = 1.0 if response == "heat" else -1.0
+    start_temp = 20.0 if response == "heat" else 22.0
+    if response == "heat":
+        est.update(1000.0, start_temp, 21.0, 0.0)
+        est.update(1060.0, start_temp, 21.0, 1.0)
+    else:
+        est.update(1000.0, start_temp, 21.0, 1.0)
+        est.update(1060.0, start_temp, 21.0, 0.0)
+    assert est.state == ("WAITING_HEAT_RESPONSE" if response == "heat" else "WAITING_COOL_RESPONSE")
+    power = 1.0 if response == "heat" else 0.0
+
+    # The temperature first moves away (the trough or peak), then wanders just inside the threshold.
+    now = 1070.0
+    est.update(now, start_temp - sign * 0.10, 21.0, power)
+    for step in range(320):
+        now += 10.0
+        est.update(now, start_temp - sign * (0.08 if step % 2 else 0.07), 21.0, power)
+    assert len(est._tin_lp_history) == 300
+
+    now += 10.0
+    est.update(now, start_temp - sign * 0.04, 21.0, power)
+
+    if response == "heat":
+        assert est.state == "HEATING"
+        assert est.deadtime_heat_s == pytest.approx(now - 1060.0)
+    else:
+        assert est.state == "COOLING"
+        assert est.deadtime_cool_s == pytest.approx(now - 1060.0)

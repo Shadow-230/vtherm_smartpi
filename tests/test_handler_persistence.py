@@ -191,6 +191,21 @@ def test_remove_snapshots_synchronously_and_schedules_immediate_write():
     thermostat.hass.async_create_task.call_args.args[0].close()
 
 
+def test_remove_goes_on_when_the_write_cannot_be_scheduled(caplog):
+    """remove() logs a write that cannot be scheduled and still stops its timers."""
+    handler, thermostat, store = _build_handler()
+    store.save_now = MagicMock(return_value=MagicMock())
+    thermostat.hass.async_create_task = MagicMock(side_effect=RuntimeError("loop closed"))
+    handler._recalc_timer_remove = MagicMock()
+    stop = handler._recalc_timer_remove
+
+    handler.remove()
+
+    assert "Failed to save SmartPI state: loop closed" in caplog.text
+    stop.assert_called_once()
+    assert handler._recalc_timer_remove is None
+
+
 @pytest.mark.asyncio
 async def test_service_writes_immediately():
     """A mutating service awaits the immediate write."""

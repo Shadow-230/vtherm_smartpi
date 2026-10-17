@@ -82,6 +82,29 @@ async def test_async_setup_registers_factory_and_services(hass) -> None:
 
 
 @pytest.mark.asyncio
+async def test_a_second_setup_keeps_the_registered_factory(hass) -> None:
+    """The factory registered by a first setup is kept, not replaced."""
+    await async_setup(hass, {})
+    api = VThermAPI.get_vtherm_api(hass)
+    factory = api.get_prop_algorithm(PROP_FUNCTION_SMART_PI)
+
+    assert await async_setup(hass, {})
+
+    assert api.get_prop_algorithm(PROP_FUNCTION_SMART_PI) is factory
+
+
+@pytest.mark.asyncio
+async def test_setup_without_the_vtherm_api_warns_and_keeps_the_services(hass, monkeypatch, caplog) -> None:
+    """Without Versatile Thermostat's API there is no factory to register; the services still are."""
+    monkeypatch.setattr(VThermAPI, "get_vtherm_api", classmethod(lambda cls, hass=None: None))
+
+    assert await async_setup(hass, {})
+
+    assert "Unable to register SmartPI factory because VThermAPI is unavailable" in caplog.text
+    assert hass.services.has_service(DOMAIN, SERVICE_SET_SMARTPI_LEARNING)
+
+
+@pytest.mark.asyncio
 async def test_unload_keeps_factory_and_services_and_reloads_nothing(
     hass, reload_helpers
 ) -> None:

@@ -118,6 +118,20 @@ def _source_item(entry) -> dict | None:
     return next((item for item in entry.options.get(CONF_SMART_PI_DEPENDENCIES, []) if item["kind"] == "source"), None)
 
 
+async def test_only_the_masters_holding_this_thermostat_are_offered(hass) -> None:
+    """A master of other rooms is not offered: only the one with this thermostat among its devices."""
+    _radiator, _floor, master, entry, _floor_entry = _zone(hass)
+    bedroom = _vtherm(hass, "vt-bedroom", "bedroom")
+    office = _vtherm(hass, "vt-office", "office")
+    _master(hass, [bedroom.entity_id, office.entity_id], unique_id="vt-upstairs", object_id="upstairs")
+
+    result = await _open_zone(hass, entry)
+
+    assert result["step_id"] == "zone_master"
+    (key,) = result["data_schema"].schema
+    assert result["data_schema"].schema[key].config["options"] == [master.entity_id]
+
+
 async def test_a_zone_is_set_up_from_its_master_with_the_recommended_split(hass) -> None:
     """Radiator and water floor: the faster radiator is the main source, lead_band the rule, the reset offered."""
     radiator, floor, master, entry, _floor_entry = _zone(hass)

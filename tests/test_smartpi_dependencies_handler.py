@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import time
 from unittest.mock import AsyncMock, patch
 
 from homeassistant.helpers import entity_registry as er
@@ -16,7 +17,7 @@ from custom_components.vtherm_smartpi.const import (
     SHARED_SETTINGS,
 )
 from custom_components.vtherm_smartpi.handler import SmartPIHandler
-from custom_components.vtherm_smartpi.hvac_mode import VThermHvacMode_OFF
+from custom_components.vtherm_smartpi.hvac_mode import VThermHvacMode_HEAT, VThermHvacMode_OFF
 from custom_components.vtherm_smartpi.settings import own_entry
 
 from fakes.fake_thermostat_runtime import FakeThermostatRuntime
@@ -433,6 +434,51 @@ async def test_a_second_source_turned_off_in_its_off_phase_cancels_its_cycle(has
     thermostat.cycle_scheduler.cancel_cycle.assert_awaited_once()
     thermostat.async_underlying_entity_turn_off.assert_not_awaited()
     assert thermostat._on_time_sec == 0
+
+
+async def test_a_second_source_turned_off_with_nothing_running_has_nothing_to_stop(hass) -> None:
+    """Off with its device off and no cycle running: nothing is turned off or cancelled."""
+    handler, thermostat = _handler(hass, [])
+    thermostat.vtherm_hvac_mode = "off"
+    thermostat.is_device_active = False
+    thermostat.cycle_scheduler.is_cycle_running = False
+
+    await handler._control_as_source(False)
+
+    thermostat.cycle_scheduler.cancel_cycle.assert_not_awaited()
+    thermostat.async_underlying_entity_turn_off.assert_not_awaited()
+    assert thermostat._on_time_sec == 0
+
+
+async def test_a_second_source_removed_is_no_longer_counted_as_running(hass) -> None:
+    """Removed while working for a main source, its heat is no longer counted by that main source."""
+    handler, thermostat = _handler(hass, [])
+    handler._enter_source_role("vt-radiator")
+    link = handler._source_link()
+    link.set_active(thermostat.unique_id, True, time.monotonic())
+
+    handler.remove()
+    await hass.async_block_till_done()
+
+    assert not link.is_active(thermostat.unique_id, time.monotonic(), 900.0)
+
+
+async def test_a_main_source_switched_on_again_stops_its_off_heartbeat(hass) -> None:
+    """Off, the main source keeps telling its additional source; back on, that heartbeat stops."""
+    registry = er.async_get(hass)
+    floor = registry.async_get_or_create("climate", VT_DOMAIN, "vt-floor", suggested_object_id="floor")
+    handler, thermostat = _handler(hass, [_source_item(floor.id)])
+
+    thermostat.vtherm_hvac_mode = VThermHvacMode_OFF
+    await handler.on_state_changed(True)
+    assert handler._source_heartbeat_remove is not None
+
+    thermostat.vtherm_hvac_mode = VThermHvacMode_HEAT
+    await handler.on_state_changed(True)
+    assert handler._source_heartbeat_remove is None
+
+    handler.remove()
+    await hass.async_block_till_done()
 
 
 async def test_a_source_that_cannot_be_resolved_has_no_heating_type(hass, monkeypatch) -> None:

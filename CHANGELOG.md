@@ -4,6 +4,21 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+- The code coverage of `dev2` is kept as a baseline in `tests/coverage/baseline.json` (the full
+  coverage.py report of the long local set, without the QAS checks for now), and
+  `tests/coverage/compare.py` compares a new report with it: no file may fall below the baseline,
+  and the fork's own lines must reach 95 % of the lines and 90 % of the branches. Each pull request
+  to `dev2` replaces the baseline with its own report. `testing.md` section 7 shows the new figures:
+  93.5 % for the whole plugin, 99.3 % of the lines and 98.0 % of the branches for the fork's own
+  lines.
+- Tests for the places that coverage found untested after the latest stages: the setup without
+  Versatile Thermostat's API or run twice, a calibration cancelled when the thermostat is switched
+  off, a removed thermostat whose state cannot be written, an additional source switched off with
+  nothing running or removed, a main source switched on again, the water's integral hold set again
+  before the controller, a dead time detected after a long wait, the masters the zone form offers,
+  the menu of an electric additional source, a neighbour without safety and window blocks, and the
+  dependency model's load and reset with a source.
+
 - SmartPI uses the room's humidity when Versatile Thermostat gives it (its humidity feature), with
   no setting: a quick rise of at least 5 %RH within 10 minutes (a shower, cooking) starts a
   humidity event. Until the humidity falls back to a quarter of the rise (at most 3 hours), and for
