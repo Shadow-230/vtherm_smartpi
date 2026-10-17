@@ -344,7 +344,7 @@ The principle is:
 - the P branch keeps the raw setpoint until the predicted braking zone is reached,
 - a significant setpoint change arms late braking once; HEAT and COOL then use the same signed braking-window equations,
 - disturbance-triggered entry continues to require the significant-gap threshold,
-- the exact learned 1R1C model, `deadtime_cool`, the remaining cycle latency, and the committed cycle power are used to detect the braking zone,
+- the exact learned 1R1C model, the passive dead time (how long the room keeps moving once the power stops: `deadtime_cool` in HEAT, `deadtime_heat` in COOL), the remaining cycle latency, and the committed cycle power are used to detect the braking zone; the governor's stop delay and the trajectory floor use the same passive dead time,
 - a smooth late-braking trajectory proposes an independent nominal P reference near the target,
 - for HEAT and COOL setpoint trajectories, the predictive reference governor derives an admissible P reference and can constrain the internal command after PI computation,
 - when braking is no longer needed, the filtered reference returns progressively to the raw target before the trajectory stops,
@@ -360,7 +360,10 @@ The principle is:
 The thermal twin, FF3, braking-entry prediction and governor share a pure
 constant-power 1R1C propagation function. Each consumer retains its own horizons,
 delay policy and input validation. The governor uses the nominal thermal model,
-without an estimated disturbance correction.
+without an estimated disturbance correction. The thermal twin delays a power
+change by the dead time of the current mode: switching on by the active dead
+time (`deadtime_heat` in HEAT, `deadtime_cool` in COOL), switching off by the
+passive one.
 
 The governor uses the discrete 1R1C form in internal linear command space:
 
@@ -708,7 +711,10 @@ bounded transaction applies
 `delta_u_cmd = alpha * lambda * D`. The same factor `alpha` handles trim
 authority, FF branch bounds, integral capacity, and command headroom. The
 transaction runs only at the post-anti-windup cycle boundary and is identical
-in the signed HEAT and COOL model power space.
+in the signed HEAT and COOL model power space. A setpoint change during the
+cycle (by the user, or the preset of a neighbour's open window) flags that
+cycle: the command ownership shows `setpoint_changed`, and the trim makes no
+transaction at its boundary.
 Transfers below the generic actuator-precision threshold remain ignored unless
 they strictly reduce opposing stored trim and integral contributions. This
 ownership compaction keeps the same atomic bounds and command invariant.

@@ -205,6 +205,9 @@ During bootstrap, SmartPI does not try to hold the temperature precisely. Instea
 - heating starts when the temperature drops below `setpoint - 0.3°C`,
 - heating stops when the temperature rises above `setpoint + 0.5°C`.
 
+In cooling it is the exact mirror: cooling starts above `setpoint + 0.3°C` and stops below
+`setpoint - 0.5°C`.
+
 This produces visible temperature swings which are expected and intentional at this stage.
 
 #### Step 1 — Measuring dead times

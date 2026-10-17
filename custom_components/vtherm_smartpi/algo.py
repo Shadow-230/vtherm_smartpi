@@ -3458,7 +3458,6 @@ class SmartPI:
             a=self.est.a,
             b=self.control_b,
             deadtime_heat_s=self.dt_est.deadtime_heat_s,
-            deadtime_cool_s=self.dt_est.deadtime_cool_s,
         )
         self._u_ff3_pending = ff3_result.u_ff3_applied
         self._ff3_pending_active = abs(ff3_result.u_ff3_applied) > 1e-9
@@ -3527,6 +3526,7 @@ class SmartPI:
             )
 
         if self.phase == SmartPIPhase.STABLE and not resumed_from_off and not startup_first_run:
+            stop_deadtime_s, stop_deadtime_reliable = self.dt_est.passive_deadtime(hvac_mode)
             target_temp_filt = self.sp_mgr.filter_setpoint(
                 target_temp=target_temp,
                 current_temp=current_temp,
@@ -3535,8 +3535,8 @@ class SmartPI:
                 b=self.control_b,
                 ext_current_temp=ext_current_temp,
                 u_ref=self._committed_on_percent,
-                deadtime_cool_s=self.dt_est.deadtime_cool_s,
-                deadtime_cool_reliable=self.dt_est.deadtime_cool_reliable,
+                stop_deadtime_s=stop_deadtime_s,
+                stop_deadtime_reliable=stop_deadtime_reliable,
                 tau_reliable=tau_info.reliable,
                 deadband_c=self.deadband_c,
                 kp=self.Kp,
@@ -3566,6 +3566,7 @@ class SmartPI:
         if self._last_target_temp is not None:
             if abs(target_temp - self._last_target_temp) > 0.01:
                 setpoint_changed = True
+                self._setpoint_changed_in_cycle = True
                 _LOGGER.info(
                     "%s - Target change detected (%.2f -> %.2f), invalidating learning window",
                     self._name, self._last_target_temp, target_temp

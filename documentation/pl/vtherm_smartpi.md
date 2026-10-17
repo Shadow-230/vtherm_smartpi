@@ -205,6 +205,9 @@ W fazie startowej SmartPI nie próbuje dokładnie trzymać temperatury. Zamiast 
 - grzanie włącza się, gdy temperatura spadnie poniżej `setpoint - 0.3°C` (nastawa minus 0,3°C),
 - grzanie wyłącza się, gdy temperatura wzrośnie powyżej `setpoint + 0.5°C` (nastawa plus 0,5°C).
 
+Przy chłodzeniu jest dokładnie odwrotnie: chłodzenie włącza się powyżej `setpoint + 0.3°C`, a
+wyłącza poniżej `setpoint - 0.5°C`.
+
 Daje to widoczne wahania temperatury. Na tym etapie są one oczekiwane i zamierzone.
 
 #### Krok 1 — Pomiar czasów martwych

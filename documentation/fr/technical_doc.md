@@ -352,7 +352,7 @@ Le principe est le suivant :
 - la branche P conserve la consigne brute tant que la zone de freinage prédite n'est pas atteinte,
 - un changement de consigne significatif arme une seule fois le freinage tardif ; HEAT et COOL utilisent ensuite les mêmes équations signées de fenêtre de freinage,
 - un déclenchement dû à une perturbation continue d'exiger le seuil d'écart significatif,
-- le modèle 1R1C appris, `deadtime_cool`, la latence restante du cycle et la puissance engagée sur le cycle servent à détecter cette zone de freinage,
+- le modèle 1R1C appris, le temps mort passif (le temps pendant lequel la pièce continue d'évoluer une fois la puissance coupée : `deadtime_cool` en HEAT, `deadtime_heat` en COOL), la latence restante du cycle et la puissance engagée sur le cycle servent à détecter cette zone de freinage ; le délai d'arrêt du gouverneur et le plancher de la trajectoire utilisent le même temps mort passif,
 - une trajectoire de freinage tardif douce propose une référence P nominale indépendante près de la cible,
 - pour les trajectoires de consigne HEAT et COOL, le gouverneur de référence prédictif détermine une référence P admissible et peut contraindre la commande interne après le calcul PI,
 - lorsque le freinage n'est plus nécessaire, la référence filtrée remonte progressivement vers la consigne brute avant l'arrêt de la trajectoire,
@@ -370,7 +370,9 @@ Le jumeau thermique, FF3, la prédiction d'entrée en freinage et le gouverneur
 partagent une fonction pure de propagation 1R1C à puissance constante. Chaque
 consommateur conserve ses horizons, sa politique de retard et ses validations.
 Le gouverneur utilise le modèle thermique nominal, sans correction estimée de
-perturbation.
+perturbation. Le jumeau thermique retarde un changement de puissance du temps
+mort du mode courant : la mise en marche du temps mort actif (`deadtime_heat` en
+HEAT, `deadtime_cool` en COOL), l'arrêt du temps mort passif.
 
 Le gouverneur utilise la forme discrète du modèle 1R1C dans l'espace de commande interne linéaire :
 
@@ -726,7 +728,10 @@ transaction bornée applique
 `delta_u_cmd = alpha * lambda * D`. Le même facteur `alpha` respecte l'autorité du
 trim, les clamps FF, la capacité intégrale et la marge de commande. La
 transaction s'exécute uniquement à la frontière de cycle après anti-windup,
-dans le même espace de puissance signé en HEAT et COOL.
+dans le même espace de puissance signé en HEAT et COOL. Un changement de
+consigne pendant le cycle (par l'utilisateur, ou le préréglage imposé par la
+fenêtre ouverte d'un voisin) marque ce cycle : la propriété de la commande
+affiche `setpoint_changed`, et le trim ne fait aucune transaction à sa frontière.
 Les transferts inférieurs au seuil générique de précision de l'actionneur
 restent ignorés, sauf lorsqu'ils réduisent strictement des contributions trim
 et intégrale opposées. Ce compactage de propriété conserve les mêmes bornes
