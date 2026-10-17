@@ -715,6 +715,7 @@
 {% set deps = spi.get('dependencies') %}
 {% set water = spi.get('water') %}
 {% set boiler = spi.get('boiler') %}
+{% set humidity = spi.get('humidity') %}
 {% if deps %}
 ---
 
@@ -770,6 +771,19 @@
 | Called for heat | {% if boiler.get('called') is sameas true %}yes{% elif boiler.get('called') is sameas false %}no{% else %}unknown{% endif %} |
 | Reason it is not | `{{ boiler.get('reason') or '—' }}` |
 | Learning mode | `{{ boiler.get('learning') or '—' }}` |
+{% endif %}
+
+{% if humidity %}
+---
+
+### 🚿 Humidity
+
+| Signal | Value |
+|---|---|
+| Humidity | {% if humidity.get('humidity') is not none %}{{ humidity.get('humidity') | float | round(1) }} %{% else %}—{% endif %} |
+| Event state | `{{ humidity.get('state') }}` |
+| Baseline / peak | {% if humidity.get('baseline') is not none %}{{ humidity.get('baseline') | float | round(1) }} %{% else %}—{% endif %} / {% if humidity.get('peak') is not none %}{{ humidity.get('peak') | float | round(1) }} %{% else %}—{% endif %} |
+| Events since the start | {{ humidity.get('events', 0) }} |
 {% endif %}
 
 {% if has_analysis %}

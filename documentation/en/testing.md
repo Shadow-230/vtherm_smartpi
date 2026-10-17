@@ -292,6 +292,7 @@ working with it.
 | `test_smartpi_governor_humidity.py` | during a humidity event the braking release sees the held integral and releases nothing; an admissible FF trim window from either of the author's paths (cycle end, periodic) is rejected |
 | `test_smartpi_dependencies_algo.py` (substitution test extended) | the reference governor gets `b_eff` and `T_ref` through the setpoint filter, and the FF trim's measurements get `T_ref` as their outdoor temperature |
 | `test_smartpi_water_algo.py` (one test changed) | the cycle's power at the reference water goes to the causal power trace, where the author moved it from the FF trim observer |
+| `test_smartpi_author_code_edges.py` | edge paths of the author's code that the reference governor's stage left untested, so none of the author's files falls below its earlier coverage: the drift detector's rejections, the estimator's convergence checks, the PI controller's snapshot and hold edges, the FF3 prediction's invalid inputs, the FF trim observers' guards, the learning window's accessors |
 
 ### 4.10 Humidity events
 

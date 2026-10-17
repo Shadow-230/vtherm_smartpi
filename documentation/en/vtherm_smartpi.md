@@ -410,8 +410,8 @@ https://github.com/KipK/vtherm_smartpi/tree/master/cards
 
 This version's cards are in [`cards/`](../../cards), in English, French and Polish
 (`smartpi_diags-en.md`, `smartpi_diags-fr.md`, `smartpi_diags-pl.md`). Besides the author's
-sections, they show the known inputs (`dependencies`), the water (`water`) and the boiler's call
-(`boiler`) when SmartPI publishes these blocks.
+sections, they show the known inputs (`dependencies`), the water (`water`), the boiler's call
+(`boiler`) and the humidity (`humidity`) when SmartPI publishes these blocks.
 
 ## Regulation panel with Equinox
 

@@ -296,6 +296,7 @@ przychodzą z każdą zmianą; testy poniżej sprawdzają, że dodatki forka nad
 | `test_smartpi_governor_humidity.py` | w czasie zdarzenia wilgotności zwalnianie hamowania widzi wstrzymaną całkę i niczego nie zwalnia; dopuszczalne okno korekty FF z każdej z dróg autora (koniec cyklu, okresowa) jest odrzucane |
 | `test_smartpi_dependencies_algo.py` (rozszerzony test podstawienia) | reference governor dostaje `b_eff` i `T_ref` przez filtr nastawy, a pomiary korekty FF dostają `T_ref` jako temperaturę zewnętrzną |
 | `test_smartpi_water_algo.py` (jeden test zmieniony) | moc cyklu przy wodzie odniesienia trafia do przyczynowego zapisu mocy, dokąd autor przeniósł ją z obserwatora korekty FF |
+| `test_smartpi_author_code_edges.py` | skrajne ścieżki kodu autora, których etap reference governora nie testował, żeby żaden plik autora nie spadł poniżej wcześniejszego pokrycia: odrzucenia detektora dryfu, sprawdzenia zbieżności estymatora, skrajne przypadki migawki i wstrzymania całki w regulatorze PI, niepoprawne dane prognozy FF3, zabezpieczenia obserwatorów korekty FF, odczyty okna uczenia |
 
 ### 4.10 Zdarzenia wilgotności
 

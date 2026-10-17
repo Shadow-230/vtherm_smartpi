@@ -715,6 +715,7 @@
 {% set deps = spi.get('dependencies') %}
 {% set water = spi.get('water') %}
 {% set boiler = spi.get('boiler') %}
+{% set humidity = spi.get('humidity') %}
 {% if deps %}
 ---
 
@@ -770,6 +771,19 @@
 | Appelée pour chauffer | {% if boiler.get('called') is sameas true %}oui{% elif boiler.get('called') is sameas false %}non{% else %}inconnu{% endif %} |
 | Pourquoi elle ne l'est pas | `{{ boiler.get('reason') or '—' }}` |
 | Mode d'apprentissage | `{{ boiler.get('learning') or '—' }}` |
+{% endif %}
+
+{% if humidity %}
+---
+
+### 🚿 Humidité
+
+| Signal | Valeur |
+|---|---|
+| Humidité | {% if humidity.get('humidity') is not none %}{{ humidity.get('humidity') | float | round(1) }} %{% else %}—{% endif %} |
+| État de l'événement | `{{ humidity.get('state') }}` |
+| Niveau de base / pic | {% if humidity.get('baseline') is not none %}{{ humidity.get('baseline') | float | round(1) }} %{% else %}—{% endif %} / {% if humidity.get('peak') is not none %}{{ humidity.get('peak') | float | round(1) }} %{% else %}—{% endif %} |
+| Événements depuis le démarrage | {{ humidity.get('events', 0) }} |
 {% endif %}
 
 {% if has_analysis %}

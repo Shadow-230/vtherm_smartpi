@@ -412,8 +412,8 @@ https://github.com/KipK/vtherm_smartpi/tree/master/cards
 
 Les cartes de cette version sont dans [`cards/`](../../cards), en anglais, en français et en
 polonais (`smartpi_diags-en.md`, `smartpi_diags-fr.md`, `smartpi_diags-pl.md`). En plus des sections
-de l'auteur, elles montrent les entrées connues (`dependencies`), l'eau (`water`) et l'appel de la
-chaudière (`boiler`) quand SmartPI publie ces blocs.
+de l'auteur, elles montrent les entrées connues (`dependencies`), l'eau (`water`), l'appel de la
+chaudière (`boiler`) et l'humidité (`humidity`) quand SmartPI publie ces blocs.
 
 ## Panel de régulation avec Equinox
 

@@ -15,7 +15,8 @@ All notable changes to this project will be documented in this file.
   thermostat that leaves the additional source's role starts its setpoint handling afresh. In the
   simulator with water data, the cap never binds while cool water limits the command, and no
   episode is retired (twelve morning approaches for each water temperature). The diagnostic cards,
-  in English, French and now Polish, also show the known inputs, the water and the boiler's call.
+  in English, French and now Polish, also show the known inputs, the water, the boiler's call and
+  the humidity.
 
 - The code coverage of `dev2` is kept as a baseline in `tests/coverage/baseline.json` (the full
   coverage.py report of the long local set, without the QAS checks for now), and
