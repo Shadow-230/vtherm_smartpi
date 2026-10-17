@@ -17,6 +17,9 @@ All notable changes to this project will be documented in this file.
   episode is retired (twelve morning approaches for each water temperature). The diagnostic cards,
   in English, French and now Polish, also show the known inputs, the water, the boiler's call and
   the humidity.
+  The coverage baseline is now this stage's report: 93.3 % for the whole plugin, and 97.7 % of the
+  lines and 93.5 % of the branches for the fork's lines, which now include the author's governor.
+  New tests run edge paths of the author's code, so that no file falls below its earlier coverage.
 
 - The code coverage of `dev2` is kept as a baseline in `tests/coverage/baseline.json` (the full
   coverage.py report of the long local set, without the QAS checks for now), and

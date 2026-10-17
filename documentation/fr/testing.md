@@ -587,7 +587,9 @@ laissées de côté pour l'instant ; avec elles, les chiffres sont un peu plus h
     python tests/coverage/compare.py <scratch>/cov.json
 
 **La référence** est le rapport complet de coverage.py gardé dans `tests/coverage/baseline.json` :
-`dev2` à 705b3f2 avec les tests listés à la fin de la section 7.2, mesuré le 2026-10-16. Le script
+l'étape C1
+(le gouverneur de référence, section 4.9) sur `dev2` à 9868b33, mesurée le 2026-10-17 (la première
+référence était `dev2` à 705b3f2 avec les tests listés à la fin de la section 7.2). Le script
 `tests/coverage/compare.py` compare un nouveau rapport avec elle. Il liste chaque fichier dont les
 lignes ou les branches passent sous la référence, et vérifie les objectifs des lignes propres au
 fork (section 7.2). Il se termine avec le code 1 quand un fichier baisse ou qu'un objectif n'est
@@ -595,24 +597,26 @@ pas atteint. Avec `--markdown`, il affiche les tableaux des sections 7.1 et 7.2.
 request vers `dev2`** mesure de nouveau, lance la comparaison, et remplace la référence par son
 propre rapport et ces tableaux par les nouveaux.
 
-« Combiné » est le chiffre de coverage.py lui-même, lignes et branches ensemble. Les 1536 tests
+« Combiné » est le chiffre de coverage.py lui-même, lignes et branches ensemble. Les 1799 tests
 passent ; 16 sont ignorés (les vérifications QAS).
 
 ### 7.1 Tout le plugin
 
-La valeur de gauche est `dev2` à 705b3f2 avant les tests listés à la fin de la section 7.2, mesuré
-de la même façon. Chaque fichier garde ou augmente sa couverture.
+La valeur de gauche est la référence précédente, `dev2` à 9868b33, mesurée de la même façon.
+Chaque fichier garde ou augmente sa couverture. La reprise du gouverneur de référence a d'abord fait
+baisser un peu sept fichiers de l'auteur, parce que la suite y prenait d'autres chemins ;
+`test_smartpi_author_code_edges.py` (section 4.9) exécute ces chemins directement.
 
 | Fichier | Lignes (référence → maintenant) | Branches (référence → maintenant) | Combiné (référence → maintenant) |
 |---|---:|---:|---:|
-| `__init__.py` | 98.3 % → 240/242 (99.2 %) | 95.4 % → 105/108 (97.2 %) | 97.4 % → 98.6 % |
-| `algo.py` | 93.1 % → 1864/2002 (93.1 %) | 83.0 % → 411/494 (83.2 %) | 91.1 % → 91.1 % |
+| `__init__.py` | 99.2 % → 240/242 (99.2 %) | 97.2 % → 105/108 (97.2 %) | 98.6 % → 98.6 % |
+| `algo.py` | 93.1 % → 1908/2047 (93.2 %) | 83.2 % → 424/508 (83.5 %) | 91.1 % → 91.3 % |
 | `commons.py` | 100.0 % → 4/4 (100.0 %) | — → — | 100.0 % → 100.0 % |
-| `config_flow.py` | 98.3 % → 1042/1060 (98.3 %) | 96.6 % → 369/380 (97.1 %) | 97.8 % → 98.0 % |
+| `config_flow.py` | 98.3 % → 1042/1060 (98.3 %) | 97.1 % → 369/380 (97.1 %) | 98.0 % → 98.0 % |
 | `const.py` | 100.0 % → 75/75 (100.0 %) | — → — | 100.0 % → 100.0 % |
 | `cycle_utils.py` | 100.0 % → 5/5 (100.0 %) | — → — | 100.0 % → 100.0 % |
 | `factory.py` | 100.0 % → 10/10 (100.0 %) | — → — | 100.0 % → 100.0 % |
-| `handler.py` | 95.8 % → 655/671 (97.6 %) | 87.5 % → 179/200 (89.5 %) | 93.9 % → 95.8 % |
+| `handler.py` | 97.6 % → 655/671 (97.6 %) | 89.5 % → 179/200 (89.5 %) | 95.8 % → 95.8 % |
 | `heating_inputs.py` | 100.0 % → 353/353 (100.0 %) | 100.0 % → 106/106 (100.0 %) | 100.0 % → 100.0 % |
 | `hvac_mode.py` | 70.8 % → 46/65 (70.8 %) | 21.4 % → 3/14 (21.4 %) | 62.0 % → 62.0 % |
 | `repairs.py` | 100.0 % → 22/22 (100.0 %) | 100.0 % → 4/4 (100.0 %) | 100.0 % → 100.0 % |
@@ -620,45 +624,55 @@ de la même façon. Chaque fichier garde ou augmente sa couverture.
 | `settings.py` | 100.0 % → 49/49 (100.0 %) | 100.0 % → 10/10 (100.0 %) | 100.0 % → 100.0 % |
 | `smartpi/__init__.py` | 100.0 % → 7/7 (100.0 %) | — → — | 100.0 % → 100.0 % |
 | `smartpi/ab_aggregator.py` | 96.3 % → 26/27 (96.3 %) | 90.0 % → 9/10 (90.0 %) | 94.6 % → 94.6 % |
-| `smartpi/ab_drift.py` | 87.5 % → 119/136 (87.5 %) | 69.4 % → 25/36 (69.4 %) | 83.7 % → 83.7 % |
-| `smartpi/ab_estimator.py` | 90.7 % → 381/420 (90.7 %) | 81.5 % → 88/108 (81.5 %) | 88.8 % → 88.8 % |
-| `smartpi/autocalib.py` | 88.8 % → 254/285 (89.1 %) | 71.8 % → 57/78 (73.1 %) | 85.1 % → 85.7 % |
+| `smartpi/ab_drift.py` | 87.5 % → 120/136 (88.2 %) | 69.4 % → 26/36 (72.2 %) | 83.7 % → 84.9 % |
+| `smartpi/ab_estimator.py` | 90.7 % → 382/420 (91.0 %) | 81.5 % → 89/108 (82.4 %) | 88.8 % → 89.2 % |
+| `smartpi/autocalib.py` | 89.1 % → 254/285 (89.1 %) | 73.1 % → 57/78 (73.1 %) | 85.7 % → 85.7 % |
 | `smartpi/boiler_call.py` | 100.0 % → 69/69 (100.0 %) | 100.0 % → 18/18 (100.0 %) | 100.0 % → 100.0 % |
+| `smartpi/braking_release.py` | nouveau → 81/87 (93.1 %) | nouveau → 36/42 (85.7 %) | nouveau → 90.7 % |
 | `smartpi/calibration.py` | 88.6 % → 147/166 (88.6 %) | 76.3 % → 29/38 (76.3 %) | 86.3 % → 86.3 % |
+| `smartpi/causal_power_trace.py` | nouveau → 238/244 (97.5 %) | nouveau → 61/68 (89.7 %) | nouveau → 95.8 % |
+| `smartpi/causal_thermal_balance.py` | nouveau → 94/110 (85.5 %) | nouveau → 30/46 (65.2 %) | nouveau → 79.5 % |
+| `smartpi/causal_thermal_balance_admission.py` | nouveau → 174/193 (90.2 %) | nouveau → 45/58 (77.6 %) | nouveau → 87.3 % |
 | `smartpi/command_ownership.py` | 98.8 % → 164/166 (98.8 %) | 93.8 % → 30/32 (93.8 %) | 98.0 % → 98.0 % |
-| `smartpi/const.py` | 100.0 % → 333/333 (100.0 %) | 100.0 % → 4/4 (100.0 %) | 100.0 % → 100.0 % |
-| `smartpi/controller.py` | 94.7 % → 232/245 (94.7 %) | 80.3 % → 61/76 (80.3 %) | 91.3 % → 91.3 % |
-| `smartpi/coupling_estimator.py` | 97.8 % → 407/415 (98.1 %) | 94.1 % → 161/170 (94.7 %) | 96.8 % → 97.1 % |
+| `smartpi/const.py` | 100.0 % → 330/330 (100.0 %) | 100.0 % → 4/4 (100.0 %) | 100.0 % → 100.0 % |
+| `smartpi/controller.py` | 94.7 % → 253/263 (96.2 %) | 80.3 % → 61/72 (84.7 %) | 91.3 % → 93.7 % |
+| `smartpi/coupling_estimator.py` | 98.1 % → 407/415 (98.1 %) | 94.7 % → 161/170 (94.7 %) | 97.1 % → 97.1 % |
 | `smartpi/deadband.py` | 95.1 % → 154/162 (95.1 %) | 88.9 % → 32/36 (88.9 %) | 93.9 % → 93.9 % |
-| `smartpi/deadband_output.py` | 100.0 % → 16/16 (100.0 %) | 100.0 % → 4/4 (100.0 %) | 100.0 % → 100.0 % |
-| `smartpi/deadtime_estimator.py` | 92.5 % → 211/228 (92.5 %) | 82.9 % → 65/76 (85.5 %) | 90.1 % → 90.8 % |
+| `smartpi/deadband_output.py` | 100.0 % → 37/37 (100.0 %) | 100.0 % → 8/8 (100.0 %) | 100.0 % → 100.0 % |
+| `smartpi/deadtime_estimator.py` | 92.5 % → 211/228 (92.5 %) | 85.5 % → 65/76 (85.5 %) | 90.8 % → 90.8 % |
 | `smartpi/dependencies.py` | 100.0 % → 194/194 (100.0 %) | 100.0 % → 70/70 (100.0 %) | 100.0 % → 100.0 % |
-| `smartpi/dependency_inputs.py` | 98.7 % → 78/78 (100.0 %) | 91.7 % → 12/12 (100.0 %) | 97.8 % → 100.0 % |
-| `smartpi/dependency_model.py` | 99.7 % → 621/621 (100.0 %) | 99.2 % → 248/248 (100.0 %) | 99.5 % → 100.0 % |
+| `smartpi/dependency_inputs.py` | 100.0 % → 78/78 (100.0 %) | 100.0 % → 12/12 (100.0 %) | 100.0 % → 100.0 % |
+| `smartpi/dependency_model.py` | 100.0 % → 621/621 (100.0 %) | 100.0 % → 248/248 (100.0 %) | 100.0 % → 100.0 % |
 | `smartpi/device_link.py` | 93.3 % → 56/60 (93.3 %) | 82.1 % → 23/28 (82.1 %) | 89.8 % → 89.8 % |
-| `smartpi/diagnostic_history.py` | 100.0 % → 11/11 (100.0 %) | — → — | 100.0 % → 100.0 % |
+| `smartpi/diagnostic_history.py` | 100.0 % → 18/18 (100.0 %) | — → 2/2 (100.0 %) | 100.0 % → 100.0 % |
 | `smartpi/diagnostics.py` | 90.6 % → 106/117 (90.6 %) | 75.0 % → 33/44 (75.0 %) | 86.3 % → 86.3 % |
 | `smartpi/effective_model.py` | 97.9 % → 94/96 (97.9 %) | 93.3 % → 28/30 (93.3 %) | 96.8 % → 96.8 % |
 | `smartpi/feedforward.py` | 100.0 % → 38/38 (100.0 %) | 100.0 % → 4/4 (100.0 %) | 100.0 % → 100.0 % |
 | `smartpi/ff3.py` | 89.3 % → 109/122 (89.3 %) | 80.0 % → 48/60 (80.0 %) | 86.3 % → 86.3 % |
 | `smartpi/ff3_eligibility.py` | 96.8 % → 92/95 (96.8 %) | 97.5 % → 39/40 (97.5 %) | 97.0 % → 97.0 % |
-| `smartpi/ff3_predictor.py` | 93.9 % → 62/66 (93.9 %) | 75.0 % → 12/16 (75.0 %) | 90.2 % → 90.2 % |
+| `smartpi/ff3_predictor.py` | 93.9 % → 65/65 (100.0 %) | 75.0 % → 16/16 (100.0 %) | 90.2 % → 100.0 % |
 | `smartpi/ff_ab_confidence.py` | 100.0 % → 32/32 (100.0 %) | 100.0 % → 12/12 (100.0 %) | 100.0 % → 100.0 % |
-| `smartpi/ff_trim.py` | 93.2 % → 836/897 (93.2 %) | 81.2 % → 242/298 (81.2 %) | 90.2 % → 90.2 % |
-| `smartpi/ff_trim_periodic.py` | 93.2 % → 177/190 (93.2 %) | 87.5 % → 56/64 (87.5 %) | 91.7 % → 91.7 % |
+| `smartpi/ff_trim.py` | 93.2 % → 712/762 (93.4 %) | 81.2 % → 199/244 (81.6 %) | 90.2 % → 90.6 % |
+| `smartpi/ff_trim_periodic.py` | 93.2 % → 175/185 (94.6 %) | 87.5 % → 55/62 (88.7 %) | 91.7 % → 93.1 % |
 | `smartpi/gains.py` | 96.9 % → 126/130 (96.9 %) | 91.7 % → 22/24 (91.7 %) | 96.1 % → 96.1 % |
 | `smartpi/governance.py` | 97.3 % → 71/73 (97.3 %) | 92.3 % → 24/26 (92.3 %) | 96.0 % → 96.0 % |
+| `smartpi/governor_falsification.py` | nouveau → 100/102 (98.0 %) | nouveau → 22/24 (91.7 %) | nouveau → 96.8 % |
 | `smartpi/guards.py` | 97.4 % → 76/78 (97.4 %) | 94.4 % → 17/18 (94.4 %) | 96.9 % → 96.9 % |
 | `smartpi/humidity_event.py` | 100.0 % → 57/57 (100.0 %) | 100.0 % → 16/16 (100.0 %) | 100.0 % → 100.0 % |
 | `smartpi/integral_guard.py` | 96.2 % → 101/105 (96.2 %) | 97.1 % → 33/34 (97.1 %) | 96.4 % → 96.4 % |
-| `smartpi/learning_window.py` | 92.4 % → 304/329 (92.4 %) | 91.8 % → 101/110 (91.8 %) | 92.3 % → 92.3 % |
-| `smartpi/setpoint.py` | 94.3 % → 526/558 (94.3 %) | 85.6 % → 137/160 (85.6 %) | 92.3 % → 92.3 % |
+| `smartpi/learning_window.py` | 92.4 % → 317/341 (93.0 %) | 91.8 % → 105/114 (92.1 %) | 92.3 % → 92.7 % |
+| `smartpi/reference_governor.py` | nouveau → 288/324 (88.9 %) | nouveau → 82/112 (73.2 %) | nouveau → 84.9 % |
+| `smartpi/reference_governor_authority.py` | nouveau → 148/164 (90.2 %) | nouveau → 38/54 (70.4 %) | nouveau → 85.3 % |
+| `smartpi/reference_governor_runtime.py` | nouveau → 175/186 (94.1 %) | nouveau → 46/56 (82.1 %) | nouveau → 91.3 % |
+| `smartpi/setpoint.py` | 94.3 % → 458/485 (94.4 %) | 85.6 % → 105/122 (86.1 %) | 92.3 % → 92.8 % |
 | `smartpi/source_candidates.py` | 100.0 % → 47/47 (100.0 %) | 100.0 % → 18/18 (100.0 %) | 100.0 % → 100.0 % |
 | `smartpi/source_link.py` | 100.0 % → 94/94 (100.0 %) | 100.0 % → 30/30 (100.0 %) | 100.0 % → 100.0 % |
 | `smartpi/source_model.py` | 100.0 % → 109/109 (100.0 %) | 100.0 % → 32/32 (100.0 %) | 100.0 % → 100.0 % |
 | `smartpi/source_settings.py` | 100.0 % → 40/40 (100.0 %) | 100.0 % → 6/6 (100.0 %) | 100.0 % → 100.0 % |
 | `smartpi/split.py` | 100.0 % → 95/95 (100.0 %) | 100.0 % → 22/22 (100.0 %) | 100.0 % → 100.0 % |
-| `smartpi/thermal_twin_1r1c.py` | 82.4 % → 324/393 (82.4 %) | 66.4 % → 85/128 (66.4 %) | 78.5 % → 78.5 % |
+| `smartpi/thermal_measurement.py` | nouveau → 38/39 (97.4 %) | nouveau → 7/8 (87.5 %) | nouveau → 95.7 % |
+| `smartpi/thermal_model.py` | nouveau → 7/7 (100.0 %) | nouveau → 2/2 (100.0 %) | nouveau → 100.0 % |
+| `smartpi/thermal_twin_1r1c.py` | 82.4 % → 324/392 (82.7 %) | 66.4 % → 86/128 (67.2 %) | 78.5 % → 78.8 % |
 | `smartpi/timestamp_utils.py` | 87.5 % → 28/32 (87.5 %) | 85.7 % → 12/14 (85.7 %) | 87.0 % → 87.0 % |
 | `smartpi/tint_filter.py` | 95.7 % → 90/94 (95.7 %) | 87.5 % → 21/24 (87.5 %) | 94.1 % → 94.1 % |
 | `smartpi/trajectory.py` | 93.9 % → 93/99 (93.9 %) | 82.4 % → 28/34 (82.4 %) | 91.0 % → 91.0 % |
@@ -666,32 +680,44 @@ de la même façon. Chaque fichier garde ou augmente sa couverture.
 | `smartpi/water_input.py` | 100.0 % → 166/166 (100.0 %) | 100.0 % → 44/44 (100.0 %) | 100.0 % → 100.0 % |
 | `smartpi/zone_fit.py` | 97.1 % → 202/208 (97.1 %) | 92.3 % → 72/78 (92.3 %) | 95.8 % → 95.8 % |
 | `state_store.py` | 100.0 % → 37/37 (100.0 %) | 100.0 % → 6/6 (100.0 %) | 100.0 % → 100.0 % |
-| **Total** | 94.9 % → 12218/12853 (95.1 %) | 87.9 % → 3389/3836 (88.3 %) | 93.3 % → 93.5 % |
+| **Total** | 95.1 % → 13475/14194 (94.9 %) | 88.3 % → 3712/4232 (87.7 %) | 93.5 % → 93.3 % |
 
 ### 7.2 Les lignes propres au fork
 
 Les lignes que le fork a ajoutées ou modifiées (`git diff -U0 6a131df HEAD -- custom_components/vtherm_smartpi`,
 les lignes `+` ; 6a131df est le code de l'auteur dont le fork est parti). Elles comprennent les
 changements repris du code plus récent de l'auteur. Une branche compte pour le fork quand sa ligne
-en fait partie. Objectifs : 95 % des lignes et 90 % des branches. Maintenant 99.3 % des lignes et
-98.0 % des branches (99.0 % et 97.2 % avant les tests listés plus bas).
+en fait partie. Objectifs : 95 % des lignes et 90 % des branches. Maintenant 97.7 % des lignes et
+93.5 % des branches (99.3 % et 98.0 % avant l'étape C1) : le gouverneur de référence de l'auteur,
+repris à l'étape C1, compte ici aussi.
 
 | Fichier | Lignes | Branches | Non couvert |
 |---|---:|---:|---|
-| `algo.py` | 343/343 (100.0 %) | 113/114 (99.1 %) | 1057→1068 |
+| `algo.py` | 411/413 (99.5 %) | 131/134 (97.8 %) | 1619, 3848, 1085→1096 |
 | `config_flow.py` | 968/981 (98.7 %) | 343/352 (97.4 %) | 483, 484, 608, 644, 1204, 1868, 1874, 1884, 1885, 1886, 1887, 1888, 1959, 1113→1112 |
 | `handler.py` | 372/378 (98.4 %) | 111/116 (95.7 %) | 364, 365, 395, 396, 1195, 1196, 293→sortie, 311→sortie, 456→458, 464→467, 484→490 |
+| `smartpi/braking_release.py` | 81/87 (93.1 %) | 36/42 (85.7 %) | 76, 124, 139, 150, 153, 165 |
+| `smartpi/causal_power_trace.py` | 238/244 (97.5 %) | 61/68 (89.7 %) | 142, 159, 300, 317, 498, 503, 253→262 |
+| `smartpi/causal_thermal_balance.py` | 94/110 (85.5 %) | 30/46 (65.2 %) | 75, 77, 81, 83, 85, 89, 92, 95, 97, 99, 104, 140, 147, 176, 237, 251 |
+| `smartpi/causal_thermal_balance_admission.py` | 174/193 (90.2 %) | 45/58 (77.6 %) | 61, 83, 98, 100, 101, 115, 116, 121, 128, 130, 132, 137, 165, 166, 225, 226, 227, 228, 232, 122→124 |
 | `smartpi/coupling_estimator.py` | 407/415 (98.1 %) | 161/170 (94.7 %) | 105, 167, 227, 231, 238, 253, 528, 670, 180→198 |
 | `smartpi/effective_model.py` | 94/96 (97.9 %) | 28/30 (93.3 %) | 34, 169 |
+| `smartpi/governor_falsification.py` | 100/102 (98.0 %) | 22/24 (91.7 %) | 54, 189 |
+| `smartpi/learning_window.py` | 19/23 (82.6 %) | 5/6 (83.3 %) | 643, 644, 647, 648 |
+| `smartpi/reference_governor.py` | 288/324 (88.9 %) | 82/112 (73.2 %) | 136, 158, 171, 194, 221, 222, 224, 251, 252, 257, 284, 287, 296, 328, 344, 345, 349, 363, 408, 435, 458, 467, 502, 556, 558, 608, 620, 631, 635, 676, 688, 691, 710, 722, 731, 760 |
+| `smartpi/reference_governor_authority.py` | 148/164 (90.2 %) | 38/54 (70.4 %) | 131, 182, 183, 184, 209, 289, 305, 309, 311, 315, 325, 327, 329, 331, 333, 335, 182→185 |
+| `smartpi/reference_governor_runtime.py` | 175/186 (94.1 %) | 46/56 (82.1 %) | 73, 161, 165, 187, 193, 196, 216, 231, 243, 289, 393 |
+| `smartpi/setpoint.py` | 149/149 (100.0 %) | 20/22 (90.9 %) | 613→618, 977→979 |
+| `smartpi/thermal_measurement.py` | 38/39 (97.4 %) | 7/8 (87.5 %) | 66 |
 | `smartpi/zone_fit.py` | 202/208 (97.1 %) | 72/78 (92.3 %) | 94, 104, 108, 167, 202, 255 |
-| **Total** | 4746/4781 (99.3 %) | 1574/1606 (98.0 %) | |
+| **Total** | 6420/6574 (97.7 %) | 1999/2138 (93.5 %) | |
 
-Les autres fichiers du fork sont à 100 % : `__init__.py`, `const.py`, `heating_inputs.py`, `repairs.py`, `sensor.py`, `settings.py`, `smartpi/ab_estimator.py`, `smartpi/boiler_call.py`, `smartpi/calibration.py`, `smartpi/const.py`, `smartpi/deadtime_estimator.py`, `smartpi/dependencies.py`, `smartpi/dependency_inputs.py`, `smartpi/dependency_model.py`, `smartpi/diagnostics.py`, `smartpi/humidity_event.py`, `smartpi/learning_window.py`, `smartpi/source_candidates.py`, `smartpi/source_link.py`, `smartpi/source_model.py`, `smartpi/source_settings.py`, `smartpi/split.py`, `smartpi/water_input.py`, `state_store.py`.
+Les autres fichiers du fork sont à 100 % : `__init__.py`, `const.py`, `heating_inputs.py`, `repairs.py`, `sensor.py`, `settings.py`, `smartpi/ab_estimator.py`, `smartpi/boiler_call.py`, `smartpi/calibration.py`, `smartpi/const.py`, `smartpi/controller.py`, `smartpi/deadband_output.py`, `smartpi/deadtime_estimator.py`, `smartpi/dependencies.py`, `smartpi/dependency_inputs.py`, `smartpi/dependency_model.py`, `smartpi/diagnostic_history.py`, `smartpi/diagnostics.py`, `smartpi/ff3_predictor.py`, `smartpi/ff_trim.py`, `smartpi/humidity_event.py`, `smartpi/source_candidates.py`, `smartpi/source_link.py`, `smartpi/source_model.py`, `smartpi/source_settings.py`, `smartpi/split.py`, `smartpi/thermal_model.py`, `smartpi/thermal_twin_1r1c.py`, `smartpi/water_input.py`, `state_store.py`.
 
 **Ce qui reste non couvert.** Rien n'a besoin d'un vrai Home Assistant : chacun est une
 protection qu'aucune entrée réelle n'atteint.
 
-- `algo.py` 1057→1068 : un cycle qui se termine sans sa durée nominale n'enregistre pas de
+- `algo.py` 1085→1096 : un cycle qui se termine sans sa durée nominale n'enregistre pas de
   puissance pour l'apprentissage des voisins ; l'ordonnanceur de VTherm donne toujours la durée.
 - `config_flow.py` 483–484 : un élément de zone dont la réponse de l'émetteur est illisible ; le
   formulaire de la zone n'enregistre que des réponses lisibles (seule une entrée modifiée à la main
@@ -738,8 +764,16 @@ protection qu'aucune entrée réelle n'atteint.
   modèle ; son seul appelant passe une valeur par candidat.
 - `smartpi/zone_fit.py` 202 : une puissance qui n'est pas un nombre fini ; les entrées sont
   vérifiées à l'arrivée.
+- Le code de l'auteur repris à l'étape C1 : `smartpi/reference_governor.py`,
+  `smartpi/reference_governor_authority.py`, `smartpi/reference_governor_runtime.py`,
+  `smartpi/governor_falsification.py`, `smartpi/braking_release.py`, `smartpi/causal_power_trace.py`,
+  `smartpi/causal_thermal_balance.py`, `smartpi/causal_thermal_balance_admission.py`,
+  `smartpi/thermal_measurement.py`, et les lignes de l'auteur dans `algo.py` (1619, 3848),
+  `smartpi/learning_window.py` et `smartpi/setpoint.py`. Les tests de l'auteur couvrent ce code ;
+  ses trous sont surtout des vérifications de valeurs invalides. Il est listé parce que les lignes
+  du fork sont mesurées par rapport à 6a131df.
 
-**Tests ajoutés avec cette référence.** La première mesure de `dev2` à 705b3f2 a trouvé 17 nouveaux
+**Tests ajoutés avec la première référence.** La première mesure de `dev2` à 705b3f2 a trouvé 17 nouveaux
 endroits des lignes du fork qu'aucun test n'exécutait. Huit n'étaient exécutés que par les
 vérifications QAS, que cette mesure laisse de côté. Neuf sont venus avec les étapes suivantes : les
 changements repris du code plus récent de l'auteur, la reprise de la zone, et deux endroits dont
