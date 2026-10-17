@@ -12,7 +12,7 @@ Stan na: 2026-10-17.
 
 ## Stan prac (dla kolejnej sesji)
 
-**Gałąź integracyjna: `dev2`** (start: `dev@34c1440`; teraz `9868b33`, po PR #29, w forku). Każdy etap na własnej
+**Gałąź integracyjna: `dev2`** (start: `dev@34c1440`; teraz `81caa95`, po PR #30, w forku). Każdy etap na własnej
 gałęzi od `dev2`, **osobny PR na etap** do `dev2`. Na `dev`, `qas`, `master` nic nie wypychamy (decyzja
 D10). Na `dev2` trafiają także nasze własne funkcje (np. Z1, Z2, H1), nie tylko zmiany autora. Po scaleniu gałąź etapu jest usuwana (D23): gdy właściciel potwierdził PR i scalenie, a PR jest
 scalony, sesja sama usuwa gałąź lokalnie (gałąź i worktree) i na GitHubie; przed usunięciem SHA
@@ -30,8 +30,8 @@ sesji w chmurze), sesja mówi o tym właścicielowi. Wzorzec testów `dev2@705b3
 | B3 | `feat/spinew-b3-service-targets` | #27 | scalone 2026-10-16 |
 | B4 | `fix/spinew-b4-events` | #22 | scalone 2026-10-16 |
 | H1 | `feat/humidity-events` | #28 | scalone 2026-10-16 |
-| C1 | `feat/spinew-c1-reference-governor` (od `9868b33`) | #30 | PR otwarty 2026-10-17 |
-| C2 | `feat/spinew-c2-cool` (od głowicy C1) | – | commity lokalne 2026-10-17; PR po scaleniu C1 |
+| C1 | `feat/spinew-c1-reference-governor` (od `9868b33`) | #30 | scalone 2026-10-17 (`81caa95`), gałąź usunięta |
+| C2 | `feat/spinew-c2-cool` (od `81caa95`) | #31 | PR otwarty 2026-10-17 |
 
 Konflikty przy scalaniu były tylko w `CHANGELOG.md` i `testing.md` §4 (wpisy obu stron zostały,
 podwójny wpis D11 usunięty), w teście `test_smartpi_dependencies_handler.py` (dwie funkcje
@@ -40,8 +40,7 @@ Narzędzie: `tools/union_resolve.py`.
 
 Gałęzie A1–H1 są scalone i usunięte (lokalnie i na GitHubie, 2026-10-16). Wyniki fazy C: `ANALIZA.md` §23.
 
-**Następny krok:** scalenie PR #30 (C1) za „tak” właściciela; potem gałąź C2 na nowe `dev2`,
-nowa baza pokrycia i PR. Faza C wykonana lokalnie 2026-10-17 (`ANALIZA.md` §23); sprawdzenie
+**Następny krok:** scalenie PR #31 (C2) za „tak” właściciela. Faza C wykonana lokalnie 2026-10-17 (`ANALIZA.md` §23); sprawdzenie
 C-j (H1) z testami zrobione.
 
 Odtworzenie środowiska i pomiarów: `ANALIZA.md` §3, `tools/` (skrypty), `results/` (wyniki).
