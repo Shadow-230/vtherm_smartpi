@@ -851,4 +851,4 @@ przeregulowanie 0,23–0,24 i 0,15 °C) – test `test_landing_with_a_neighbour_
   głowicę C1; bazę pokrycia C2 zmierzyć na nowo przed jej PR.
 - Po scaleniu PR #30 (`81caa95`): C2 na nowym `dev2`; zakres CI 1745 passed + 86 skipped; pełny
   lokalny bez QAS 1815 passed + 16 skipped; `compare.py` bez spadków, ogółem 93,28 → 93,34 %; baza
-  pokrycia zastąpiona raportem C2; PR #31.
+  pokrycia zastąpiona raportem C2; PR #31 scalony 2026-10-17 (`c64d072`).
