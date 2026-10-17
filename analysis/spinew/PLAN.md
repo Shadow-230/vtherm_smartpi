@@ -14,7 +14,10 @@ Stan na: 2026-10-16.
 
 **Gałąź integracyjna: `dev2`** (start: `dev@34c1440`; teraz `705b3f2`, w forku). Każdy etap na własnej
 gałęzi od `dev2`, **osobny PR na etap** do `dev2`. Na `dev`, `qas`, `master` nic nie wypychamy (decyzja
-D10). Na `dev2` trafiają także nasze własne funkcje (np. Z1, Z2, H1), nie tylko zmiany autora. Po scaleniu gałąź etapu jest usuwana (D23; na GitHubie usuwa właściciel). Wzorzec testów `dev2@705b3f2`:
+D10). Na `dev2` trafiają także nasze własne funkcje (np. Z1, Z2, H1), nie tylko zmiany autora. Po scaleniu gałąź etapu jest usuwana (D23): gdy właściciel potwierdził PR i scalenie, a PR jest
+scalony, sesja sama usuwa gałąź lokalnie (gałąź i worktree) i na GitHubie; przed usunięciem SHA
+gałęzi = głowica PR i zawiera się w `dev2`. Gdy GitHub odrzuci usunięcie (np. HTTP 403 z proxy
+sesji w chmurze), sesja mówi o tym właścicielowi. Wzorzec testów `dev2@705b3f2`:
 1451 passed + 84 skipped (CI), 1535 passed lokalnie, pokrycie 93,57 % (`ANALIZA.md` §3).
 
 | Etap | Gałąź | PR do `dev2` | Stan |
@@ -37,7 +40,7 @@ Wszystkie gałęzie z tabeli są scalone i usunięte (lokalnie i na GitHubie, 20
 
 **Następny krok:** faza C (reference governor, poprawki COOL) – dopiero po potwierdzeniu właściciela.
 Przed C1: `git fetch origin`, gałąź od aktualnego `dev2`; przy C1 sprawdzić współpracę reference
-governora z H1 (wstrzymana całka w czasie zdarzenia wilgotności).
+governora z H1 (wstrzymana całka w czasie zdarzenia wilgotności): sprawdzenie C-j i jego testy.
 
 Odtworzenie środowiska i pomiarów: `ANALIZA.md` §3, `tools/` (skrypty), `results/` (wyniki).
 
@@ -70,7 +73,8 @@ Odtworzenie środowiska i pomiarów: `ANALIZA.md` §3, `tools/` (skrypty), `resu
    niepowodzenie to regresja do naprawy w kodzie.
 3. Nigdy nie wyłączamy, nie pomijamy (`skip`, `xfail`) ani nie usuwamy testu, żeby przejść etap.
 4. Przed PR uruchamiamy zakres CI i pełny zakres lokalny (`SMARTPI_SIM_LOCAL=1
-   SMARTPI_QAS_LOCAL=1`, `ANALIZA.md` §3) i porównujemy liczby z `dev`.
+   SMARTPI_QAS_LOCAL=1`, `ANALIZA.md` §3) i porównujemy liczby z aktualnym `dev2` (wzorzec:
+   „Stan prac” wyżej i `ANALIZA.md` §3).
 5. **Pokrycie** (z gałęziami): kod forka ≥ 95 % linii i ≥ 90 % gałęzi; pliki autora bez spadku.
    Każda niepokryta linia lub gałąź forka: martwy kod (usunąć osobnym commitem), przypadek do
    testu (dopisać) albo tylko na prawdziwym HA (nazwać scenariusz QAS).
@@ -650,6 +654,12 @@ Kroki:
      nastawy (zamierzone); `turn_off` idzie ścieżką OFF.
    - **C-i.** Blokada uczenia autora używa `sp_mgr.setpoint_landing_active` (istnieje w nowym
      `setpoint.py`); nasza bramka `_learning_gate` zostaje przed `update_learning`.
+   - **C-j. Zdarzenie wilgotności (H1) a reference governor.** W czasie zdarzenia i uspokajania
+     `integrator_hold` jest ustawione przed `compute_pwm` (źródło `humidity_event`), więc
+     `_try_release_terminal_braking` nie zwalnia hamowania (tak jak przy C-f). Wyłączenie okna
+     korekty FF przy zdarzeniu (`humidity_event.active` przy `result.admissible`, na `dev2` ok.
+     linia 1336) działa też w nowej ścieżce pomiarów autora (`_thermal_measurements`,
+     `try_complete_window`, `evaluate_periodic_window`).
 4. Dokumentacja (w tym samym PR): §0b i blok niżej.
 5. Weryfikacja funkcjonalna na symulatorze: `tests/test_smartpi_sim_*.py`,
    `tests/test_smartpi_dependencies_algo.py` oraz pomiar
@@ -684,6 +694,9 @@ Kroki:
   - `tests/test_smartpi_governor_source_role.py`:
     `test_leaving_the_source_role_clears_the_governor_episode` (C-g),
     `test_a_neighbour_window_preset_is_a_setpoint_change_for_the_governor` (C-h);
+  - `tests/test_smartpi_governor_humidity.py` (C-j):
+    `test_a_humidity_event_blocks_the_braking_release`,
+    `test_a_humidity_event_keeps_its_window_out_of_the_feed_forward_trim`;
   - `test_smartpi_sim_neighbours.py::test_landing_with_a_neighbour_exchange`: przeregulowanie z
     marginesem względem `dev`, kilka faz.
 
@@ -732,7 +745,7 @@ sąsiada) blokuje płynne przejęcie korekty FF w tym cyklu.
 
 - Kod, testy, dokumentacja EN/FR/PL, tłumaczenia `en.json`/`fr.json` (jeśli dotyczy) i
   CHANGELOG w jednym commicie etapu.
-- Zakres CI i pełny lokalny porównane z `dev`; każda różnica wyjaśniona; test różnicowy przechodzi.
+- Zakres CI i pełny lokalny porównane z aktualnym `dev2`; każda różnica wyjaśniona; test różnicowy przechodzi.
 - Pokrycie: kod forka ≥ 95 % linii, ≥ 90 % gałęzi, pliki autora bez spadku (albo uzasadnienie).
 - Kontrole z §0b.5 przechodzą.
 - Testy autora z `ANALIZA.md` §17.1 przeniesione; nasze z §17.2 zaktualizowane wg §0a.2; żaden

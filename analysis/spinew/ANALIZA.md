@@ -43,9 +43,11 @@ Zasady łączą dokumenty procesu właściciela (`CLAUDE.md` i `PLAN_ROZWOJU.md`
 12. Te dokumenty zostają w `analysis/spinew/` na gałęzi analizy (2026-10-15). Gałąź
     `process-docs` jest osobna (bez wspólnej historii); jej `CLAUDE.md` i `PLAN_ROZWOJU.md` wskazują
     na te dokumenty i są aktualizowane razem z nimi.
-13. **Po scaleniu PR etapu gałąź etapu jest usuwana** (2026-10-16): lokalnie (gałąź i worktree)
-    robi to sesja; na GitHubie usuwa ją właściciel, bo proxy sesji w chmurze odrzuca
-    `git push --delete` (HTTP 403). Przed usunięciem: SHA gałęzi = głowica PR i zawiera się w `dev2`.
+13. **Po scaleniu PR etapu gałąź etapu jest usuwana** (2026-10-16, zmienione tego samego dnia): gdy
+    właściciel potwierdził PR i scalenie, a PR jest scalony, sesja sama usuwa gałąź lokalnie (gałąź
+    i worktree) i na GitHubie, bez osobnego „tak”. Przed usunięciem: SHA gałęzi = głowica PR i
+    zawiera się w `dev2`. Gdy GitHub odrzuci usunięcie (np. proxy sesji w chmurze, HTTP 403), sesja
+    mówi o tym właścicielowi.
 
 ## 2. Gałęzie i punkty odniesienia
 
@@ -461,7 +463,7 @@ się parsują.
 | D20 | H1: SmartPI używa wilgotności z VT (`current_humidity`) automatycznie, bez ustawienia; bez czujnika nic się nie zmienia | przyjęte 2026-10-16 (właściciel) |
 | D21 | H1: progi sprawdzone na danych właściciela (§22): start 5 %RH w 10 min, koniec przy 25 % wzrostu albo po 3 h, 30 min uspokojenia | przyjęte 2026-10-16 (dane właściciela jako odniesienie; scalone w PR #28) |
 | D22 | H1: w czasie zdarzenia całka wstrzymana (`I:HOLD`), nie ochrona w jedną stronę (§22.1) | przyjęte 2026-10-16 (znalezisko z symulacji, scalone w PR #28 za „tak” właściciela) |
-| D23 | Gałęzie etapów usuwane po scaleniu; na GitHubie usuwa właściciel (§1 p. 13) | przyjęte 2026-10-16 |
+| D23 | Gałęzie etapów usuwane po scaleniu, lokalnie i na GitHubie, przez sesję (§1 p. 13) | przyjęte 2026-10-16, zmienione tego samego dnia (wcześniej na GitHubie usuwał właściciel) |
 
 ## 17. Testy – stan i wpływ
 
