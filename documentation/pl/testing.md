@@ -554,59 +554,69 @@ i żaden czujnik diagnostyczny nie jest odrzucany jako duplikat.
 ## 7. Pokrycie kodu
 
 Jaką część kodu pluginu wykonują testy, zmierzone narzędziem coverage.py na pełnym lokalnym
-zestawie (długi zestaw z sekcji 1 razem ze sprawdzeniami QAS, które działają bez ławki, sekcja
-6.6): linie oraz gałęzie (każda droga, którą może pójść `if` albo pętla).
+zestawie (długi zestaw z sekcji 1): linie oraz gałęzie (każda droga, którą może pójść `if` albo
+pętla). Sprawdzenia QAS, które działają bez ławki (sekcja 6.6), są na razie pominięte; z nimi
+wyniki są nieco wyższe (93.57 % w 705b3f2).
 
-    COVERAGE_FILE=<scratch>/.coverage SMARTPI_SIM_LOCAL=1 SMARTPI_QAS_LOCAL=1 \
+    COVERAGE_FILE=<scratch>/.coverage SMARTPI_SIM_LOCAL=1 \
       PYTHONPATH=<versatile_thermostat copy>:$PWD python -m pytest tests/ -q -p no:cacheprovider -n 4 \
       --cov=custom_components/vtherm_smartpi --cov-branch --cov-report=json:<scratch>/cov.json
+    python tests/coverage/compare.py <scratch>/cov.json
 
-Punkt odniesienia to `dev` w 112e9e5, zmierzony 2026-10-14, przed wejściami z instalacji
-grzewczej. „Łącznie” to wskaźnik samego coverage.py, linie i gałęzie razem. Wszystkie 1397 testów
-przechodzi.
+**Punkt odniesienia** to pełny raport coverage.py zapisany w `tests/coverage/baseline.json`: `dev2`
+w 705b3f2 z testami wymienionymi na końcu sekcji 7.2, zmierzony 2026-10-16. Skrypt
+`tests/coverage/compare.py` porównuje z nim nowy raport. Wypisuje każdy plik, którego linie albo
+gałęzie spadły poniżej punktu odniesienia, i sprawdza cele dla własnych linii forka (sekcja 7.2).
+Kończy się kodem 1, gdy któryś plik spadł albo cel nie jest spełniony. Z `--markdown` wypisuje
+tabele z sekcji 7.1 i 7.2. **Każdy pull request do `dev2`** mierzy od nowa, uruchamia porównanie
+i zastępuje punkt odniesienia swoim raportem, a te tabele nowymi.
+
+„Łącznie” to wskaźnik samego coverage.py, linie i gałęzie razem. Wszystkie 1536 testów przechodzi;
+16 jest pominiętych (sprawdzenia QAS).
 
 ### 7.1 Cały plugin
 
-Każdy plik zachowuje albo zwiększa swoje pokrycie.
+Wartość z lewej to `dev2` w 705b3f2 przed testami wymienionymi na końcu sekcji 7.2, zmierzony tak
+samo. Każdy plik zachowuje albo zwiększa swoje pokrycie.
 
 | Plik | Linie (punkt odniesienia → teraz) | Gałęzie (punkt odniesienia → teraz) | Łącznie (punkt odniesienia → teraz) |
 |---|---:|---:|---:|
-| `__init__.py` | 77.5 % → 274/282 (97.2 %) | 54.2 % → 118/128 (92.2 %) | 71.0 % → 95.6 % |
-| `algo.py` | 92.4 % → 1840/1988 (92.6 %) | 81.8 % → 401/484 (82.9 %) | 90.4 % → 90.7 % |
+| `__init__.py` | 98.3 % → 240/242 (99.2 %) | 95.4 % → 105/108 (97.2 %) | 97.4 % → 98.6 % |
+| `algo.py` | 93.1 % → 1864/2002 (93.1 %) | 83.0 % → 411/494 (83.2 %) | 91.1 % → 91.1 % |
 | `commons.py` | 100.0 % → 4/4 (100.0 %) | — → — | 100.0 % → 100.0 % |
-| `config_flow.py` | 95.6 % → 1037/1060 (97.8 %) | 89.8 % → 365/378 (96.6 %) | 94.1 % → 97.5 % |
+| `config_flow.py` | 98.3 % → 1042/1060 (98.3 %) | 96.6 % → 369/380 (97.1 %) | 97.8 % → 98.0 % |
 | `const.py` | 100.0 % → 75/75 (100.0 %) | — → — | 100.0 % → 100.0 % |
 | `cycle_utils.py` | 100.0 % → 5/5 (100.0 %) | — → — | 100.0 % → 100.0 % |
 | `factory.py` | 100.0 % → 10/10 (100.0 %) | — → — | 100.0 % → 100.0 % |
-| `handler.py` | 92.0 % → 629/673 (93.5 %) | 84.6 % → 170/198 (85.9 %) | 90.3 % → 91.7 % |
-| `heating_inputs.py` | nowy → 353/353 (100.0 %) | nowy → 106/106 (100.0 %) | nowy → 100.0 % |
+| `handler.py` | 95.8 % → 655/671 (97.6 %) | 87.5 % → 179/200 (89.5 %) | 93.9 % → 95.8 % |
+| `heating_inputs.py` | 100.0 % → 353/353 (100.0 %) | 100.0 % → 106/106 (100.0 %) | 100.0 % → 100.0 % |
 | `hvac_mode.py` | 70.8 % → 46/65 (70.8 %) | 21.4 % → 3/14 (21.4 %) | 62.0 % → 62.0 % |
 | `repairs.py` | 100.0 % → 22/22 (100.0 %) | 100.0 % → 4/4 (100.0 %) | 100.0 % → 100.0 % |
-| `sensor.py` | 96.0 % → 184/190 (96.8 %) | 83.3 % → 57/64 (89.1 %) | 92.7 % → 94.9 % |
-| `settings.py` | nowy → 49/49 (100.0 %) | nowy → 10/10 (100.0 %) | nowy → 100.0 % |
+| `sensor.py` | 92.1 % → 175/190 (92.1 %) | 75.0 % → 48/64 (75.0 %) | 87.8 % → 87.8 % |
+| `settings.py` | 100.0 % → 49/49 (100.0 %) | 100.0 % → 10/10 (100.0 %) | 100.0 % → 100.0 % |
 | `smartpi/__init__.py` | 100.0 % → 7/7 (100.0 %) | — → — | 100.0 % → 100.0 % |
 | `smartpi/ab_aggregator.py` | 96.3 % → 26/27 (96.3 %) | 90.0 % → 9/10 (90.0 %) | 94.6 % → 94.6 % |
 | `smartpi/ab_drift.py` | 87.5 % → 119/136 (87.5 %) | 69.4 % → 25/36 (69.4 %) | 83.7 % → 83.7 % |
-| `smartpi/ab_estimator.py` | 90.9 % → 378/416 (90.9 %) | 82.4 % → 89/108 (82.4 %) | 89.1 % → 89.1 % |
-| `smartpi/autocalib.py` | 88.8 % → 253/285 (88.8 %) | 71.8 % → 56/78 (71.8 %) | 85.1 % → 85.1 % |
+| `smartpi/ab_estimator.py` | 90.7 % → 381/420 (90.7 %) | 81.5 % → 88/108 (81.5 %) | 88.8 % → 88.8 % |
+| `smartpi/autocalib.py` | 88.8 % → 254/285 (89.1 %) | 71.8 % → 57/78 (73.1 %) | 85.1 % → 85.7 % |
 | `smartpi/boiler_call.py` | 100.0 % → 69/69 (100.0 %) | 100.0 % → 18/18 (100.0 %) | 100.0 % → 100.0 % |
 | `smartpi/calibration.py` | 88.6 % → 147/166 (88.6 %) | 76.3 % → 29/38 (76.3 %) | 86.3 % → 86.3 % |
 | `smartpi/command_ownership.py` | 98.8 % → 164/166 (98.8 %) | 93.8 % → 30/32 (93.8 %) | 98.0 % → 98.0 % |
-| `smartpi/const.py` | 100.0 % → 320/320 (100.0 %) | 100.0 % → 4/4 (100.0 %) | 100.0 % → 100.0 % |
+| `smartpi/const.py` | 100.0 % → 333/333 (100.0 %) | 100.0 % → 4/4 (100.0 %) | 100.0 % → 100.0 % |
 | `smartpi/controller.py` | 94.7 % → 232/245 (94.7 %) | 80.3 % → 61/76 (80.3 %) | 91.3 % → 91.3 % |
-| `smartpi/coupling_estimator.py` | 95.9 % → 407/415 (98.1 %) | 87.6 % → 161/170 (94.7 %) | 93.5 % → 97.1 % |
+| `smartpi/coupling_estimator.py` | 97.8 % → 407/415 (98.1 %) | 94.1 % → 161/170 (94.7 %) | 96.8 % → 97.1 % |
 | `smartpi/deadband.py` | 95.1 % → 154/162 (95.1 %) | 88.9 % → 32/36 (88.9 %) | 93.9 % → 93.9 % |
 | `smartpi/deadband_output.py` | 100.0 % → 16/16 (100.0 %) | 100.0 % → 4/4 (100.0 %) | 100.0 % → 100.0 % |
-| `smartpi/deadtime_estimator.py` | 91.9 % → 203/221 (91.9 %) | 81.1 % → 60/74 (81.1 %) | 89.2 % → 89.2 % |
-| `smartpi/dependencies.py` | 98.4 % → 193/193 (100.0 %) | 95.7 % → 70/70 (100.0 %) | 97.7 % → 100.0 % |
-| `smartpi/dependency_inputs.py` | 100.0 % → 78/78 (100.0 %) | 100.0 % → 12/12 (100.0 %) | 100.0 % → 100.0 % |
-| `smartpi/dependency_model.py` | 98.1 % → 576/576 (100.0 %) | 95.6 % → 228/228 (100.0 %) | 97.4 % → 100.0 % |
-| `smartpi/device_link.py` | 98.3 % → 59/60 (98.3 %) | 96.4 % → 27/28 (96.4 %) | 97.7 % → 97.7 % |
+| `smartpi/deadtime_estimator.py` | 92.5 % → 211/228 (92.5 %) | 82.9 % → 65/76 (85.5 %) | 90.1 % → 90.8 % |
+| `smartpi/dependencies.py` | 100.0 % → 194/194 (100.0 %) | 100.0 % → 70/70 (100.0 %) | 100.0 % → 100.0 % |
+| `smartpi/dependency_inputs.py` | 98.7 % → 78/78 (100.0 %) | 91.7 % → 12/12 (100.0 %) | 97.8 % → 100.0 % |
+| `smartpi/dependency_model.py` | 99.7 % → 621/621 (100.0 %) | 99.2 % → 248/248 (100.0 %) | 99.5 % → 100.0 % |
+| `smartpi/device_link.py` | 93.3 % → 56/60 (93.3 %) | 82.1 % → 23/28 (82.1 %) | 89.8 % → 89.8 % |
 | `smartpi/diagnostic_history.py` | 100.0 % → 11/11 (100.0 %) | — → — | 100.0 % → 100.0 % |
-| `smartpi/diagnostics.py` | 92.1 % → 105/114 (92.1 %) | 78.6 % → 33/42 (78.6 %) | 88.5 % → 88.5 % |
-| `smartpi/effective_model.py` | 97.9 % → 94/96 (97.9 %) | 90.0 % → 28/30 (93.3 %) | 96.0 % → 96.8 % |
+| `smartpi/diagnostics.py` | 90.6 % → 106/117 (90.6 %) | 75.0 % → 33/44 (75.0 %) | 86.3 % → 86.3 % |
+| `smartpi/effective_model.py` | 97.9 % → 94/96 (97.9 %) | 93.3 % → 28/30 (93.3 %) | 96.8 % → 96.8 % |
 | `smartpi/feedforward.py` | 100.0 % → 38/38 (100.0 %) | 100.0 % → 4/4 (100.0 %) | 100.0 % → 100.0 % |
-| `smartpi/ff3.py` | 90.2 % → 110/122 (90.2 %) | 80.0 % → 48/60 (80.0 %) | 86.8 % → 86.8 % |
+| `smartpi/ff3.py` | 89.3 % → 109/122 (89.3 %) | 80.0 % → 48/60 (80.0 %) | 86.3 % → 86.3 % |
 | `smartpi/ff3_eligibility.py` | 96.8 % → 92/95 (96.8 %) | 97.5 % → 39/40 (97.5 %) | 97.0 % → 97.0 % |
 | `smartpi/ff3_predictor.py` | 93.9 % → 62/66 (93.9 %) | 75.0 % → 12/16 (75.0 %) | 90.2 % → 90.2 % |
 | `smartpi/ff_ab_confidence.py` | 100.0 % → 32/32 (100.0 %) | 100.0 % → 12/12 (100.0 %) | 100.0 % → 100.0 % |
@@ -615,66 +625,70 @@ Każdy plik zachowuje albo zwiększa swoje pokrycie.
 | `smartpi/gains.py` | 96.9 % → 126/130 (96.9 %) | 91.7 % → 22/24 (91.7 %) | 96.1 % → 96.1 % |
 | `smartpi/governance.py` | 97.3 % → 71/73 (97.3 %) | 92.3 % → 24/26 (92.3 %) | 96.0 % → 96.0 % |
 | `smartpi/guards.py` | 97.4 % → 76/78 (97.4 %) | 94.4 % → 17/18 (94.4 %) | 96.9 % → 96.9 % |
-| `smartpi/integral_guard.py` | 94.3 % → 99/105 (94.3 %) | 94.1 % → 32/34 (94.1 %) | 94.2 % → 94.2 % |
+| `smartpi/humidity_event.py` | 100.0 % → 57/57 (100.0 %) | 100.0 % → 16/16 (100.0 %) | 100.0 % → 100.0 % |
+| `smartpi/integral_guard.py` | 96.2 % → 101/105 (96.2 %) | 97.1 % → 33/34 (97.1 %) | 96.4 % → 96.4 % |
 | `smartpi/learning_window.py` | 92.4 % → 304/329 (92.4 %) | 91.8 % → 101/110 (91.8 %) | 92.3 % → 92.3 % |
 | `smartpi/setpoint.py` | 94.3 % → 526/558 (94.3 %) | 85.6 % → 137/160 (85.6 %) | 92.3 % → 92.3 % |
-| `smartpi/source_candidates.py` | 95.7 % → 47/47 (100.0 %) | 100.0 % → 18/18 (100.0 %) | 96.9 % → 100.0 % |
+| `smartpi/source_candidates.py` | 100.0 % → 47/47 (100.0 %) | 100.0 % → 18/18 (100.0 %) | 100.0 % → 100.0 % |
 | `smartpi/source_link.py` | 100.0 % → 94/94 (100.0 %) | 100.0 % → 30/30 (100.0 %) | 100.0 % → 100.0 % |
-| `smartpi/source_model.py` | 99.1 % → 109/109 (100.0 %) | 100.0 % → 32/32 (100.0 %) | 99.3 % → 100.0 % |
-| `smartpi/source_settings.py` | 100.0 % → 35/35 (100.0 %) | 100.0 % → 4/4 (100.0 %) | 100.0 % → 100.0 % |
-| `smartpi/split.py` | 98.9 % → 95/95 (100.0 %) | 95.5 % → 22/22 (100.0 %) | 98.3 % → 100.0 % |
+| `smartpi/source_model.py` | 100.0 % → 109/109 (100.0 %) | 100.0 % → 32/32 (100.0 %) | 100.0 % → 100.0 % |
+| `smartpi/source_settings.py` | 100.0 % → 40/40 (100.0 %) | 100.0 % → 6/6 (100.0 %) | 100.0 % → 100.0 % |
+| `smartpi/split.py` | 100.0 % → 95/95 (100.0 %) | 100.0 % → 22/22 (100.0 %) | 100.0 % → 100.0 % |
 | `smartpi/thermal_twin_1r1c.py` | 82.4 % → 324/393 (82.4 %) | 66.4 % → 85/128 (66.4 %) | 78.5 % → 78.5 % |
-| `smartpi/timestamp_utils.py` | 78.1 % → 25/32 (78.1 %) | 71.4 % → 10/14 (71.4 %) | 76.1 % → 76.1 % |
+| `smartpi/timestamp_utils.py` | 87.5 % → 28/32 (87.5 %) | 85.7 % → 12/14 (85.7 %) | 87.0 % → 87.0 % |
 | `smartpi/tint_filter.py` | 95.7 % → 90/94 (95.7 %) | 87.5 % → 21/24 (87.5 %) | 94.1 % → 94.1 % |
 | `smartpi/trajectory.py` | 93.9 % → 93/99 (93.9 %) | 82.4 % → 28/34 (82.4 %) | 91.0 % → 91.0 % |
 | `smartpi/valve_curve.py` | 95.7 % → 66/69 (95.7 %) | 90.0 % → 18/20 (90.0 %) | 94.4 % → 94.4 % |
-| `smartpi/water_input.py` | 100.0 % → 166/166 (100.0 %) | 97.6 % → 44/44 (100.0 %) | 99.5 % → 100.0 % |
-| `smartpi/zone_fit.py` | 92.3 % → 202/208 (97.1 %) | 82.1 % → 72/78 (92.3 %) | 89.5 % → 95.8 % |
-| **Razem** | 93.5 % → 12034/12709 (94.7 %) | 84.6 % → 3340/3794 (88.0 %) | 91.5 % → 93.2 % |
+| `smartpi/water_input.py` | 100.0 % → 166/166 (100.0 %) | 100.0 % → 44/44 (100.0 %) | 100.0 % → 100.0 % |
+| `smartpi/zone_fit.py` | 97.1 % → 202/208 (97.1 %) | 92.3 % → 72/78 (92.3 %) | 95.8 % → 95.8 % |
+| `state_store.py` | 100.0 % → 37/37 (100.0 %) | 100.0 % → 6/6 (100.0 %) | 100.0 % → 100.0 % |
+| **Razem** | 94.9 % → 12218/12853 (95.1 %) | 87.9 % → 3389/3836 (88.3 %) | 93.3 % → 93.5 % |
 
 ### 7.2 Własne linie forka
 
 Linie, które fork dodał albo zmienił (`git diff -U0 6a131df HEAD -- custom_components/vtherm_smartpi`,
-linie `+`; 6a131df to kod autora, od którego fork wyszedł). Gałąź liczy się do forka, gdy jej
-linia się liczy. Cele: 95 % linii i 90 % gałęzi. Teraz 99.2 % linii i 98.0 % gałęzi (97.7 % i
-93.1 % w punkcie odniesienia).
+linie `+`; 6a131df to kod autora, od którego fork wyszedł). Należą do nich zmiany przejęte z
+nowszego kodu autora. Gałąź liczy się do forka, gdy jej linia się liczy. Cele: 95 % linii i 90 %
+gałęzi. Teraz 99.3 % linii i 98.0 % gałęzi (99.0 % i 97.2 % przed testami wymienionymi niżej).
 
 | Plik | Linie | Gałęzie | Niepokryte |
 |---|---:|---:|---|
-| `algo.py` | 315/315 (100.0 %) | 99/100 (99.0 %) | 1052→1063 |
-| `config_flow.py` | 951/964 (98.7 %) | 343/352 (97.4 %) | 469, 470, 594, 630, 1190, 1837, 1843, 1853, 1854, 1855, 1856, 1857, 1928, 1099→1098 |
-| `handler.py` | 350/356 (98.3 %) | 104/108 (96.3 %) | 365, 366, 396, 397, 1187, 1188, 297→wyjście, 457→459, 465→468, 485→491 |
+| `algo.py` | 343/343 (100.0 %) | 113/114 (99.1 %) | 1057→1068 |
+| `config_flow.py` | 968/981 (98.7 %) | 343/352 (97.4 %) | 483, 484, 608, 644, 1204, 1868, 1874, 1884, 1885, 1886, 1887, 1888, 1959, 1113→1112 |
+| `handler.py` | 372/378 (98.4 %) | 111/116 (95.7 %) | 364, 365, 395, 396, 1195, 1196, 293→wyjście, 311→wyjście, 456→458, 464→467, 484→490 |
 | `smartpi/coupling_estimator.py` | 407/415 (98.1 %) | 161/170 (94.7 %) | 105, 167, 227, 231, 238, 253, 528, 670, 180→198 |
 | `smartpi/effective_model.py` | 94/96 (97.9 %) | 28/30 (93.3 %) | 34, 169 |
 | `smartpi/zone_fit.py` | 202/208 (97.1 %) | 72/78 (92.3 %) | 94, 104, 108, 167, 202, 255 |
-| **Razem** | 4469/4504 (99.2 %) | 1487/1518 (98.0 %) | |
+| **Razem** | 4746/4781 (99.3 %) | 1574/1606 (98.0 %) | |
 
-Pozostałe pliki forka mają 100 %: `__init__.py`, `const.py`, `heating_inputs.py`, `repairs.py`, `sensor.py`, `settings.py`, `smartpi/boiler_call.py`, `smartpi/calibration.py`, `smartpi/const.py`, `smartpi/dependencies.py`, `smartpi/dependency_inputs.py`, `smartpi/dependency_model.py`, `smartpi/diagnostics.py`, `smartpi/learning_window.py`, `smartpi/source_candidates.py`, `smartpi/source_link.py`, `smartpi/source_model.py`, `smartpi/source_settings.py`, `smartpi/split.py`, `smartpi/water_input.py`.
+Pozostałe pliki forka mają 100 %: `__init__.py`, `const.py`, `heating_inputs.py`, `repairs.py`, `sensor.py`, `settings.py`, `smartpi/ab_estimator.py`, `smartpi/boiler_call.py`, `smartpi/calibration.py`, `smartpi/const.py`, `smartpi/deadtime_estimator.py`, `smartpi/dependencies.py`, `smartpi/dependency_inputs.py`, `smartpi/dependency_model.py`, `smartpi/diagnostics.py`, `smartpi/humidity_event.py`, `smartpi/learning_window.py`, `smartpi/source_candidates.py`, `smartpi/source_link.py`, `smartpi/source_model.py`, `smartpi/source_settings.py`, `smartpi/split.py`, `smartpi/water_input.py`, `state_store.py`.
 
 **Co zostaje niepokryte.** Nic z tego nie wymaga prawdziwego Home Assistant: każde to
 zabezpieczenie, do którego nie dochodzą żadne prawdziwe dane.
 
-- `algo.py` 1052→1063: cykl, który kończy się bez swojego nominalnego czasu, nie zapisuje mocy do
+- `algo.py` 1057→1068: cykl, który kończy się bez swojego nominalnego czasu, nie zapisuje mocy do
   uczenia sąsiadów; harmonogram VTherm zawsze podaje ten czas.
-- `config_flow.py` 469–470: pozycja strefy, której odpowiedzi emitera nie da się odczytać;
+- `config_flow.py` 483–484: pozycja strefy, której odpowiedzi emitera nie da się odczytać;
   formularz strefy zapisuje tylko czytelne (ma ją tylko wpis zmieniony ręcznie).
-- `config_flow.py` 594: termostat bez unikalnego ID; każde wywołanie podaje unikalne ID encji z
+- `config_flow.py` 608: termostat bez unikalnego ID; każde wywołanie podaje unikalne ID encji z
   rejestru.
-- `config_flow.py` 630: nazwa głównego źródła bez wpisu SmartPI; okno dowiaduje się o głównym
+- `config_flow.py` 644: nazwa głównego źródła bez wpisu SmartPI; okno dowiaduje się o głównym
   źródle tylko z zapisanego wpisu, którego tytuł znajduje najpierw.
-- `config_flow.py` 1099→1098: problem z inną pozycją listy niż nowa; każdy formularz utrzymuje
+- `config_flow.py` 1113→1112: problem z inną pozycją listy niż nowa; każdy formularz utrzymuje
   zapisaną listę poprawną, więc zawieść może tylko nowa pozycja.
-- `config_flow.py` 1190: encja climate, której wpis konfiguracji zniknął; Home Assistant usuwa
+- `config_flow.py` 1204: encja climate, której wpis konfiguracji zniknął; Home Assistant usuwa
   encje razem z ich wpisem.
-- `config_flow.py` 1837–1857: listy sprawdzane ponownie przy zapisie; każda sekcja sprawdza to, co
+- `config_flow.py` 1868–1888: listy sprawdzane ponownie przy zapisie; każda sekcja sprawdza to, co
   zmienia, a zmiana zrobiona w innym oknie zatrzymuje zapis wcześniej (`zone_changed`), więc dociera
   tu tylko lista zmieniona ręcznie.
-- `config_flow.py` 1928: podstawa obu przepływów, którą każdy z nich zastępuje.
-- `handler.py` 365–366, 396–397, 1187–1188: wyjątek z rejestru encji albo problemów Home
+- `config_flow.py` 1959: podstawa obu przepływów, którą każdy z nich zastępuje.
+- `handler.py` 364–365, 395–396, 1195–1196: wyjątek z rejestru encji albo problemów Home
   Assistant, przechwycony, żeby regulacja trwała dalej; Home Assistant ich tam nie zgłasza.
-- `handler.py` 297→wyjście: zapisany stan wczytany, gdy termostat nie ma algorytmu; VTherm buduje
+- `handler.py` 293→wyjście: zapisany stan wczytany, gdy termostat nie ma algorytmu; VTherm buduje
   algorytm, zanim przywróci stan.
-- `handler.py` 457→459, 465→468, 485→491: termostat pracujący jako drugie źródło z innym
+- `handler.py` 311→wyjście: reset strefy bez zapisu stanu; handler stosuje reset dopiero po
+  wczytaniu stanu ze swojego zapisu.
+- `handler.py` 456→458, 464→467, 484→490: termostat pracujący jako drugie źródło z innym
   algorytmem niż SmartPI; moduł obsługi służy tylko termostatom na SmartPI.
 - `smartpi/coupling_estimator.py` 105: próbki bez rozrzutu w czasie; ich czasy tylko rosną.
 - `smartpi/coupling_estimator.py` 167, 238, 253, 670, 180→198: numeryczne zabezpieczenia
@@ -695,6 +709,36 @@ zabezpieczenie, do którego nie dochodzą żadne prawdziwe dane.
   wywołujący podaje jedną wartość na kandydata.
 - `smartpi/zone_fit.py` 202: moc, która nie jest skończoną liczbą; dane wejściowe są sprawdzane na
   wejściu.
+
+**Testy dodane z tym punktem odniesienia.** Pierwszy pomiar `dev2` w 705b3f2 znalazł 17 nowych miejsc
+we własnych liniach forka, których nie wykonywał żaden test. Osiem wykonywały tylko sprawdzenia QAS,
+które ten pomiar pomija. Dziewięć przyszło z późniejszymi etapami: zmianami przejętymi z nowszego
+kodu autora, dojściem strefy po obniżeniu i dwoma miejscami, w których zmienił się przebieg
+symulacji. Szesnaście ma teraz test; ostatnie to `handler.py` 311→wyjście wyżej.
+
+- `test_init_lifecycle.py`: drugie uruchomienie zostawia zarejestrowany algorytm; bez API
+  Versatile Thermostat uruchomienie tylko zapisuje ostrzeżenie i mimo to rejestruje serwisy.
+- `test_handler_persistence.py`: usunięty termostat, którego stanu nie da się zapisać, zapisuje to
+  w logu i mimo to zatrzymuje swoje timery.
+- `test_smartpi_handler_off.py`: wyłączony w czasie kalibracji SmartPI anuluje ją i zapisuje swój
+  stan.
+- `test_smartpi_dependencies_handler.py`: dodatkowe źródło wyłączone, gdy nic nie pracuje, niczego
+  nie zatrzymuje; usunięte dodatkowe źródło nie jest już liczone przez swoje główne źródło; główne
+  źródło włączone ponownie przestaje mówić dodatkowemu, że jest wyłączone.
+- `test_config_flow_heating_inputs.py`: dodatkowe źródło z elektrycznym rodzajem ogrzewania nie ma
+  sekcji Water and boiler.
+- `test_config_flow_zone.py`: formularz strefy proponuje tylko termostaty nadrzędne, które mają ten
+  termostat wśród swoich urządzeń.
+- `test_smartpi_water_algo.py`: wstrzymanie, które inna ścieżka zwolniła od ostatniej aktualizacji
+  wody, wraca, zanim regulator policzy.
+- `test_smartpi_deadtime_estimator.py`: gdy najniższa (przy chłodzeniu najwyższa) temperatura
+  wypadła z historii 300 próbek, czas martwy liczy się do chwili wykrycia.
+- `test_smartpi_dependency_inputs.py`: sąsiad climate bez bloków bezpieczeństwa i okna jest
+  używany.
+- `test_smartpi_coupling_estimator_edges.py`: wejścia, które nigdy nie zmieniają się razem, dają
+  się rozróżnić.
+- `test_smartpi_dependency_model_edges.py`: stan wczytany po skonfigurowaniu źródła trafia do
+  źródła; reset zapomina, czego źródło się nauczyło, i zostawia jego ustawienia.
 
 Pokrycie pokazało też kod, którego nic nie używało; został usunięty: właściwość `response`
 drugiego źródła i dwie metody formularzy.

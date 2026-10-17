@@ -81,6 +81,19 @@ def test_neighbour_in_safety_mode_has_no_influence() -> None:
     assert not reading.usable
 
 
+@pytest.mark.parametrize("block", [None, "off"], ids=["missing", "not_a_mapping"])
+def test_neighbour_without_safety_and_window_blocks_is_usable(block) -> None:
+    """A climate neighbour that publishes no safety or window block reads as neither in safety nor open."""
+    attributes = {"current_temperature": 21.0}
+    if block is not None:
+        attributes |= {"safety_manager": block, "window_manager": block}
+    reading = read_neighbour(ITEM, EntitySnapshot("climate.kitchen", "heat", attributes))
+
+    assert not reading.safety
+    assert not reading.window_open
+    assert reading.usable
+
+
 @pytest.mark.parametrize("value", ["nan", "inf", "-inf", "warm", None])
 def test_non_finite_temperatures_are_rejected(value) -> None:
     assert read_neighbour(ITEM, EntitySnapshot("sensor.hall_temperature", value)).temperature is None

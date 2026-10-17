@@ -4,8 +4,8 @@ They check what the estimator keeps or refuses at the borders of its normal
 work: door fits whose coefficients come out negative or cannot be computed, a
 heat source that never ran during the door windows, an always-connected
 exchange fitted beyond its plausible bound, histories whose values disagree or
-have no spread, saved rows and cycles that cannot be used, and forgetting the
-items that are no longer configured.
+have no spread, saved rows and cycles that cannot be used, forgetting the
+items that are no longer configured, and inputs that never vary together.
 """
 
 from __future__ import annotations
@@ -21,6 +21,7 @@ from custom_components.vtherm_smartpi.smartpi.const import (
 from custom_components.vtherm_smartpi.smartpi.coupling_estimator import (
     CouplingEstimator,
     CouplingTick,
+    _well_conditioned,
 )
 
 A, B, L_S = 0.03, 0.001, 600.0
@@ -210,3 +211,15 @@ def test_an_empty_or_unreadable_cycle_report_is_ignored() -> None:
 
     estimator.record_realized_power(0.0, 600.0, 1.0)
     assert estimator._delayed_power(0.0, 600.0) == pytest.approx(1.0)
+
+
+def test_inputs_that_never_vary_together_can_be_told_apart() -> None:
+    """Two neighbours whose differences never overlap, and a third that overlaps both, are well conditioned."""
+    rows = [
+        (0.0, {"kitchen": 2.0, "hall": 0.0, "bath": 2.0}),
+        (0.0, {"kitchen": 0.0, "hall": 2.0, "bath": 2.0}),
+        (0.0, {"kitchen": 2.0, "hall": 0.0, "bath": 0.0}),
+        (0.0, {"kitchen": 0.0, "hall": 2.0, "bath": 0.0}),
+    ]
+
+    assert _well_conditioned(rows, ["kitchen", "hall", "bath"])

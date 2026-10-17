@@ -1,8 +1,10 @@
 """Test SmartPIHandler.control_heating behavior when the thermostat is OFF."""
-from unittest.mock import AsyncMock, patch
+import time
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from custom_components.vtherm_smartpi.algo import SmartPI
 from custom_components.vtherm_smartpi.handler import SmartPIHandler
 from custom_components.vtherm_smartpi.hvac_mode import VThermHvacMode_OFF
 from fakes.fake_thermostat_runtime import FakeThermostatRuntime
@@ -62,3 +64,26 @@ async def test_off_does_nothing_when_device_inactive_and_no_cycle_running():
 
     thermostat.cycle_scheduler.cancel_cycle.assert_not_awaited()
     thermostat.async_underlying_entity_turn_off.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_off_cancels_a_calibration_in_progress():
+    """Switched off during a calibration, SmartPI ends it as cancelled and saves its state."""
+    thermostat = FakeThermostatRuntime()
+    thermostat.vtherm_hvac_mode = VThermHvacMode_OFF
+    thermostat.prop_algorithm = SmartPI(
+        hass=MagicMock(), cycle_min=10, minimal_activation_delay=0, minimal_deactivation_delay=0, name="calibration"
+    )
+    calibration = thermostat.prop_algorithm.calibration_mgr
+    calibration.start_calibration(time.monotonic(), is_manual=True)
+    assert calibration.is_calibrating
+    handler = SmartPIHandler(thermostat)
+
+    with (
+        patch.object(handler, "_async_save", new_callable=AsyncMock) as save,
+        patch.object(handler, "update_attributes"),
+    ):
+        await handler.on_state_changed(True)
+
+    assert not calibration.is_calibrating
+    save.assert_awaited_once()

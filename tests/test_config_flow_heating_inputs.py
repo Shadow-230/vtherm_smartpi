@@ -354,6 +354,27 @@ async def test_an_electric_heating_type_has_no_water_and_boiler(hass) -> None:
     assert "heating_inputs" not in result["menu_options"]
 
 
+async def test_an_electric_additional_source_has_no_water_section(hass) -> None:
+    """A zone's additional source with an electric heating type: its menu has no water and boiler section."""
+    floor = _vtherm(hass, "vt-floor", "floor")
+    _thermostat_entry(
+        hass,
+        "vt-radiator",
+        **{
+            CONF_SMART_PI_DEPENDENCIES: [
+                {"id": "s1", "kind": "source", "entity": floor.id, "split_rule": "together", "split_ratio": 100,
+                 "lead_emitter": "radiator", "source_emitter": "floor_electric"}
+            ]
+        },
+    )
+    floor_entry = _thermostat_entry(hass, "vt-floor", "floor_electric")
+
+    result = await hass.config_entries.options.async_init(floor_entry.entry_id)
+
+    assert result["step_id"] == "source_menu"
+    assert result["menu_options"] == ["source_role", "save"]
+
+
 async def test_a_zone_s_additional_source_chooses_its_water_data_only(hass) -> None:
     radiator = _vtherm(hass, "vt-radiator", "radiator")
     floor = _vtherm(hass, "vt-floor", "floor")

@@ -215,6 +215,24 @@ def test_the_feed_forward_trim_records_the_power(monkeypatch):
     assert recorded["realized_linear_power"] == pytest.approx(0.6 * algo.water_factor)
 
 
+def test_a_hold_released_since_the_last_water_update_is_restored_before_the_controller(monkeypatch):
+    """Another path that releases the hold between two water updates does not let the integral move."""
+    clock = _Clock(monkeypatch)
+    algo = make_smartpi()
+    force_smartpi_stable_mode(algo)
+    algo.update_water(live(50.0), 20.0)
+    _settled(clock, algo)
+    algo.update_water(live(70.0, heat_reason="dhw_active"), 20.0)
+    integral = algo.ctl.integral
+    algo.ctl.clear_integral_hold()
+
+    clock.advance(300.0)
+    run(algo, temp=19.0)
+
+    assert algo.ctl.last_i_mode == f"I:HOLD({WATER_INTEGRAL_HOLD})"
+    assert algo.ctl.integral == integral
+
+
 def test_hot_water_does_not_release_another_hold():
     algo = make_smartpi()
     algo.update_water(live(50.0), 20.0)

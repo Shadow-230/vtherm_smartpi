@@ -5,8 +5,10 @@ source coefficient learned in cooling is restored, what it skips without an
 outdoor temperature, a lead demand or a target temperature, that a fitted
 exchange which is not reliable stays out, that a coefficient published during
 a recovery starts fading in only once the recovery is over, that saved fits
-whose emitter response cannot be read are dropped, and that a neighbour's eco
-reaction in cooling holds the source to the warmer setpoint.
+whose emitter response cannot be read are dropped, that a neighbour's eco
+reaction in cooling holds the source to the warmer setpoint, that a state loaded
+after the source is configured reaches the source, and that a reset keeps the
+source's settings.
 """
 
 from __future__ import annotations
@@ -297,3 +299,28 @@ def test_without_a_target_the_learning_blocks_run_without_the_cold_override() ->
 
     assert blind.source_command == SOURCE_LEARN_LOW
     assert cold.source_command == 1.0
+
+
+def test_a_saved_state_read_after_the_source_is_configured_reaches_the_source() -> None:
+    """The model's state, loaded once the source is configured, gives the source its saved part."""
+    state = DependencyState()
+    model = _model(state)
+    state.for_item("s1")["allocation"] = 0.6
+
+    model.load()
+
+    assert model._source.restore == {"allocation": 0.6}
+
+
+def test_a_reset_forgets_what_the_source_learned_and_keeps_its_settings() -> None:
+    model = _model()
+    model.update(_readings(), _ctx())
+    model._source.fits["heat"].result = _fit()
+    source = model._source
+
+    model.reset()
+
+    assert model.has_source
+    assert model._source is not source
+    assert model._source.settings == source.settings
+    assert model.zone_fit(VThermHvacMode_HEAT) is None
