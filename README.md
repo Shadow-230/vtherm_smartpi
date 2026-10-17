@@ -37,7 +37,7 @@ This integration extends the popular [Versatile Thermostat](https://github.com/j
 - Professional-grade temperature control algorithms
 - Seamless integration with existing VT configurations
 - Per-device customization options
-- Global defaults for easy setup
+- Shared defaults for easy setup, with each thermostat's own settings (heating type, delays, valve curve) where it needs them
 
 ## 📊 Regulation monitoring with Equinox
 
@@ -77,7 +77,7 @@ Comprehensive documentation is available in English, and in French and Polish
 - 🇬🇧 [User Documentation (English)](documentation/en/vtherm_smartpi.md)
 - 🇬🇧 [Technical Documentation (English)](documentation/en/technical_doc.md)
 - 🇬🇧 [Zone Dependencies and a Second Heat Source (English)](documentation/en/zone_dependencies.md)
-- 🇬🇧 [Water Input (English)](documentation/en/water_input.md)
+- 🇬🇧 [Water and boiler inputs (English)](documentation/en/water_input.md)
 - 🇬🇧 [Tests (English)](documentation/en/testing.md)
 - 🇬🇧 [Diagnostics (English)](documentation/en/diagnostics.md)
 

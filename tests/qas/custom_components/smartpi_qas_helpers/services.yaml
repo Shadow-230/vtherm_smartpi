@@ -1,0 +1,81 @@
+fire_autocalib_event:
+  name: Fire an AutoCalib event
+  description: Fire an AutoCalib event through SmartPI's own handler, without changing AutoCalib's state (test only).
+  fields:
+    entity_id:
+      name: Thermostat
+      required: true
+      selector:
+        entity:
+          domain: climate
+silence_lead:
+  name: Silence a zone's main source
+  description: The main source stops publishing its commands to its additional source; the link stays attached (test only).
+  fields:
+    entity_id:
+      name: Main source
+      required: true
+      selector:
+        entity:
+          domain: climate
+    silent:
+      name: Silent
+      required: true
+      selector:
+        boolean:
+seed_state:
+  name: Seed SmartPI's learned state
+  description: Replace a thermostat's SmartPI state by a fixture and save it through SmartPI (test only).
+  fields:
+    entity_id:
+      name: Thermostat
+      required: true
+      selector:
+        entity:
+          domain: climate
+    fixture:
+      name: Fixture
+      required: true
+      selector:
+        text:
+recorded_events:
+  name: Recorded SmartPI events
+  description: The AutoCalib and SmartPI events fired since the start, as the response (test only).
+  fields:
+    clear:
+      name: Clear
+      required: false
+      selector:
+        boolean:
+set_provider:
+  name: Set the simulated heating provider
+  description: Register or unregister the heating provider fed by the simulator, force a reason for its supply water, or say the boiler is not called for a reason (an empty text clears it; test only).
+  fields:
+    registered:
+      name: Registered
+      required: false
+      selector:
+        boolean:
+    supply_reason:
+      name: Supply reason
+      required: false
+      selector:
+        text:
+    call_reason:
+      name: Call reason
+      required: false
+      selector:
+        text:
+provider_status:
+  name: Heating provider status
+  description: Whether the simulated heating provider is registered, and how often SmartPI asked it by thermostat, as the response (test only).
+entry_setups:
+  name: SmartPI entry setups
+  description: How many times a SmartPI entry was set up (loaded) since the start, as the response (test only).
+  fields:
+    entry_id:
+      name: Entry
+      description: The SmartPI config entry's id.
+      required: true
+      selector:
+        text:

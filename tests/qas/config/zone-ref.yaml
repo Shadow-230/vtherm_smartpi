@@ -1,0 +1,42 @@
+# QAS role 'zone-ref': SmartPI QAS zone reference.
+# Written by tests/qas/config/build.py from tests/qas/roles.py; do not edit by hand.
+homeassistant:
+  name: SmartPI QAS zone reference
+frontend:
+config:
+api:
+history:
+logbook:
+system_log:
+  max_entries: 500
+recorder:
+  purge_keep_days: 7
+logger:
+  default: info
+  logs:
+    custom_components.vtherm_smartpi: info
+    custom_components.versatile_thermostat: info
+    custom_components.smartpi_room_sim: info
+    custom_components.smartpi_qas_helpers: info
+smartpi_qas_helpers:
+smartpi_room_sim:
+  rooms:
+    lounge:
+      temperature: 19.0
+      b: 0.001
+  heaters:
+    lounge_radiator:
+      room: lounge
+      a: 0.03
+      delay_min: 10.0
+      power_w: 1500.0
+    lounge_floor:
+      room: lounge
+      kind: switch
+      a: 0.03
+      delay_min: 30.0
+      lag_min: 180.0
+      power_w: 1500.0
+  outdoor:
+    mean: 3.0
+    swing: 3.0

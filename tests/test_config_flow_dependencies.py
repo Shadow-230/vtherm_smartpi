@@ -17,11 +17,7 @@ from custom_components.vtherm_smartpi.const import (
 
 VT_DOMAIN = "versatile_thermostat"
 
-async def _through_reset(hass, result, reset: bool = True):
-    """A changed connection offers to reset the learned model before saving."""
-    assert result["step_id"] == "model_reset"
-    return await hass.config_entries.options.async_configure(result["flow_id"], {"reset_model": reset})
-
+from flow_helpers import save
 
 
 def _neighbour(item_id: str, entity: str) -> dict:
@@ -66,17 +62,22 @@ async def test_thermostat_entry_opens_a_menu(hass) -> None:
     result = await hass.config_entries.options.async_init(entry.entry_id)
 
     assert result["type"] == FlowResultType.MENU
-    assert result["menu_options"] == ["settings", "zone", "dependencies"]
+    # No heating type set: no "Water and boiler"; "Save and finish" last.
+    assert result["menu_options"] == ["settings", "zone", "dependencies", "save"]
 
 
-async def test_global_entry_keeps_the_settings_form(hass) -> None:
+async def test_global_entry_opens_the_settings_and_the_boiler_signals(hass) -> None:
     entry = MockConfigEntry(domain=DOMAIN, title="SmartPI defaults", unique_id=DOMAIN, data=dict(DEFAULT_OPTIONS))
     entry.add_to_hass(hass)
 
     result = await hass.config_entries.options.async_init(entry.entry_id)
 
-    assert result["type"] == FlowResultType.FORM
+    assert result["type"] == FlowResultType.MENU
     assert result["step_id"] == "init"
+    assert result["menu_options"] == ["regulator", "boiler_signals", "save"]
+    result = await _next(hass, result, "regulator")
+    assert result["type"] == FlowResultType.FORM
+    assert result["step_id"] == "regulator"
 
 
 async def test_settings_keep_the_dependency_list(hass) -> None:
@@ -84,9 +85,13 @@ async def test_settings_keep_the_dependency_list(hass) -> None:
     entry = _thermostat_entry(hass, dependencies)
 
     result = await _open(hass, entry, "settings")
+    # An entry from before the switch holds its own values: the next step shows them.
+    result = await hass.config_entries.options.async_configure(result["flow_id"], {})
+    assert result["step_id"] == "settings_own"
     result = await hass.config_entries.options.async_configure(
         result["flow_id"], {CONF_SMART_PI_DEADBAND: 0.1}
     )
+    result = await save(hass, result)
 
     assert result["type"] == FlowResultType.CREATE_ENTRY
     assert entry.options[CONF_SMART_PI_DEADBAND] == 0.1
@@ -98,8 +103,11 @@ async def test_dependency_menu_offers_what_applies(hass) -> None:
     result = await _open(hass, empty, "dependencies")
 
     assert result["type"] == FlowResultType.MENU
-    assert result["menu_options"] == ["neighbour_add"]
+    assert result["menu_options"] == ["neighbour_add", "thermostat_menu"]
     assert result["description_placeholders"]["count"] == "0"
+    # "Back to the menu".
+    result = await _next(hass, result, "thermostat_menu")
+    assert result["step_id"] == "thermostat_menu"
 
 
 async def test_dependency_list_shows_items_and_removes_the_selected_ones(hass) -> None:
@@ -109,7 +117,7 @@ async def test_dependency_list_shows_items_and_removes_the_selected_ones(hass) -
     entry = _thermostat_entry(hass, [_neighbour("n1", hall.id), _neighbour("n2", kitchen.id)])
 
     result = await _open(hass, entry, "dependencies")
-    assert result["menu_options"] == ["neighbour_add", "dependency_edit", "dependency_remove"]
+    assert result["menu_options"] == ["neighbour_add", "dependency_edit", "dependency_remove", "thermostat_menu"]
     assert result["description_placeholders"] == {
         "count": "2",
         "items": "- neighbour: climate.hall\n- neighbour: climate.kitchen",
@@ -121,8 +129,11 @@ async def test_dependency_list_shows_items_and_removes_the_selected_ones(hass) -
     assert labels == {"n1": "neighbour: climate.hall", "n2": "neighbour: climate.kitchen"}
 
     result = await hass.config_entries.options.async_configure(result["flow_id"], {"remove": ["n1"]})
+    assert result["step_id"] == "thermostat_menu"
+    assert entry.options[CONF_SMART_PI_DEPENDENCIES] == [_neighbour("n1", hall.id), _neighbour("n2", kitchen.id)]
 
-    result = await _through_reset(hass, result)
+    # A removal changes what was learned: the reset question at save.
+    result = await save(hass, result, reset=True)
     assert result["type"] == FlowResultType.CREATE_ENTRY
     assert entry.options[CONF_SMART_PI_DEPENDENCIES] == [_neighbour("n2", kitchen.id)]
 
@@ -134,8 +145,11 @@ async def test_dependency_list_without_selection_changes_nothing(hass) -> None:
     result = await _next(hass, await _open(hass, entry, "dependencies"), "dependency_remove")
     result = await hass.config_entries.options.async_configure(result["flow_id"], {"remove": []})
 
-    assert result["type"] == FlowResultType.ABORT
-    assert result["reason"] == "dependencies_unchanged"
+    # Back to the menu, which says why.
+    assert result["type"] == FlowResultType.MENU
+    assert result["step_id"] == "thermostat_menu"
+    assert result["description_placeholders"]["note"].startswith("No neighbouring zone was chosen")
+    assert result["description_placeholders"]["changes"] == "—"
     assert entry.options[CONF_SMART_PI_DEPENDENCIES] == dependencies
 
 
@@ -173,4 +187,5 @@ async def test_valve_curve_is_offered_only_with_linearization(hass, monkeypatch)
     result = await hass.config_entries.options.async_init(entry.entry_id)
 
     assert result["type"] == FlowResultType.MENU
-    assert result["menu_options"] == ["settings", "zone", "dependencies"]
+    # No heating type set: no "Water and boiler".
+    assert result["menu_options"] == ["settings", "zone", "dependencies", "save"]

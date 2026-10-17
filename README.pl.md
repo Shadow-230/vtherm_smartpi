@@ -37,7 +37,7 @@ Ta integracja rozszerza popularną integrację [Versatile Thermostat](https://gi
 - algorytmy regulacji temperatury na profesjonalnym poziomie
 - płynną współpracę z istniejącymi ustawieniami VT
 - ustawienia osobne dla każdego urządzenia
-- globalne wartości domyślne dla łatwej konfiguracji
+- wspólne wartości domyślne dla łatwej konfiguracji, z własnymi ustawieniami każdego termostatu (rodzaj ogrzewania, czasy, krzywa zaworu) tam, gdzie ich potrzebuje
 
 ## 📊 Podgląd regulacji w Equinox
 
@@ -76,7 +76,7 @@ Pełna dokumentacja jest dostępna po polsku:
 - 🇵🇱 [Dokumentacja użytkownika (po polsku)](documentation/pl/vtherm_smartpi.md)
 - 🇵🇱 [Dokumentacja techniczna (po polsku)](documentation/pl/technical_doc.md)
 - 🇵🇱 [Zależności stref i drugie źródło ciepła (po polsku)](documentation/pl/zone_dependencies.md)
-- 🇵🇱 [Wejście wody (po polsku)](documentation/pl/water_input.md)
+- 🇵🇱 [Wejścia wody i kotła (po polsku)](documentation/pl/water_input.md)
 - 🇵🇱 [Testy (po polsku)](documentation/pl/testing.md)
 - 🇵🇱 [Diagnostyka (po polsku)](documentation/pl/diagnostics.md)
 

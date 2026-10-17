@@ -16,12 +16,14 @@ from custom_components.vtherm_smartpi.const import (
     DOMAIN,
 )
 
+from flow_helpers import save
+
 VT_DOMAIN = "versatile_thermostat"
 
 async def _through_reset(hass, result, reset: bool = True):
-    """A changed connection offers to reset the learned model before saving."""
-    assert result["step_id"] == "model_reset"
-    return await hass.config_entries.options.async_configure(result["flow_id"], {"reset_model": reset})
+    """Back in the menu, nothing written yet; a changed connection asks about the learned model at save."""
+    assert result["step_id"] == "thermostat_menu"
+    return await save(hass, result, reset=reset)
 
 
 
@@ -95,6 +97,7 @@ async def test_thermostat_neighbour_with_suggested_door(hass) -> None:
         result["flow_id"],
         {"mode": "door", "door_sensors": [door.entity_id], "neighbour_window_action": "frost"},
     )
+    assert CONF_SMART_PI_DEPENDENCIES not in entry.options
 
     result = await _through_reset(hass, result)
     assert result["type"] == FlowResultType.CREATE_ENTRY
@@ -228,6 +231,8 @@ async def test_edit_keeps_the_item_id_for_the_same_connection(hass) -> None:
 
     assert _default(form["data_schema"], "door_sensors") == [door.entity_id]
     assert _default(form["data_schema"], "neighbour_window_action") == "eco"
+    # The same connection: nothing learned changes, no question.
+    result = await save(hass, result)
     assert result["type"] == FlowResultType.CREATE_ENTRY
     (stored,) = entry.options[CONF_SMART_PI_DEPENDENCIES]
     assert (stored["id"], stored["mode"], stored["neighbour_window_action"]) == ("n1", "door", "turn_off")
@@ -264,3 +269,20 @@ async def test_a_new_neighbour_offers_to_reset_the_learned_model(hass, reset) ->
 
     assert result["type"] == FlowResultType.CREATE_ENTRY
     assert (CONF_SMART_PI_RESET_TOKEN in entry.options) is reset
+
+
+async def test_a_neighbour_that_is_gone_is_refused_on_the_form(hass) -> None:
+    """Editing a neighbour whose entity no longer exists: an error on the form, no abort."""
+    _setup(hass)
+    entry = _entry(
+        hass,
+        [{"id": "n1", "kind": "neighbour", "entity": "0123456789abcdef", "mode": "always", "door_sensors": [], "neighbour_window_action": "nothing"}],
+    )
+    result = await hass.config_entries.options.async_init(entry.entry_id)
+    result = await hass.config_entries.options.async_configure(result["flow_id"], {"next_step_id": "dependencies"})
+    result = await hass.config_entries.options.async_configure(result["flow_id"], {"next_step_id": "dependency_edit"})
+    result = await hass.config_entries.options.async_configure(result["flow_id"], {"dependency": "n1"})
+
+    assert result["type"] == FlowResultType.FORM
+    assert result["step_id"] == "dependency_edit"
+    assert result["errors"] == {"dependency": "neighbour_missing"}

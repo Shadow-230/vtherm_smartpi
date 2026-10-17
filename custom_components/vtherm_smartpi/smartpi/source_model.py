@@ -80,10 +80,6 @@ class SourceHeat:
         self._state_s: float | None = None
         self._state = 0.0
 
-    @property
-    def response(self) -> SourceResponse:
-        return self._response
-
     def reset(self) -> None:
         self._commands.clear()
         self._state_s = None

@@ -84,7 +84,7 @@ Two steps are required after the restart: adding the SmartPI integration in Home
 
 Go to **Settings → Integrations → Add integration**, then search for *SmartPI*.
 
-On first install, SmartPI automatically creates a default configuration entry with sensible defaults. You can edit these global defaults later from **Settings → Integrations → SmartPI → Configure**.
+On first install, SmartPI automatically creates the "SmartPI defaults" entry. It holds the settings shared by the thermostats (marked "shared" in the [configuration table](#configuration)) and the boiler's signals. You can edit them later from **Settings → Integrations → SmartPI → Configure**.
 
 ### Selecting SmartPI in Versatile Thermostat
 
@@ -96,15 +96,19 @@ Repeat this step for each thermostat you want to run with SmartPI.
 
 #### Per-thermostat configuration
 
-To add SmartPI to an additional thermostat, open the SmartPI integration configuration and add a new thermostat entry. Select the target thermostat from the list, then adjust the parameters as needed.
+An entry of its own is optional. A thermostat on SmartPI without one takes the shared settings from the defaults. It runs without the settings that belong to one thermostat: no heating type, no activation delays, no valve curve and no PWM cycle restart, as in the release 0.4.0.
+
+To give a thermostat its own settings, open the SmartPI integration configuration and add a new thermostat entry. Select the target thermostat from the list. Its sections then open in a menu, as in its options (below); the entry is created at **Save and finish**.
 
 ![SmartPI — per-thermostat configuration](../../assets/screens/config_smartpi.png)
 
-The parameters available are the same as for global defaults. Any parameter set here overrides the corresponding global default for the selected thermostat only.
+A thermostat's entry holds the settings marked "this thermostat only" in the [configuration table](#configuration) and the switch **Use the SmartPI defaults**. With the switch on, the shared settings come from the defaults, and a later change there reaches this thermostat. With the switch off, the entry holds its own values of the shared settings; they start as a copy of the defaults' values. A setting the entry does not set is never taken from the code's values: a shared one comes from the defaults, a "this thermostat only" one is not used. An entry made before the switch existed keeps its own values (switch off).
 
-The options of a per-thermostat entry open a menu with: the regulator settings; the zone with two heat sources; the zone dependencies; and, for a linearized valve, the valve curve. A zone with two heat sources is a room heated by two SmartPI thermostats, for example a radiator and an underfloor loop. It is set up from the master thermostat: the Versatile Thermostat whose devices are these two thermostats. The zone dependencies are neighbouring zones that exchange heat with this one, through a door or permanently. A thermostat that works as a zone's additional source opens a different form instead. This form shows where its zone is set up, and the settings that still apply to it: its activation delays, its heating type and the valve curve. How SmartPI learns and uses all this is described in [Zone dependencies and a second heat source](zone_dependencies.md).
+The options work like Versatile Thermostat's. Each section is reached from a menu and comes back to it. Your changes stay in the open window until the last item, **Save and finish**, writes them; closing the window discards them. The menu lists the sections with unsaved changes. When a change affects what SmartPI has learned (a new heating type, other water data, the zone or a neighbour), **Save and finish** asks once whether to reset the learned model, and names the reasons.
 
-The regulator settings include the **heating type**: water radiator (the default), water underfloor heating, electric heating mat, or fast electric heater. For a water type, SmartPI uses the supply water temperature (the temperature of the water sent to the circuit) that the Smart Boiler plugin publishes for the thermostat's circuit, when it is available. Without it, the command is the same as before. A water type also takes into account, with no setting needed, whether the boiler is called, that is, told to heat (as reported by Smart Boiler, or by Versatile Thermostat's central boiler). While a zone asks for heat that does not come, SmartPI does not treat its command as heat in its learning. Choose an electric type for an electric emitter. See [Water input](water_input.md) and its [section 4](water_input.md#4-a-boiler-that-is-not-called).
+The options of the "SmartPI defaults" entry open a menu with: the regulator settings (the shared settings); the boiler signals (entities that tell SmartPI what the boiler does, shared by every thermostat that reads entities); and **Save and finish**. The options of a per-thermostat entry open a menu with: **Heating type and regulation** (the heating type first, then the activation delays, the PWM cycle restart, for a valve the valve curve's switch, and **Use the SmartPI defaults**; with the switch off, a second step holds this thermostat's own values of the shared settings); for a water heating type, **Water and boiler** (where the water data and the boiler's call come from); the zone with two heat sources; the neighbouring zones; for a linearized valve, the valve curve; and **Save and finish**. The menu follows your choices: a water heating type chosen in the window shows **Water and boiler** at once. A zone with two heat sources is a room heated by two SmartPI thermostats, for example a radiator and an underfloor loop. It is set up from the master thermostat: the Versatile Thermostat whose devices are these two thermostats. The neighbouring zones (zone dependencies) are zones that exchange heat with this one, through a door or permanently. A thermostat that works as a zone's additional source opens a menu of its own instead. It shows where its zone is set up, and the settings that still apply to it: its heating type, its activation delays and the valve curve (and, for a water heating type, its water data). How SmartPI learns and uses all this is described in [Zone dependencies and a second heat source](zone_dependencies.md).
+
+A thermostat's settings start with its **heating type**: not set (the default), water radiator, water underfloor heating, electric heating mat, or fast electric heater. Not set means no water data and no boiler's call, as in the release 0.4.0. A water type uses the water data and the boiler's call from the sources chosen in **Water and boiler**. The water data are the supply water temperature (the temperature of the water sent to the thermostat's circuit) and the boiler's signals; they come from Home Assistant entities (any integration, or a sensor on the supply pipe) or from a provider (an integration that implements SmartPI's contract). The boiler's call says whether the boiler is told to heat; it comes from Versatile Thermostat's central boiler (the default where it serves the thermostat), from entities or from a provider. Without water data, the command is the same as before. While a zone asks for heat that does not come, SmartPI does not treat its command as heat in its learning. Choose an electric type for an electric emitter: it reads neither. See [Water and boiler inputs](water_input.md) and its [section 4](water_input.md#4-a-boiler-that-is-not-called).
 
 It is best to set up a neighbouring zone in both zones' entries, so that each sees the other. When a neighbour's window is open, SmartPI applies the chosen reaction inside its own regulation. The zone's Versatile Thermostat keeps showing its own window state, mode and preset, and the diagnostics show the reaction that is in force.
 
@@ -288,25 +292,46 @@ Do not try to tune several parameters at once during the first learning period. 
 
 ## Configuration
 
-| Parameter                      | Role                                                                                              | Default value |
-| ------------------------------ | ------------------------------------------------------------------------------------------------- | ------------- |
-| **Minimal activation delay**   | Minimum time the heater stays on once activated.                                                  | `0 s`         |
-| **Minimal deactivation delay** | Minimum time the heater stays off once deactivated.                                               | `0 s`         |
-| **Deadband**                   | Tolerance zone around the setpoint.                                                               | `0.05°C`      |
-| **Use setpoint filter**        | Enables proportional setpoint shaping and heating landing control near the target.                | `enabled`     |
-| **Use FF3**                    | Enables short-horizon predictive correction near the setpoint in disturbance recovery conditions. | `enabled`     |
-| **Allow damped P near deadband edge** | Inside the deadband, keeps a reduced proportional action near its edge. When disabled, the proportional branch is off in the whole deadband. | `disabled` |
-| **Allow PWM cycle restart on band transitions** | Allows SmartPI to restart the current PWM cycle when entering or leaving deadband or near-band. | `disabled` |
-| **Release tau factor**         | Scales the integral release delay relative to the learned time constant.                          | `0.5`         |
-| **Hysteresis on**              | Restart threshold during bootstrap learning.                                                      | `0.3°C`       |
-| **Hysteresis off**             | Stop threshold during bootstrap learning.                                                         | `0.5°C`       |
-| **Record full diagnostics (debug)** | Records the complete live diagnostic payload for historical analysis.                        | `disabled`    |
-| **Enable valve curve linearization** | Adapts SmartPI demand to non-linear radiator valves.                                        | `disabled`    |
-| **Minimum valve opening**      | First useful opening when linearization is enabled.                                               | `7%`          |
-| **Demand at knee**             | SmartPI demand corresponding to the valve slope change.                                           | `80%`         |
-| **Valve opening at knee**      | Physical valve opening at the slope change.                                                       | `15%`         |
-| **Maximum valve opening**      | Maximum allowed opening when linearization is enabled.                                            | `100%`        |
-| **Heating type**               | Water radiator, water underfloor heating, electric heating mat or fast electric heater; a water type uses Smart Boiler's water data and whether the boiler is called ([Water input, §2](water_input.md#2-configuration)). | water radiator |
+The column "Where it is set" says where each setting belongs. **Shared**: in the "SmartPI defaults" entry; a thermostat's entry holds its own value only when its switch **Use the SmartPI defaults** is off. **This thermostat only**: in the thermostat's own entry; when it is not set, it is not used.
+
+| Parameter | Role | Where it is set | Default value |
+| --------- | ---- | --------------- | ------------- |
+| **Heating type** | Not set, water radiator, water underfloor heating, electric heating mat or fast electric heater; a water type uses the water data and the boiler's call from the sources chosen in Water and boiler ([Water and boiler inputs, §2](water_input.md#2-configuration)). | this thermostat only | not set |
+| **Minimal activation delay** | Minimum time the heater stays on once activated. | this thermostat only | `0 s` |
+| **Minimal deactivation delay** | Minimum time the heater stays off once deactivated. | this thermostat only | `0 s` |
+| **Allow PWM cycle restart on band transitions** | Allows SmartPI to restart the current PWM cycle when entering or leaving deadband or near-band. | this thermostat only | `disabled` |
+| **Enable valve curve linearization** | Adapts SmartPI demand to non-linear radiator valves (shown for a valve). | this thermostat only | `disabled` |
+| **Minimum valve opening** | First useful opening when linearization is enabled. | this thermostat only | `7%` |
+| **Demand at knee** | SmartPI demand corresponding to the valve slope change. | this thermostat only | `80%` |
+| **Valve opening at knee** | Physical valve opening at the slope change. | this thermostat only | `15%` |
+| **Maximum valve opening** | Maximum allowed opening when linearization is enabled. | this thermostat only | `100%` |
+| **Use the SmartPI defaults** | On: the shared settings come from the "SmartPI defaults" entry. Off: this entry holds its own values. | this thermostat only | `enabled` (an entry made before the switch: `disabled`) |
+| **Deadband** | Tolerance zone around the setpoint. | shared | `0.05°C` |
+| **Hysteresis on** | Restart threshold during bootstrap learning. | shared | `0.3°C` |
+| **Hysteresis off** | Stop threshold during bootstrap learning. | shared | `0.5°C` |
+| **Release tau factor** | Scales the integral release delay relative to the learned time constant. | shared | `0.5` |
+| **Use setpoint filter** | Enables proportional setpoint shaping and heating landing control near the target. | shared | `enabled` |
+| **Use FF3** | Enables short-horizon predictive correction near the setpoint in disturbance recovery conditions. | shared | `enabled` |
+| **Allow damped P near deadband edge** | Inside the deadband, keeps a reduced proportional action near its edge. When disabled, the proportional branch is off in the whole deadband. | shared | `disabled` |
+| **Record full diagnostics (debug)** | Records the complete live diagnostic payload for historical analysis. | shared | `disabled` |
+
+The activation delays are SmartPI's own. Versatile Thermostat keeps delays with the same names in its TPI settings; for a thermostat on SmartPI they are not used.
+
+The **Water and boiler** item of a thermostat's options, and the **Boiler signals** item of the "SmartPI defaults" entry ([Water and boiler inputs, §2](water_input.md#2-configuration)):
+
+| Field | Role | Default value |
+| ----- | ---- | ------------- |
+| **Water data** | Where the water data come from: none, Home Assistant entities, or a provider listed by its name. | none |
+| **Boiler's call** | Where the boiler's call comes from: none, Versatile Thermostat's central boiler (offered when it serves the thermostat), Home Assistant entities, or a provider. | Versatile Thermostat's central boiler where it serves the thermostat, else none |
+| **Supply water temperature** | The temperature sensor of the water that reaches this thermostat's circuit (water data from entities). | — |
+| **Boiler signals** | As in SmartPI defaults, or this thermostat's own. | As in SmartPI defaults |
+| **Boiler can heat** | On while the boiler can heat the circuits now. | — |
+| **Hot water has priority** | On while the boiler heats the domestic hot water instead of the circuits. | — |
+| **Boiler fault** | On while the boiler reports a fault. | — |
+| **Boiler is called for heat** | On while the boiler is told to heat. | — |
+| **Why the boiler is not called** | A text sensor: `below_threshold`, `no_demand`, `activation_delay` or `boiler_fault`. | — |
+
+A change of the water data or of the supply sensor asks whether to reset the learned model (recommended), because the learned power then has other units.
 
 ### PWM cycle restart on band transitions
 
@@ -351,8 +376,8 @@ Other useful blocks under `live`:
 - `autocalib`: automatic supervision state,
 - `calibration`: forced calibration state,
 - `dependencies`: zone dependencies and the zone with two heat sources, when configured ([Zone dependencies, §9](zone_dependencies.md#9-diagnostics)),
-- `water`: the water input, for a water heating type ([Water input, §8](water_input.md#8-diagnostics)),
-- `boiler`: whether the boiler is called, and how learning treats a zone that asks for heat and gets none ([Water input, §4](water_input.md#4-a-boiler-that-is-not-called)).
+- `water`: the water data, for a water heating type, and where each of its signals comes from ([Water and boiler inputs, §8](water_input.md#8-diagnostics)),
+- `boiler`: whether the boiler is called, from which source, and how learning treats a zone that asks for heat and gets none ([Water and boiler inputs, §4](water_input.md#4-a-boiler-that-is-not-called)).
 
 In normal mode, the `setpoint` block can show:
 
@@ -375,7 +400,7 @@ https://github.com/KipK/vtherm_smartpi/tree/master/cards
 
 ## Regulation panel with Equinox
 
-SmartPI also publishes the `specific_states.smart_pi` summary and the `specific_states.regulation_diagnostics` entity reference on the thermostat entity. While SmartPI uses Smart Boiler's water data, it also writes `specific_states.water_factor`: the water factor it applies (the heat the emitter gives with the current water, compared with a reference water). Smart Boiler reads this value ([Water input, §3.4](water_input.md#34-use-in-smartpi)). The [Equinox Lovelace card](https://github.com/KipK/equinox) uses these attributes to show a dedicated **Regulation** panel from the climate card menu.
+SmartPI also publishes the `specific_states.smart_pi` summary and the `specific_states.regulation_diagnostics` entity reference on the thermostat entity. While SmartPI uses water data, it also writes `specific_states.water_factor`: the water factor it applies (the heat the emitter gives with the current water, compared with a reference water). This is SmartPI's output for any integration that reads it ([Water and boiler inputs, §3.4](water_input.md#34-use-in-smartpi)). The [Equinox Lovelace card](https://github.com/KipK/equinox) uses these attributes to show a dedicated **Regulation** panel from the climate card menu.
 
 With Equinox, you can follow SmartPI learning progress, model confidence, power breakdown, setpoint landing, history graphs, and available maintenance actions without copying the Markdown diagnostic card.
 
@@ -403,7 +428,7 @@ Use this when the thermal behavior of the room has significantly changed, for ex
 
 This service clears SmartPI learning and forces a return to bootstrap mode.
 
-It also clears what zone dependencies have learned (the heat exchanges with neighbours, the fit of a zone with two heat sources). It keeps the water input's averages. The reset offered by the zone form, and by the water input's repair notice in Home Assistant, is this same reset; see [Zone dependencies, §2.2](zone_dependencies.md#22-resetting-the-learned-model).
+It also clears what zone dependencies have learned (the heat exchanges with neighbours, the fit of a zone with two heat sources). It keeps the water input's averages. The reset offered by the zone form, by the Water and boiler form, and by the water input's repair notice in Home Assistant, is this same reset; see [Zone dependencies, §2.2](zone_dependencies.md#22-resetting-the-learned-model).
 
 ### `force_smartpi_calibration`
 

@@ -497,7 +497,7 @@ SPLIT_DEMAND_MAX = 2.0
 SPLIT_SLOW_SOURCE_S = 60 * 60.0
 SPLIT_ROLES_REVERSED_FACTOR = 1.5
 
-# --- Water input (supply water temperature from Smart Boiler) ---
+# --- Water input (the supply water temperature, from the water data source) ---
 # Heating types of a SmartPI thermostat. A water type turns the supply water into
 # the emitter power factor phi = (max(T_supply - T_room, 0) / (T_ref - 20)) ** n;
 # the electric types do not use the water. Exponents and reference waters are
@@ -524,10 +524,10 @@ WATER_NO_HEAT = 0.05
 # than the reference is taken as the reference (never less heat than without the input).
 WATER_FACTOR_MAX = 1.0
 # No reading at all (or an unknown reason) for this long after data were seen counts
-# as a lasting gap: Smart Boiler removed, or the thermostat no longer one of its zones.
+# as a lasting gap: the source removed, or it no longer serves the thermostat.
 WATER_NO_DATA_LASTING_S = 24 * 3600.0
 
-# --- A boiler that is not called (documentation/en/water_input.md, section 11) ---
+# --- A boiler that is not called (documentation/en/water_input.md, section 4) ---
 # A boiler started this soon after the zone's call answers it (VT's activation delay
 # is at most 10 min); not called for longer, the zone is held: no heat comes.
 BOILER_CALL_GRACE_S = 15 * 60.0

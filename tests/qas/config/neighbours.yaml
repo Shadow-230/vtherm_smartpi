@@ -1,0 +1,68 @@
+# QAS role 'neighbours': SmartPI QAS neighbours.
+# Written by tests/qas/config/build.py from tests/qas/roles.py; do not edit by hand.
+homeassistant:
+  name: SmartPI QAS neighbours
+frontend:
+config:
+api:
+history:
+logbook:
+system_log:
+  max_entries: 500
+recorder:
+  purge_keep_days: 7
+logger:
+  default: info
+  logs:
+    custom_components.vtherm_smartpi: info
+    custom_components.versatile_thermostat: info
+    custom_components.smartpi_room_sim: info
+    custom_components.smartpi_qas_helpers: info
+smartpi_qas_helpers:
+smartpi_room_sim:
+  rooms:
+    kitchen:
+      temperature: 19.5
+      b: 0.001
+    hall:
+      temperature: 17.5
+      b: 0.0015
+    dining:
+      temperature: 19.5
+      b: 0.001
+  heaters:
+    kitchen_heater:
+      room: kitchen
+      a: 0.035
+      delay_min: 3.0
+      power_w: 1500.0
+    hall_heater:
+      room: hall
+      a: 0.03
+      delay_min: 3.0
+      power_w: 1000.0
+    dining_heater:
+      room: dining
+      a: 0.03
+      delay_min: 3.0
+      power_w: 1200.0
+  links:
+  - rooms:
+    - kitchen
+    - hall
+    g: 0.004
+    door: kitchen_door
+  - rooms:
+    - kitchen
+    - dining
+    g: 0.003
+  openings:
+    kitchen_door:
+      device_class: door
+    hall_window:
+      device_class: window
+      room: hall
+      g: 0.02
+  outdoor:
+    mean: 3.0
+    swing: 3.0

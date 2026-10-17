@@ -73,55 +73,77 @@ entrée de thermostat.
 
 ### 2.1 Options et formulaires
 
+Les options d'une entrée de thermostat fonctionnent comme celles de Versatile Thermostat. Chaque
+section s'ouvre depuis un menu et y revient. Les modifications restent dans la fenêtre ouverte (le
+« brouillon ») jusqu'au dernier élément, **Save and finish** (enregistrer et terminer ; libellé affiché
+en anglais), qui les écrit. Fermer la fenêtre les abandonne. Le menu dit quelles sections ont des
+modifications non enregistrées. Une nouvelle entrée de thermostat se crée avec le même menu : rien
+n'est créé avant **Save and finish**.
+
 ```mermaid
 flowchart TD
     O["Options de l'entrée du thermostat"] --> R{"Ce thermostat est-il la source additionnelle d'une zone ?"}
-    R -- oui --> SR["Son rôle, l'entrée de la source principale, les délais d'activation, le type de chauffage, la courbe de vanne"]
+    R -- oui --> SM{"Menu de la source additionnelle"}
+    SM --> SR["Réglages qui s'appliquent encore : type de chauffage, délais d'activation, courbe de vanne"]
+    SM --> SW["Eau et chaudière, pour un type de chauffage à eau"]
+    SM --> SS["Save and finish"]
     R -- non --> M{Menu}
-    M --> ST["Réglages du régulateur"]
+    M --> ST["Type de chauffage et régulation"]
+    M --> WB["Eau et chaudière, pour un type de chauffage à eau"]
     M --> ZN["Zone à deux sources de chaleur"]
-    M --> DL["Dépendances : voisins"]
+    M --> DL["Zones voisines"]
     M --> VC["Courbe de vanne, quand la linéarisation est active"]
+    M --> SV["Save and finish"]
     ZN --> ZE{"Une zone existe déjà ?"}
     ZE -- oui --> ZM["La modifier ou la supprimer"]
-    ZE -- non --> MA["Thermostat maître"]
+    ZE -- non --> MX{"Un maître ?"}
+    MX -- non --> M
+    MX -- oui --> MA["Thermostat maître"]
     ZM --> MA
-    ZM --> RS
+    ZM -- supprimer --> M
     MA --> MV{"Valide ?"}
     MV -- non --> MA
-    MV -- oui --> SO["Source 1, Source 2 : source principale, règle de répartition, réponse personnalisée"]
+    MV -- oui --> HT{"Les deux sources ont un type de chauffage ?"}
+    HT -- non --> HQ["Type de chauffage de la source qui n'en a pas"]
+    HT -- oui --> SO["Source 1, Source 2 : source principale, règle de répartition, réponse personnalisée"]
+    HQ --> SO
     SO --> PA["Paramètre de la règle, avec le retard et l'inertie de la source additionnelle si la réponse est personnalisée"]
-    PA --> AF{"Change ce qui a été appris ?"}
-    AF -- oui --> RS["Remettre à zéro le modèle appris de la zone ?"]
-    AF -- non --> SV["Enregistrer dans l'entrée de la source principale"]
-    RS --> SV
+    PA --> PV{"Les voisins peuvent être fusionnés ?"}
+    PV -- non --> PA
+    PV -- oui --> M
     DL --> NA["Ajouter une zone voisine : entité"]
     DL --> NE["Modifier une zone voisine"]
-    DL --> NR["Retirer des voisins"]
+    DL --> NR["Retirer des zones voisines"]
     NA --> ND["Détails : mode, capteurs de porte, réaction à la fenêtre"]
     NE --> ND
     ND --> V{"Valide ?"}
     V -- non --> ND
     V -- oui --> W{"Avertissements ?"}
     W -- oui --> NC["Confirmer les avertissements"]
-    W -- non --> NF{"Nouvelle connexion ?"}
-    NC --> NF
-    NF -- oui --> NRS["Remettre à zéro le modèle appris de la zone ?"]
-    NF -- non --> NSV[Enregistrer]
-    NRS --> NSV
-    NR --> NRS
+    W -- non --> M
+    NC --> M
+    NR --> M
+    SV --> CK{"Modifié entre-temps dans une autre fenêtre ?"}
+    CK -- oui --> AB["Arrêt : rien n'est écrit"]
+    CK -- non --> AF{"Une modification change ce qui a été appris ?"}
+    AF -- oui --> RS["Remettre à zéro le modèle appris ?"]
+    AF -- non --> WR["Écrire les entrées, chacune se recharge une fois"]
+    RS --> WR
 ```
 
 **Zone à deux sources de chaleur.**
 
 - **Thermostat maître.** Le formulaire liste les Versatile Thermostat sur climate qui ont ce
   thermostat parmi leurs appareils. (Un VTherm sur climate commande d'autres thermostats, ses appareils.)
-  S'il n'y en a aucun, le formulaire explique quoi créer. Le maître doit avoir l'autorégulation désactivée,
+  S'il n'y en a aucun, la section revient au menu, qui explique quoi créer. Le maître doit avoir l'autorégulation désactivée,
   car SmartPI régule dans ses appareils. Il doit avoir exactement deux appareils. Les deux doivent être des
   Versatile Thermostat qui utilisent SmartPI et mesurent la zone avec le même capteur de température.
   Aucun des deux ne peut déjà appartenir à une autre zone.
+- **Types de chauffage.** La zone a besoin du type de chauffage des deux appareils. Un appareil dont
+  l'entrée propre n'en définit pas doit l'indiquer dans une étape avant les sources. Le type est écrit
+  dans l'entrée de cet appareil à **Save and finish** (une entrée est créée pour lui s'il n'en a pas).
 - **Sources.** Source 1 et Source 2 sont les appareils du maître. Le formulaire montre chacune avec le
-  type de chauffage de sa propre entrée, et ne le demande pas. Dans la même étape, l'utilisateur choisit
+  type de chauffage de sa propre entrée. Dans la même étape, l'utilisateur choisit
   la **source principale** : celle dont le SmartPI régule et corrige vite. Par défaut, c'est l'appareil
   le plus rapide. L'utilisateur choisit aussi la règle de répartition, et le formulaire propose la règle
   recommandée pour les deux types de chauffage (section 5.3). Enfin, l'utilisateur indique s'il veut
@@ -136,8 +158,9 @@ flowchart TD
 - **Où c'est enregistré.** La zone est enregistrée dans l'entrée de la source principale, comme son
   élément `source`, qui nomme aussi le maître (`zone_master`). Les voisins et les portes de la zone sont
   dans la même entrée. L'entrée de l'autre thermostat ne stocke rien sur la zone. Ce thermostat trouve
-  son rôle dans l'entrée de la source principale. Un thermostat sans entrée SmartPI en reçoit une, créée
-  à partir des valeurs par défaut globales. Sa création ne redémarre que ce thermostat.
+  son rôle dans l'entrée de la source principale. Un thermostat sans entrée SmartPI en reçoit une à
+  **Save and finish**. Elle utilise les réglages partagés des valeurs par défaut et contient son type de
+  chauffage. Sa création ne redémarre que ce thermostat.
 - **Une source principale autre que le thermostat dont les options sont ouvertes.** Cela arrive quand
   la zone est configurée depuis le thermostat qui devient la source additionnelle, ou quand on change de
   source principale. Le formulaire déplace alors la zone, avec les voisins de cette entrée, vers l'entrée
@@ -145,20 +168,23 @@ flowchart TD
   alors comme source additionnelle. Un voisin qui fait maintenant partie de la zone est retiré. Si un
   voisin déplacé entre en conflit avec un des voisins propres à la nouvelle source principale (le même
   voisin ou le même capteur de porte), c'est le voisin déplacé qui l'emporte. Si la liste ne passe
-  toujours pas la validation, le déplacement s'arrête. Les voisins déplacés apprennent de nouveau leur
-  échange dans la nouvelle source principale.
-- **Un seul formulaire à la fois.** À l'enregistrement, le formulaire vérifie de nouveau que le maître
-  et les entrées des deux thermostats sont toujours tels qu'il les a lus. Sinon, il s'arrête et demande
-  à l'utilisateur de le rouvrir. Ainsi, deux formulaires ouverts en même temps ne peuvent pas laisser
-  chaque thermostat nommer l'autre.
+  toujours pas la validation, l'étape du paramètre affiche l'erreur `zone_move_conflict`. Les voisins
+  déplacés apprennent de nouveau leur échange dans la nouvelle source principale. Les deux entrées sont
+  écrites à **Save and finish**.
+- **Une seule fenêtre à la fois.** À **Save and finish**, le formulaire vérifie de nouveau que le maître
+  et les entrées des deux thermostats sont toujours tels qu'il les a lus, et que la liste des dépendances
+  de cette entrée n'a pas changé dans une autre fenêtre. Sinon, il s'arrête (`zone_changed`), n'écrit
+  rien et demande à l'utilisateur de rouvrir la fenêtre. Ainsi, deux fenêtres ouvertes en même temps ne
+  peuvent pas laisser chaque thermostat nommer l'autre.
 - **Voisins d'une zone.** La source additionnelle de la zone et son maître ne peuvent pas être ajoutés
   comme voisins de la zone, car ils chauffent ou mesurent la même zone.
-- **Abandons.** Le formulaire s'arrête avec un message dans ces cas : la zone a changé pendant que le
-  formulaire était ouvert (`zone_changed`) ; les voisins des deux entrées ne peuvent pas être fusionnés
-  (`zone_move_conflict`) ; l'entrée de la source principale ne peut pas être créée (`main_entry_missing`).
-- **Les options de la source additionnelle** montrent quelle entrée contient la zone. Elles montrent
-  aussi les réglages qui s'appliquent encore tant qu'elle suit la source principale : ses délais
-  d'activation, son type de chauffage et, pour une vanne, sa courbe. Ses autres réglages du régulateur
+- **Quand la fenêtre s'arrête.** Seul **Save and finish** peut fermer la fenêtre sans rien écrire :
+  quand la zone a changé pendant qu'elle était ouverte (`zone_changed`), ou quand l'entrée de l'autre
+  thermostat de la zone ne peut pas être créée (`main_entry_missing`). Dans une section, un problème est une erreur
+  sur son formulaire, ou la section revient au menu avec une note.
+- **Les options de la source additionnelle** ouvrent un menu à elles, qui montre quelle entrée contient
+  la zone. Son premier élément contient les réglages qui s'appliquent encore tant qu'elle suit la source
+  principale : son type de chauffage, ses délais d'activation et, pour une vanne, sa courbe. Ses autres réglages du régulateur
   gardent leurs valeurs. Ils ne s'appliquent que lorsqu'elle régule seule parce que la source principale
   est devenue silencieuse, c'est-à-dire qu'elle n'envoie plus de commandes (section 5.7).
 - **Types de chauffage au démarrage.** À chaque démarrage de la source principale, le handler lit
@@ -167,9 +193,11 @@ flowchart TD
   effet tout de suite. Une réponse personnalisée réglée dans le formulaire de zone est conservée. Un type
   de chauffage modifié de cette façon ne compte pas comme une modification de la zone : si l'utilisateur
   ne modifie ensuite que la règle, le formulaire ne propose pas de remise à zéro.
-- **Un maître modifié.** Au démarrage, la source principale vérifie que le maître a toujours exactement
-  ces deux thermostats comme appareils. Sinon, elle écrit un avertissement dans le journal. La zone
-  continue de fonctionner comme elle est configurée jusqu'à la prochaine ouverture du formulaire.
+- **Un maître modifié.** Au démarrage, et quand son entrée est rechargée, la source principale vérifie
+  que le maître a toujours exactement ces deux thermostats comme appareils. Elle les compare par
+  identifiant unique (l'identifiant qui ne change jamais ; au rechargement, le thermostat n'a pas
+  encore son identifiant d'entité). S'ils diffèrent, elle écrit un avertissement dans le journal. La
+  zone continue de fonctionner comme elle est configurée jusqu'à la prochaine ouverture du formulaire.
 - **Supprimer la zone** rend à chaque thermostat sa propre régulation. L'ancienne source additionnelle
   régule avec le modèle qu'elle avait avant de prendre ce rôle. Une entrée que le formulaire a créée pour
   elle reste en place.
@@ -190,9 +218,10 @@ flowchart TD
   extérieure.
 - **Un voisin affiché `indistinguishable`** n'a pas pu être distingué de l'extérieur ou d'un autre
   voisin. Rien n'est publié pour lui, et la zone fonctionne comme s'il n'existait pas.
-- **Abandons.** Le formulaire s'arrête quand l'utilisateur modifie un voisin dont l'entité n'existe plus
-  (`neighbour_missing`), retire des voisins sans rien sélectionner (`dependencies_unchanged`), ou
-  enregistre après que la liste a changé dans un autre formulaire (`zone_changed`).
+- **Chaque étape se termine dans le menu.** Modifier un voisin dont l'entité n'existe plus est une
+  erreur sur le formulaire (`neighbour_missing`). Retirer sans rien sélectionner revient au menu, qui le
+  dit. Enregistrer après que la liste a changé dans une autre fenêtre arrête la fenêtre (`zone_changed`).
+  Le menu des voisins, comme celui de la zone, a un élément pour revenir au menu principal.
 
 **Configuration stockée.** Les éléments sont stockés dans les options de l'entrée, sous
 `smart_pi_dependencies`. Un élément voisin contient `id`, `kind` (`neighbour`), `entity` (identifiant
@@ -206,18 +235,21 @@ aussi contenir `lead_lag_min` et `lead_tau_min`, que rien n'utilise.
 
 ### 2.2 Remise à zéro du modèle appris
 
-Quand une modification de la configuration touche ce que la zone a appris, le formulaire affiche une
-étape avec l'option « Remettre à zéro le modèle appris de la zone ». L'option est cochée par défaut
-(`zone_reset` dans le formulaire de zone, `model_reset` dans les formulaires des voisins) :
+Une modification qui touche ce qui a été appris est une raison pour une seule question à **Save and
+finish** : une étape « Remettre à zéro le modèle appris » (`model_reset`), cochée par défaut, qui
+nomme les sections d'où viennent les raisons. Elle est posée une fois, même quand plusieurs sections
+ont changé, et pas du tout sans raison :
 
-| Modification | Affiche l'étape de remise à zéro |
+| Modification | Une raison pour la question de remise à zéro |
 |---|---|
 | une zone configurée ou supprimée, sa source additionnelle remplacée par une autre, la source principale changée, la réponse personnalisée de la source additionnelle modifiée | oui |
 | un voisin ajouté ou retiré, son mode ou ses capteurs de porte modifiés | oui |
+| le type de chauffage, la source des données d'eau ou son capteur de départ ([Entrées eau et chaudière, §2](water_input.md#2-configuration)) | oui |
 | la règle de répartition ou son paramètre, une réaction à la fenêtre, les délais d'activation et les autres réglages du régulateur | non |
 
-- **Comment elle s'applique.** Si l'utilisateur choisit la remise à zéro, le formulaire stocke un
-  nouveau jeton aléatoire dans l'entrée qui contient la zone (`smart_pi_reset_token`). Quand le
+- **Comment elle s'applique.** Si l'utilisateur choisit la remise à zéro, l'enregistrement stocke un
+  nouveau jeton aléatoire (`smart_pi_reset_token`) dans chaque entrée concernée : celle de ce
+  thermostat et, pour une zone, celle de la source principale (où se trouve la zone). Quand le
   thermostat démarre avec cette entrée, SmartPI remet à zéro tout son modèle appris, une seule fois :
   `a`, `b`, les temps morts (les délais avant que la zone réagisse à une commande), l'ajustement de la
   zone et les échanges, comme le fait le service `reset_smartpi_learning`. Il garde le jeton dans son
@@ -330,6 +362,8 @@ de registre, donc renommer l'entité garde le lien.
   des données.
 - **Configurez un voisin dans les entrées des deux zones**, chacune listant l'autre. L'échange marche
   dans les deux sens, et le formulaire avertit quand l'entrée propre du voisin ne liste pas cette zone.
+- Les formulaires de voisin reviennent au menu des options ; le voisin est écrit à **Save and
+  finish** (section 2.1).
 - Pour un voisin VTherm, la **réaction à la fenêtre** dit quoi faire tant que la connexion est active
   et que le voisin signale une fenêtre ouverte : `nothing`, `turn_off`, `frost`, `eco`.
 - Une connexion est ignorée tant que le voisin est indisponible, est en mode sécurité, ou n'a pas de
@@ -362,7 +396,7 @@ stateDiagram-v2
   puis `source_heat`, puis `door_settling`. Le verrou `source_heat` appartient à la deuxième source
   (section 5.5). En dessous de tous, `boiler_settling` met l'apprentissage en pause pendant que l'émetteur
   refroidit parce que la chaudière n'est pas appelée, et pendant qu'il se réchauffe de nouveau une
-  fois que la chaudière démarre ([Entrée eau, §4](water_input.md#4-une-chaudière-qui-nest-pas-appelée)).
+  fois que la chaudière démarre ([Entrées eau et chaudière, §4](water_input.md#4-une-chaudière-qui-nest-pas-appelée)).
 - Un voisin toujours connecté ne met pas l'apprentissage en pause. Le `b` de SmartPI contient son
   échange, et l'ajustement commun (section 4.4) l'en sépare. Le premier plan avait un verrou sur l'écart
   de température avec le voisin (`coupling_gradient`). Il a été abandonné : avec un voisin plus froid en
@@ -583,8 +617,8 @@ commandes continuent d'arriver pendant `L_f`, et on suppose que la dernière res
 - **Cycles.** La source signale chaque cycle qu'elle démarre. Un actionneur tout-ou-rien
   chauffe d'abord, à son **niveau**, pendant son temps de marche. Une vanne garde sa puissance
   pendant tout le cycle. Le niveau vaut 1 sans données d'eau. Avec des données d'eau, c'est le
-  facteur d'eau de la source (sa puissance comparée à sa puissance avec l'eau de référence, voir
-  [Entrée eau](water_input.md)). En effet, un plancher dont l'eau est à 30 degC donne, pendant
+  facteur d'eau de la source (sa puissance comparée à sa puissance avec l'eau de référence, voir les
+  [entrées eau et chaudière](water_input.md)). En effet, un plancher dont l'eau est à 30 degC donne, pendant
   qu'il est en marche, environ 37 % de la puissance qu'il donne avec une eau à 45 degC (pièce à
   20 degC). Les propres cycles de la source principale sont enregistrés de la même façon.
 - **Le type de chaque appareil est le type de chauffage de sa propre entrée SmartPI.** Le
@@ -676,8 +710,8 @@ flowchart TD
   commandes de la source principale ; tant que la zone est éteinte ; sans température de la zone
   ou sans température extérieure ; et après un écart entre deux calculs plus long que
   `ZONE_FIT_MAX_GAP_S`. Ainsi, aucune fenêtre ne couvre une pause. Les fenêtres ne s'arrêtent pas
-  pour la pause d'apprentissage de SmartPI lui-même (`set_smartpi_learning`, que Smart Boiler
-  utilise aussi pour sa pause), ni pour le délestage ou la coupure de garde. La puissance réalisée
+  pour la pause d'apprentissage de SmartPI lui-même (`set_smartpi_learning`, que d'autres
+  intégrations peuvent aussi utiliser), ni pour le délestage ou la coupure de garde. La puissance réalisée
   des cycles décrit toujours ce que la zone a reçu. SmartPI continue de maintenir le `a` et le `b`
   de l'ajustement (section 5.5) pendant que son apprentissage est en pause, car cela applique un
   modèle et n'apprend rien.
@@ -1054,7 +1088,7 @@ variation quotidienne de ±3 degC. Le jour 1 commence 1 degC sous la consigne. L
 |---|---|---|---|
 | plancher derrière une vanne | 0.020 degC | 0.050 degC | 1.03/1.02/1.03 |
 | dalle qui chauffe dans son épaisseur (deux inerties en série) | 0.035 degC | 0.056 degC | `a` 0.95, `b` 1.06, `a_f` 1.18 |
-| eau sur courbes de chauffe, données de Smart Boiler (rattrapage 6.7 h contre 5.9 h) | 0.053 degC | 0.094 degC | 0.99/0.97/0.94 |
+| eau sur courbes de chauffe, données d'eau venant d'entités (rattrapage 6.7 h contre 5.9 h) | 0.053 degC | 0.094 degC | 0.99/0.97/0.94 |
 | deux zones, porte ouverte 6–23 h | 0.034 / 0.029 degC | 0.072 / 0.055 degC | `k` 0.89 / 0.94 |
 | deux zones, porte toujours ouverte | 0.021 / 0.018 degC | 0.055 / 0.042 degC | `k` 1.04 / 0.96 |
 
@@ -1152,7 +1186,7 @@ Tous les modules ci-dessous sont du Python simple et peuvent être testés sans 
 | `smartpi/split.py` | Deuxième source : règles de répartition, boucle d'allocation, recommandation selon le type d'émetteur |
 | `smartpi/source_settings.py` | Deuxième source : sa règle et ses émetteurs, lus dans l'élément configuré |
 | `smartpi/source_link.py` | Deuxième source : le lien entre la source principale et la source additionnelle dans un même Home Assistant (les commandes dans un sens, les cycles et le plafond de puissance dans l'autre) |
-| `smartpi/water_input.py`, `repairs.py` | Le facteur d'eau de chaque source et la remise à zéro proposée quand des données d'eau apparaissent ou disparaissent ; voir [Entrée eau](water_input.md) |
+| `smartpi/water_input.py`, `repairs.py` | Le facteur d'eau de chaque source et la remise à zéro proposée quand des données d'eau apparaissent ou disparaissent ; voir [Entrées eau et chaudière](water_input.md) |
 
 Dans les fichiers existants :
 
@@ -1169,12 +1203,16 @@ Dans les fichiers existants :
   source additionnelle suit la voie d'exécution au lieu de son propre régulateur. Tant que la
   source principale est silencieuse, il fait tourner son propre régulateur (section 5.7).
 - **`config_flow.py`** donne à l'entrée du thermostat un menu d'options avec le formulaire de zone,
-  la liste des dépendances et les formulaires de voisin. Un thermostat qui travaille comme source
-  additionnelle reçoit à la place son formulaire de rôle. L'étape d'import crée l'entrée d'un membre
-  de la zone qui n'en a pas (section 2.1).
+  la liste des dépendances et les formulaires de voisin ; un seul mixin (`SmartPIFlowSections`)
+  contient toutes les sections, pour les options et pour une nouvelle entrée. Chaque section travaille
+  sur le brouillon et se termine dans le menu ; `async_step_save` vérifie de nouveau, pose une seule
+  fois la question de remise à zéro et écrit. Un thermostat qui travaille comme source additionnelle
+  reçoit à la place un menu à lui. L'étape d'import crée, à l'enregistrement, l'entrée d'un membre de
+  la zone qui n'en a pas (section 2.1).
 - **`__init__.py`** recharge la source principale de la zone quand l'entrée de sa source
-  additionnelle est enregistrée. Quand le formulaire de zone crée une entrée, il ne recharge que le
-  thermostat concerné.
+  additionnelle est enregistrée, sauf si le même enregistrement a aussi écrit l'entrée de la source
+  principale (celle-ci se recharge d'elle-même : chaque entrée se recharge une fois). Quand le
+  formulaire de zone crée une entrée, il ne recharge que le thermostat concerné.
 
 **Données lues dans Versatile Thermostat.** Les lectures viennent des attributs d'état que VTherm
 publie. Ces attributs peuvent changer avec la branche `master` de VTherm :
@@ -1253,6 +1291,10 @@ environ 16 KB de l'état sauvegardé de SmartPI par mode HVAC, 26 KB avec un voi
 
 - L'état sauvegardé de SmartPI garde aussi le dernier jeton de remise à zéro qu'il a appliqué
   (`dependency_reset_token`, section 2.2).
+- La zone et les voisins sont enregistrés dans les options des entrées (`smart_pi_dependencies`).
+  L'entrée que le formulaire de zone crée pour un membre qui n'en a pas utilise les réglages
+  partagés des valeurs par défaut (`smart_pi_use_defaults` activé) et contient le type de chauffage
+  du membre et, quand la zone y passe, les éléments de la zone.
 - Un ancien état sauvegardé sans cette clé se charge comme avant.
 - Au démarrage, l'état des éléments qui ne sont plus configurés est supprimé.
 - Un état sauvegardé illisible est ignoré, les lignes inutilisables sont sautées, et les échanges
@@ -1358,4 +1400,4 @@ critères. Les résultats des sections 4.6 et 5.8 viennent de ces tests.
 | `SPLIT_PREDICTED_SHARE` | 1 | part de l'erreur prévue que la source peut corriger |
 | `SOURCE_BRAKE_STEPS` | 8 | divisions par deux qui trouvent le plafond du freinage |
 | `SOURCE_BOOST_ERROR_C` | 0.2 degC | une zone plus froide que cela fait son rattrapage avec la source principale qui travaille comme si elle était seule |
-| `WATER_NO_HEAT` | 0.05 | plus petit plafond de puissance d'une source sur eau ([Entrée eau, §10](water_input.md#10-constantes-limites-et-points-ouverts)) |
+| `WATER_NO_HEAT` | 0.05 | plus petit plafond de puissance d'une source sur eau ([Entrées eau et chaudière, §10](water_input.md#10-constantes-limites-et-points-ouverts)) |

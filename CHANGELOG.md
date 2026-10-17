@@ -4,10 +4,117 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+- `testing.md` gets a section "Coverage": the code coverage per file against the baseline, the
+  fork's own lines (99.2 % of the lines, 98.0 % of the branches) with the reason for each line left
+  uncovered, and a matrix of the features, their variants and use cases with where each is tested.
+  Section 4 lists the new test files.
+- Tests for the edge cases the code coverage found in the options forms (entities without a unique
+  id, a zone or entry changed in another window, a member entry that cannot be created) and in the
+  computation of neighbours and zones (fits that cannot be published, saved states that cannot be
+  read, a missing outdoor temperature or target).
+- Remove the second source's `response` property, which nothing read (found by the code coverage).
+- Tests for the four services (each reaches the thermostats a call names, skips the others) and
+  for the paths the code coverage found untested: the migration's edge cases, the heating inputs
+  without a registry, a diagnostic sensor removed after a takeover, the valve's activation floor
+  with water data, a second source turned off, a thermostat range that is not a range.
+- The QAS test pack follows the new options forms: every setup and scenario window goes through
+  its menu and ends with "Save and finish" (and the reset question where a change affects what
+  was learned); a zone's member without a heating type gets it in the zone's setup. QD1 and QE1
+  check the errors and notes that replace the forms' aborts and the save stopped by
+  `zone_changed`; QB2 checks the migrated entries and QB3 that 0.4.0 still loads them. A new
+  scenario, QA7, checks that a closed window stores and reloads nothing, that the menu names the
+  change in the instance's language, and that a save reloads the entry once (the helpers count
+  the entry's setups). QZ1 also checks the new texts.
+- Rework the options forms: one save at the end, as in Versatile Thermostat. Each section is
+  reached from a menu and comes back to it; the changes stay in the open window, and only the
+  last item, "Save and finish", writes them. Closing the window discards everything, also what
+  a section would write to other entries (a zone moved to the main source's entry, an entry for
+  a zone's member). The menu names the sections with unsaved changes, with the labels of the
+  interface's language, and follows the choices (a water heating type chosen in the window
+  shows "Water and boiler" at once). A thermostat's settings start with the heating type, then
+  the "thermostat only" settings and "Use the SmartPI defaults"; with the switch off, a second
+  step holds the thermostat's own values of the shared settings. The defaults entry's menu holds
+  the shared settings, the boiler's signals and the save. Creating a thermostat's entry opens
+  the same menu, with every section; the entry is created at save. The reset question is asked
+  once, at save, with its reasons (heating type, water data, zone, neighbours). No section
+  aborts any more: a neighbour that is gone is an error on its form, a missing master or a
+  removal with nothing chosen goes back to the menu with a note, neighbours that cannot be
+  merged are an error on the zone's parameter step; only the save stops when the zone or the
+  dependencies changed in another window meanwhile. A zone's member without a heating type is
+  asked for it. The menus of the zone and of the neighbours have an item to go back. Each entry
+  written by one save reloads once.
+- Sort the settings into shared and "this thermostat only", and read them per key. The
+  heating type, the activation delays, the valve curve and the PWM cycle restart belong to one
+  thermostat: they leave the "SmartPI defaults" entry and are set in the thermostat's own entry;
+  not set means not used (no heating type: no water data and no boiler's call; no delays; no
+  valve curve; no PWM restart), as in the release 0.4.0. The other settings are shared: they
+  come from the defaults, or from the thermostat's own entry when its new switch "Use the
+  SmartPI defaults" (`smart_pi_use_defaults`) is off. At run time no value is taken from the
+  code where an entry can hold one; a shared setting missing from an entry edited by hand is
+  logged once and takes the form's value. Versatile Thermostat's TPI delays are no longer read
+  for a thermostat on SmartPI. A thermostat without an entry of its own runs as in the release.
+  The heating type gets a "Not set" choice and comes first in a thermostat's settings; the
+  zone's emitter types and "Record full diagnostics" follow the same rule, and a save of the
+  defaults reloads every thermostat that uses them. The entries move to minor version 2 (the
+  major version stays 1, so 0.4.0 still loads them): a thermostat's entry keeps its values with
+  the switch off; the defaults entry keeps the shared settings only, and the "thermostat only"
+  settings it set (such as the heating type of the fork's earlier versions) go, once Home
+  Assistant has started, to an entry created for each thermostat on SmartPI that has none, with
+  a repair notice listing them.
+- Add the sources of the inputs from the heating system. The water data (the supply water
+  temperature of a thermostat's circuit, the boiler can heat, hot water has priority, a fault)
+  and the boiler's call now come from a source chosen in a new "Water and boiler" item of a
+  thermostat's options, shown for a water heating type: none, Home Assistant entities (any
+  integration, or a sensor on the supply pipe), or a provider (an integration that implements
+  SmartPI's contract, v1: it registers in `hass.data["vtherm_smartpi_heating_providers"]`, and
+  nothing is imported either way); for the call also Versatile Thermostat's central boiler.
+  The choice is explicit, from a list built when the form opens, with the registered
+  providers. The boiler's signals are set once in the "SmartPI defaults" entry, whose options
+  now open a menu (regulator settings, boiler signals); a thermostat takes them from there or
+  sets its own. A change of the water source or of its supply sensor asks whether to reset the
+  learned model; the old source's water state and an open water repair go, and a kept model is
+  not asked about again when the new data start. With Versatile
+  Thermostat's central boiler, SmartPI now also gives the reason the boiler is not called
+  (`activation_delay`, `no_demand`, `below_threshold`) and the demand, from VTherm's live
+  entities. The diagnostics show where each signal comes from (`inputs`), and the `boiler`
+  block appears for a chosen source even without data. A zone's additional source chooses its
+  water data in a menu of its own. The reading of one integration's interface is removed:
+  such an integration becomes a provider. Entries without the new keys work as before (no
+  water data; the call from VTherm's central boiler where it serves the thermostat).
+  Documented in `documentation/en/water_input.md` ("Water and boiler inputs"); the QAS set
+  "with water data" (the role `water`, scenarios QW1–QW10) is built.
+- Fix a duplicate diagnostic sensor (an error already in 0.4.0). The "SmartPI defaults"
+  entry shows the diagnostic sensor of each SmartPI thermostat that has no entry of its own.
+  When such a thermostat got its own entry, the defaults entry kept the sensor, so creating
+  the own entry, reloading it or saving its options logged the error "Platform vtherm_smartpi
+  does not generate unique IDs. ID smartpi_diag_... already exists", and the own entry's
+  settings (such as recording full diagnostics) did not reach the sensor. This lasted until
+  the defaults entry was reloaded or Home Assistant restarted; after a reload of the defaults
+  entry, the thermostat had no diagnostic sensor at all until its own entry was reloaded.
+  The own entry now takes the sensor over at once (same unique ID, same entity).
+- Fix a false warning about a zone's master. After a zone was saved, or any SmartPI entry
+  was reloaded, the log said that the zone's master "no longer has exactly this thermostat
+  and ... as its devices", although it had exactly these two. At a reload, Versatile
+  Thermostat builds SmartPI before Home Assistant gives the thermostat its entity ID, so
+  the check compared the master's devices with an empty ID. The devices are now compared
+  by unique ID. A full restart did not show it: there, SmartPI is set up after Versatile
+  Thermostat has built its thermostats, and starts later, once they have their IDs.
+- Add the QAS test pack (`tests/qas/`): tests on a real Home Assistant, run on the bench's
+  test instances, for the sets without and with water data. It holds a room simulator as a
+  Home Assistant integration (its physics is now the in-process simulator's file, which
+  `tests/sim/plant.py` loads; its boiler can be off, in a fault or give hot water priority, and
+  each water emitter has a supply sensor), test-only helpers (among them a heating provider of
+  SmartPI's contract fed by the simulator), nine roles with a `configuration.yaml` each,
+  setup scripts that create every entry through the API, and the runner with 46 scenarios on
+  the bench's harness. A role names no instance: the testing session chooses where each runs
+  (`--role`), and `compare.py` takes the two results files it compares. The catalogue is in
+  `testing.md`, section 6. New tests check the simulator, the helpers' provider and the pack
+  in CI, and, locally, each role's setup through the real forms of Versatile Thermostat 10.5.1
+  and SmartPI.
 - Rework the documentation. Where the fork changes SmartPI's existing behaviour, the
   technical, diagnostics and user documents now describe it in place. `zone_dependencies.md`
   and `water_input.md` share one layout and give the reasons behind the design, the data
-  read from Versatile Thermostat and Smart Boiler, and the formulas. All tests, the
+  read from Versatile Thermostat and from the sources of the water data, and the formulas. All tests, the
   simulator and the scenarios with their criteria are in `testing.md`. The documentation is
   written in plain language and is also in French and Polish, translated from the English.
   The French user, technical and diagnostics documents and README now say everything the
@@ -18,15 +125,16 @@ All notable changes to this project will be documented in this file.
 - Learn nothing wrong from a boiler that is not called. A zone calling for heat while
   its boiler is held off (a start threshold of devices, power or valve opening, an
   activation delay) took its command for heat and lost its learned emitter power. SmartPI
-  now reads the boiler's call — Smart Boiler's `boiler_called` and `call_reason` where
-  Smart Boiler controls the boiler, otherwise Versatile Thermostat's central boiler for a
-  thermostat it serves — and, once the call has gone unanswered for 15 min (plus the
+  now reads the boiler's call — from the source chosen in the thermostat's options:
+  Versatile Thermostat's central boiler for a thermostat it serves (the default), entities
+  or a provider — and, once the call has gone unanswered for 15 min (plus the
   cycle for a switched device), learns with the power 0 (only how the zone cools),
   waiting while the emitter cools after the stop and warms after the start; the
   dead-time estimator does not time the boiler's start, a calibration is cancelled, and
   the feed-forward trim and the zone exchanges pause. Regulation is unchanged. A `boiler`
-  block in the diagnostics shows the call and, from Smart Boiler, the demand against its
-  thresholds. Documented in `documentation/en/water_input.md`, section 11.
+  block in the diagnostics shows the call, its reason and the demand against the boiler's
+  thresholds where the source gives it. Documented in `documentation/en/water_input.md`,
+  section 4.
 - Fix the fade-in of known exchanges. Always-connected neighbours enter together once
   each is known, and the loss fitted without them replaces SmartPI's b at the pace
   their exchanges enter, so the feed-forward no longer dips for an hour when they are
@@ -67,8 +175,8 @@ All notable changes to this project will be documented in this file.
   record switched cycles at their water factor in the exchange learning.
 - Add the water input: a heating type in the regulator settings (water radiator by
   default, water underfloor heating, electric mat, fast electric). For a water type,
-  SmartPI reads the supply water of the thermostat's circuit from the Smart Boiler
-  plugin (its feature manager or public API) and turns the command into power at a
+  SmartPI reads the supply water of the thermostat's circuit from the source chosen in its
+  options (entities or a provider) and turns the command into power at a
   reference water: the emitter gets power divided by the water factor, learning sees
   the command times the factor, hot water with priority holds the command and the
   integral, the cold water of an idle boiler holds only the integral (the zone can

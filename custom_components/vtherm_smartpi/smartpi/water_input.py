@@ -1,4 +1,4 @@
-"""Water input: the supply water of a thermostat's circuit, from Smart Boiler.
+"""Water input: the supply water of a thermostat's circuit, from the water data source.
 
 A unit of SmartPI's command brings the heat of a unit at the reference water
 only. With weather-compensated water, a mixer, burner cycling or hot water with
@@ -23,11 +23,14 @@ Rules (documentation/en/water_input.md):
   after data were seen, until ``WATER_NO_DATA_LASTING_S``, after which they
   count as lasting;
 - a lasting gap (``not_mapped``, ``circuit_not_measured``, ``several_circuits``)
-  and no data since the start use ``phi = 1``, as without the interface;
+  and no data since the start use ``phi = 1``, as without water data;
+- other water inputs chosen in the options (another source, another supply sensor,
+  or none) drop what was learned of the old inputs' water at once (``forget_data``);
+  ``inputs`` names the inputs the state belongs to;
 - an electric heating type does not use the water.
 
-This module has no Home Assistant dependency: the handler reads Smart Boiler
-and passes a ``WaterReading``.
+This module has no Home Assistant dependency: the handler reads the source chosen
+in the options (heating_inputs.py) and passes a ``WaterReading``.
 """
 
 from __future__ import annotations
@@ -66,7 +69,7 @@ AVAILABILITY_LASTING = "lasting"
 
 @dataclass(frozen=True)
 class WaterReading:
-    """What Smart Boiler gives for a thermostat at one moment (all optional)."""
+    """What the water data source gives for a thermostat at one moment (all optional)."""
 
     supply_c: float | None = None
     supply_reason: str | None = None
@@ -98,7 +101,7 @@ class WaterState:
 
     @property
     def published_factor(self) -> float | None:
-        """The factor for Smart Boiler's key; None while no water data are behind it."""
+        """The factor SmartPI publishes (``water_factor``); None while no water data are behind it."""
         return self.factor if self.uses_data else None
 
 
@@ -118,7 +121,7 @@ def _ema(previous: float | None, value: float, dt_s: float, time_constant_s: flo
 
 
 class WaterInput:
-    """Turns Smart Boiler's water data into the factor SmartPI applies."""
+    """Turns the water data into the factor SmartPI applies."""
 
     def __init__(self, heating_type: str | None = None) -> None:
         self.heating_type = heating_type
@@ -135,6 +138,9 @@ class WaterInput:
         self._last_s: float | None = None
         # A state loaded before the heating type was known.
         self._pending_state: dict | None = None
+        # The water inputs (source and supply sensor) the availability and averages belong
+        # to; None: not known (a state saved before the field).
+        self.inputs: str | None = None
 
     @property
     def uses_water(self) -> bool:
@@ -152,6 +158,20 @@ class WaterInput:
         if self._pending_state is not None:
             pending, self._pending_state = self._pending_state, None
             self.load_state(pending)
+
+    def forget_data(self) -> None:
+        """Other water inputs chosen in the options: the factor is 1 until their data come.
+
+        What was learned of the old inputs' water goes, and no change for good is
+        reported: the options already asked about the learned model.
+        """
+        if self.availability == AVAILABILITY_NONE and self._long_avg is None and self._supply_avg is None:
+            return
+        self._supply_avg = self._supply_s = None
+        self._long_avg = self._long_s = None
+        self._no_data_since_s = self._no_data_loaded_s = None
+        self.availability = AVAILABILITY_NONE
+        self.state = WaterState(uses_water=self.uses_water, source=SOURCE_NONE if self.uses_water else SOURCE_UNUSED)
 
     def update(self, reading: WaterReading | None, room_c: float | None, now_s: float) -> WaterState:
         """Process one reading (None: no data now); return the factor to apply."""
@@ -189,8 +209,9 @@ class WaterInput:
             self._supply_avg = self._supply_s = None
             state = self._state(1.0, SOURCE_LASTING, reading)
         elif self.availability == AVAILABILITY_USED:
-            # Momentary: a known momentary reason, an unknown one (interface spec,
-            # section 8), or no reading at all after data were seen.
+            # Momentary: a known momentary reason, an unknown one (an unavailable
+            # entity, a provider that does not answer), or no reading at all after
+            # data were seen.
             if dhw:
                 state = self._state(0.0, SOURCE_DHW, reading, no_heat=True)
             else:
@@ -246,6 +267,7 @@ class WaterInput:
             "availability": self.availability,
             "long_average": self._long_avg,
             "no_data_s": no_data_s,
+            "inputs": self.inputs,
         }
 
     def load_state(self, state: Any) -> None:
@@ -268,3 +290,5 @@ class WaterInput:
         no_data_s = state.get("no_data_s")
         if isinstance(no_data_s, (int, float)) and math.isfinite(no_data_s) and no_data_s >= 0.0:
             self._no_data_loaded_s = float(no_data_s)
+        inputs = state.get("inputs")
+        self.inputs = inputs if isinstance(inputs, str) and inputs else None
