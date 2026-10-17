@@ -293,6 +293,7 @@ working with it.
 | `test_smartpi_dependencies_algo.py` (substitution test extended) | the reference governor gets `b_eff` and `T_ref` through the setpoint filter, and the FF trim's measurements get `T_ref` as their outdoor temperature |
 | `test_smartpi_water_algo.py` (one test changed) | the cycle's power at the reference water goes to the causal power trace, where the author moved it from the FF trim observer |
 | `test_smartpi_author_code_edges.py` | edge paths of the author's code that the reference governor's stage left untested, so none of the author's files falls below its earlier coverage: the drift detector's rejections, the estimator's convergence checks, the PI controller's snapshot and hold edges, the FF3 prediction's invalid inputs, the FF trim observers' guards, the learning window's accessors |
+| `test_smartpi_cool_fork_inputs.py` | in COOL with a known neighbour, the setpoint filter and the governor get the passive dead time (the heating one) with `b_eff` and `T_ref`; a neighbour's window preset within a cycle flags the cycle, so the FF trim refuses a bumpless transfer |
 
 ### 4.10 Humidity events
 

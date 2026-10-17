@@ -345,7 +345,7 @@ Zasada jest taka:
 - gałąź P zachowuje niefiltrowaną nastawę, dopóki nie zostanie osiągnięta przewidziana strefa hamowania,
 - duża zmiana nastawy raz uzbraja późne hamowanie; HEAT i COOL używają potem tych samych równań okna hamowania, ze znakiem zależnym od trybu,
 - wejście wywołane zakłóceniem nadal wymaga progu dużej różnicy temperatur,
-- do wykrycia strefy hamowania służą: dokładny nauczony model 1R1C, `deadtime_cool`, opóźnienie do końca bieżącego cyklu i moc już zadana na ten cykl,
+- do wykrycia strefy hamowania służą: dokładny nauczony model 1R1C, bierny czas martwy (jak długo pokój jeszcze zmienia temperaturę po wyłączeniu mocy: `deadtime_cool` w HEAT, `deadtime_heat` w COOL), opóźnienie do końca bieżącego cyklu i moc już zadana na ten cykl; ten sam bierny czas martwy biorą opóźnienie zatrzymania w governorze i dolna granica trajektorii,
 - płynna trajektoria późnego hamowania proponuje blisko celu własne, nominalne odniesienie dla gałęzi P,
 - przy trajektoriach nastawy w HEAT i COOL przewidujący reference governor (gubernator referencji: część, która z modelu wylicza bezpieczne odniesienie i limit wysterowania) wyznacza dopuszczalne odniesienie dla gałęzi P i może ograniczyć wewnętrzne wysterowanie po obliczeniu PI,
 - gdy hamowanie nie jest już potrzebne, filtrowane odniesienie stopniowo wraca do niefiltrowanego celu, zanim trajektoria się skończy,
@@ -359,7 +359,9 @@ Zasada jest taka:
 Bliźniak cieplny, FF3, przewidywanie wejścia w hamowanie i governor używają tej samej prostej
 funkcji przewidywania 1R1C przy stałej mocy. Każdy z nich ma własne horyzonty, sposób liczenia
 opóźnienia i sprawdzanie danych wejściowych. Governor używa nominalnego modelu cieplnego, bez
-szacowanej poprawki na zakłócenia.
+szacowanej poprawki na zakłócenia. Bliźniak cieplny opóźnia zmianę mocy o czas martwy bieżącego
+trybu: włączenie o czynny czas martwy (`deadtime_heat` w HEAT, `deadtime_cool` w COOL), wyłączenie
+o bierny.
 
 Governor używa dyskretnej postaci modelu 1R1C w wewnętrznej, liniowej skali wysterowania:
 
@@ -710,7 +712,10 @@ ograniczona operacja (transakcja) stosuje
 `delta_u_cmd = alpha * lambda * D`. Ten sam współczynnik `alpha` pilnuje wpływu
 korekty FF (trim), granic gałęzi FF, pojemności całki i zapasu wysterowania.
 Operacja wykonuje się tylko na granicy cyklu, po anti-windup, i działa tak samo
-w przestrzeni mocy modelu ze znakiem, w HEAT i w COOL.
+w przestrzeni mocy modelu ze znakiem, w HEAT i w COOL. Zmiana nastawy w trakcie
+cyklu (przez użytkownika albo przez temperaturę narzuconą przez otwarte okno u
+sąsiada) oznacza ten cykl: przypisanie sterowania pokazuje `setpoint_changed`, a
+korekta FF nie wykonuje na jego granicy żadnej operacji.
 Przeniesienia mniejsze niż ogólny próg dokładności elementu wykonawczego są
 nadal pomijane, chyba że wyraźnie zmniejszają przeciwstawne, zapisane udziały
 korekty FF i całki. To zagęszczanie przypisania zachowuje te same niepodzielne

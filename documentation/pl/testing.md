@@ -297,6 +297,7 @@ przychodzą z każdą zmianą; testy poniżej sprawdzają, że dodatki forka nad
 | `test_smartpi_dependencies_algo.py` (rozszerzony test podstawienia) | reference governor dostaje `b_eff` i `T_ref` przez filtr nastawy, a pomiary korekty FF dostają `T_ref` jako temperaturę zewnętrzną |
 | `test_smartpi_water_algo.py` (jeden test zmieniony) | moc cyklu przy wodzie odniesienia trafia do przyczynowego zapisu mocy, dokąd autor przeniósł ją z obserwatora korekty FF |
 | `test_smartpi_author_code_edges.py` | skrajne ścieżki kodu autora, których etap reference governora nie testował, żeby żaden plik autora nie spadł poniżej wcześniejszego pokrycia: odrzucenia detektora dryfu, sprawdzenia zbieżności estymatora, skrajne przypadki migawki i wstrzymania całki w regulatorze PI, niepoprawne dane prognozy FF3, zabezpieczenia obserwatorów korekty FF, odczyty okna uczenia |
+| `test_smartpi_cool_fork_inputs.py` | w COOL ze znanym sąsiadem filtr nastawy i governor dostają bierny czas martwy (ten od grzania) razem z `b_eff` i `T_ref`; temperatura narzucona przez okno u sąsiada w trakcie cyklu oznacza ten cykl, więc korekta FF odmawia przejęcia bezuderzeniowego |
 
 ### 4.10 Zdarzenia wilgotności
 

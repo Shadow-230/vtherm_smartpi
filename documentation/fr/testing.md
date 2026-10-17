@@ -305,6 +305,7 @@ ajouts du fork fonctionnent toujours avec lui.
 | `test_smartpi_dependencies_algo.py` (test de substitution étendu) | le gouverneur de référence reçoit `b_eff` et `T_ref` par le filtre de consigne, et les mesures de la correction du feed-forward reçoivent `T_ref` comme température extérieure |
 | `test_smartpi_water_algo.py` (un test modifié) | la puissance du cycle à l'eau de référence va à la trace causale de puissance, où l'auteur l'a déplacée depuis l'observateur de la correction du feed-forward |
 | `test_smartpi_author_code_edges.py` | des chemins limites du code de l'auteur que l'étape du gouverneur de référence laissait sans test, pour qu'aucun fichier de l'auteur ne passe sous sa couverture d'avant : les rejets du détecteur de dérive, les vérifications de convergence de l'estimateur, les cas limites de l'instantané et de la retenue du régulateur PI, les entrées invalides de la prédiction FF3, les protections des observateurs de la correction du feed-forward, les accesseurs de la fenêtre d'apprentissage |
+| `test_smartpi_cool_fork_inputs.py` | en COOL avec un voisin connu, le filtre de consigne et le gouverneur reçoivent le temps mort passif (celui du chauffage) avec `b_eff` et `T_ref` ; le préréglage imposé par la fenêtre d'un voisin pendant un cycle marque ce cycle, et la correction du feed-forward refuse alors un transfert sans à-coup |
 
 ### 4.10 Événements d'humidité
 

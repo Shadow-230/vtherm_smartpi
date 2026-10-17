@@ -205,6 +205,9 @@ Pendant le bootstrap, SmartPI ne cherche pas à maintenir la température avec p
 - la chauffe démarre quand la température descend sous `consigne - 0.3°C`,
 - la chauffe s'arrête quand la température monte au-dessus de `consigne + 0.5°C`.
 
+En refroidissement, c'est le miroir exact : le refroidissement démarre au-dessus de
+`consigne + 0.3°C` et s'arrête sous `consigne - 0.5°C`.
+
 Cela produit des oscillations de température visibles, qui sont attendues et volontaires à ce stade.
 
 #### Étape 1 — Mesure des temps morts

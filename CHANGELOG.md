@@ -4,6 +4,15 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+- Cooling (taken from the author's newer code): the braking, the reference governor's stop delay
+  and the trajectory floor use the passive dead time, the delay before the room warms up again
+  once the cooling stops, and the thermal twin delays switching on and off by the dead times of
+  the current mode. The bootstrap hysteresis in cooling is the mirror of heating: cooling starts
+  above the setpoint plus the on threshold and stops below the setpoint minus the off threshold. A
+  setpoint change during a cycle, also the preset of a neighbour's open window, flags the cycle,
+  and the feed-forward trim makes no transfer then. FF3 no longer takes the unused cooling dead
+  time. The fork's known inputs still reach the braking in cooling.
+
 - The setpoint filter's landing is replaced by the reference governor, in heating and in cooling
   (taken from the author's newer code). Near the end of a setpoint change it caps the command when
   the model predicts that the heat already given is enough; the cap tolerates the deadband beyond
