@@ -3,7 +3,8 @@
 Dokument roboczy dla każdej sesji, która podejmuje przeniesienie zmian autora do naszej wersji.
 Plan wykonania: [`PLAN.md`](PLAN.md). Ten plik opisuje stan, ustalenia, dowody i decyzje.
 
-Stan na: 2026-10-16 (fazy A i B, etapy Z1, Z2 i H1 scalone do `dev2` = `705b3f2`: §19–§22).
+Stan na: 2026-10-17 (fazy A i B, etapy Z1, Z2 i H1 scalone do `dev2`, teraz `9868b33`: §19–§22;
+faza C lokalnie: §23).
 
 ---
 
@@ -58,7 +59,7 @@ Zasady łączą dokumenty procesu właściciela (`CLAUDE.md` i `PLAN_ROZWOJU.md`
 | `SPINew` | `770c444` | Kopia `KipK/vtherm_smartpi@trajectoryv2` (13 commitów od `master`). |
 | `qas` | `9be2e2f` | Stabilny kod do testów (pełne scenariusze na GitHubie). |
 | `process-docs` | aktualny `origin/process-docs` | Osobna gałąź (bez wspólnej historii) z dokumentami procesu: `CLAUDE.md`, `PLAN_ROZWOJU.md`, `specs/`. |
-| `dev2` | `705b3f2` | **Gałąź integracyjna tej pracy** (od 2026-10-16, start: kopia `dev@34c1440`). Zawiera A1–A5, Z1, Z2, B1–B4, H1 (PR #17–#28). |
+| `dev2` | `9868b33` | **Gałąź integracyjna tej pracy** (od 2026-10-16, start: kopia `dev@34c1440`). Zawiera A1–A5, Z1, Z2, B1–B4, H1 (PR #17–#28) i bazę pokrycia (PR #29). |
 | `analysis/spinew-vs-dev` | od `34c1440` | Ta analiza, plan, skrypty pomiaru (`tools/`) i wyniki (`results/`). |
 | gałęzie etapów | od `dev2` | Usuwane po scaleniu (§1 p. 13); historia w `PLAN.md` „Stan prac”. |
 | `measure/governor-water` | lokalna, niewypchnięta | `dev` + `c6f9f88`, `b2b0249`, `15fc13f` do pomiaru z §13. Odtworzenie: §13.6. |
@@ -447,7 +448,7 @@ się parsują.
 | D5 | Dokumentacja EN/FR/PL razem z kodem | przyjęte 2026-10-15 |
 | D6 | Cykl życia: sposób autora (B1) | przyjęte 2026-10-15 (§11.4) |
 | D7 | Korekta reference governora przy wodzie | pomiar 2026-10-15: niepotrzebna, opcja D (§13.4) |
-| D8 | „Drganie” capa reference governora (§13.5) | przyjęte 2026-10-15: obserwujemy w C1; ewentualna zmiana (kod autora) po pomiarze i za zgodą właściciela |
+| D8 | „Drganie” capa reference governora (§13.5) | przyjęte 2026-10-15: obserwujemy w C1; ewentualna zmiana (kod autora) po pomiarze i za zgodą właściciela. Pomiar w C1 (§23.3): po A1 średnio 0,5 przełączenia na dojście, zmiana niepotrzebna |
 | D9 | Zapis stanu od razu po resecie strefy (`_apply_reset_request`, etap A4) | przyjęte 2026-10-15: zapis natychmiastowy, jak przy serwisie `reset_smartpi_learning` u autora |
 | D10 | Gałąź integracyjna `dev2` (zmiany autora i nasze własne funkcje), osobny PR na etap; nic na `dev`, `qas`, `master` | przyjęte 2026-10-16 |
 | D11 | Okna nauki wymiany z sąsiadem nie przepadają przy „guard cut” (`_dependency_learning_allowed`), §19.3 | przyjęte 2026-10-16; w A1 i A3 (ta sama zmiana) |
@@ -762,3 +763,89 @@ widać tylko w słabym cieple (całka nie schodzi). Realny zysk zależy od rzecz
 symulator nie ma (czujnik temperatury ogrzany parą, ciepło oddawane przez ściany). Ryzyko: brak
 regresji w symulacji; jedyny koszt to 1,6–1,7 h/dzień bez uczenia w łazience.
 
+
+## 23. Faza C (2026-10-17)
+
+Gałęzie od `dev2` `9868b33` (po PR #29), commity lokalne: `feat/spinew-c1-reference-governor`
+(`c6f9f88`, `b2b0249`, `15fc13f` przez `cherry-pick -x` i nasz commit) i `feat/spinew-c2-cool` (od
+głowicy C1: `8823c17`, `770c444` i nasz commit). Stan i SHA: `PLAN.md` „Stan prac”.
+
+### 23.1 Przeniesienie
+
+- `c6f9f88`: konflikty jak w planie (import `Callable`, oba zestawy parametrów `learn_win.update`;
+  blok zmiany trybu jak u autora: `_reset_causal_observation_runtime()` przy zmianie trybu albo
+  resecie modelu); dokumentacja `--ours`, a treść autora potem przez `git apply -3` z ręcznym
+  rozwiązaniem (nasze tabele ustawień i wiersz `integral_guard.py` zostają).
+- `b2b0249` czysto; `15fc13f` konflikt tylko w dokumentacji.
+- `8823c17` i `770c444` weszły **czysto** (plan przewidywał konflikty w `filter_setpoint`,
+  `twin.update_with_eta` i `compute_ff3`); `b=self.control_b` i `T_ref` zostały.
+- Zakres CI po samych cherry-pickach C1: 1701 passed + 84 skipped, 1 failed – tylko przewidziany
+  `test_the_feed_forward_trim_records_the_power` (§17.2; podmiana przeniesiona na
+  `_causal_power_trace`). Testy z §17.2 (`sim_neighbours`, `sim_water`, `sim_harness`), które padały
+  w próbie merge na `dev@f73e7d0`, tym razem przechodzą.
+
+### 23.2 Sprawdzenia C-a…C-j
+
+- C-a, C-b, C-c, C-d, C-f, C-i: zgodne z planem (kod sprawdzony; C-b, C-c, C-d mają testy).
+- **C-g: poprawka.** `leave_source_role` w `dev2` nie czyściło stanu nastawy. Dodane
+  `self.sp_mgr.reset()` (jak w opisie C-g); test `test_leaving_the_source_role_clears_the_governor_episode`
+  padał przed poprawką.
+- C-h: akcja okna u sąsiada zmienia cel governora; zamknięcie okna (17 → 20 °C) uzbraja hamowanie
+  jak wzrost nastawy. W C2 ta sama zmiana w trakcie cyklu ustawia flagę `setpoint_changed`.
+- C-j: zdarzenie wilgotności ustawia `integrator_hold` przed `compute_pwm`, więc
+  `_try_release_terminal_braking` nic nie zwalnia; okno korekty FF jest odrzucane w obu drogach autora
+  (koniec cyklu, okresowa), bo obie przechodzą przez `_apply_fftrim_observer_result`.
+
+### 23.3 Pomiar: reference governor a woda (powtórzony po A1)
+
+Skrypt z §13 na gałęzi C1 i na `dev2` `9868b33` (w tabeli „dev” = `dev2`), 12 porannych dojść na
+wariant; wyniki: `results/phase-c/`.
+
+| Wariant | Wersja | Dojście (h) | Przeregulowanie śr./max (°C) | Cap (min) | Przełączenia capa | Wycofania |
+|---|---|---|---|---|---|---|
+| bez wejścia wody | `dev2` | 2,20 | 0,20 / 0,46 | 36,9 | 2,7 | – |
+| | C1 | 2,13 | 0,19 / 0,31 | 0,3 | 0,5 | 0 |
+| woda 60 °C | `dev2` | 2,13 | 0,15 / 0,29 | 40,4 | 3,8 | – |
+| | C1 | 2,15 | 0,14 / 0,27 | 0 | 0 | 0 |
+| woda 45 °C | `dev2` | 4,47 | 0,19 / 0,41 | 27,1 | 2,0 | – |
+| | C1 | 4,49 | 0,18 / 0,35 | 0 | 0 | 0 |
+| woda 40 °C | `dev2` | 7,86 | −0,07 / 0,02 | 19,7 | 1,7 | – |
+| | C1 | 7,85 | −0,07 / 0,01 | 0 | 0 | 0 |
+| woda 45 °C bez danych | `dev2` | 4,71 | 0,11 / 0,24 | 16,2 | 2,0 | – |
+| | C1 | 4,73 | 0,11 / 0,33 | 0 | 0 | 0 |
+
+Wnioski: wycofań nadal zero; przy ograniczeniu wodą cap nie wiąże (D7 bez zmian). „Drganie” capa
+(D8) po A1 praktycznie znikło: średnio 0,5 przełączenia na dojście (jedno dojście z 6), wcześniej
+(§13.5) 60 w jednym dojściu. Nauczone `a` jak na `dev2` (0,94–1,05 prawdy), więc obserwacja z §13.5
+(`a` niższe o 5–10 %) dotyczyła stanu sprzed A1. Jedyny gorszy wynik: maksymalne przeregulowanie
+w wariancie 45 °C bez danych o wodzie (0,33 wobec 0,24 °C), średnie bez zmian.
+
+Strefa z sąsiadem (scenariusz N3, dwa poranki z 17 °C, fazy 0/170/340 s,
+`tools/c1_neighbour_landing.py`): `dev2` i C1 prawie identycznie (dojście 2,96–3,04 i 3,26–3,27 h,
+przeregulowanie 0,23–0,24 i 0,15 °C) – test `test_landing_with_a_neighbour_exchange`.
+
+### 23.4 Testy i pokrycie C1
+
+- Zakres CI: `dev2` `9868b33` 1468 passed + 84 skipped; C1 1729 passed + 86 skipped.
+- C1, pełny zakres lokalny z QAS w procesie (`SMARTPI_SIM_LOCAL=1 SMARTPI_QAS_LOCAL=1`, przed
+  testami krawędzi): 1797 passed.
+- Pierwszy pomiar pokrycia C1: `compare.py` kod 1, spadki w 7 plikach autora o 0,1–2,5 pkt
+  (`ab_drift.py`, `ab_estimator.py` – inny przebieg symulacji; `controller.py`, `ff3_predictor.py`,
+  `ff_trim.py`, `ff_trim_periodic.py`, `learning_window.py` – nowe linie autora bez testu albo
+  usunięty pokryty kod). Decyzja właściciela 2026-10-17: dopisać testy. Dodane
+  `tests/test_smartpi_author_code_edges.py` (18 testów ścieżek krawędziowych kodu autora).
+- Pomiar końcowy C1 (bez QAS, `testing.md` §7): 1799 passed + 16 skipped; `compare.py` kod 0, bez
+  spadków; ogółem 93,52 → 93,28 % (nowy kod autora); linie forka 97,7 % / gałęzie 93,5 % (cele
+  spełnione; `compare.py` liczy do nich przeniesiony kod autora – decyzja właściciela: zostaje).
+  Baza pokrycia i tabele §7 zastąpione raportem C1.
+- Karty diagnostyczne dostały też blok wilgotności (`humidity`, H1) – decyzja właściciela 2026-10-17.
+
+### 23.5 C2
+
+- Oba commity autora czysto; nasz commit: test `test_smartpi_cool_fork_inputs.py` (w COOL z sąsiadem
+  filtr nastawy dostaje bierny czas martwy z `b_eff`/`T_ref`; akcja okna u sąsiada w trakcie cyklu
+  ustawia flagę `setpoint_changed`, więc korekta FF odmawia przejęcia) i dokumentacja EN/FR/PL
+  (bierny czas martwy, flaga w korekcie FF, lustrzana histereza COOL).
+- Zakres CI (przed testami krawędzi C1) 1727 passed + 86 skipped; pełny lokalny bez QAS z
+  pokryciem 1797 passed + 16 skipped, bez spadków. Po zmianach w C1 gałąź C2 przeniesiona na nową
+  głowicę C1; bazę pokrycia C2 zmierzyć na nowo przed jej PR.

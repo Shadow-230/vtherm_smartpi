@@ -1,0 +1,677 @@
+[
+ {
+  "variant": "no_water_input",
+  "phase_s": 0.0,
+  "water_factor": 1.0,
+  "a_ratio": 0.96,
+  "approaches": [
+   {
+    "reach_h": 2.38,
+    "overshoot_c": 0.279,
+    "cap_min": 0.0,
+    "cap_toggles": 0,
+    "water_limited_min": 0.0,
+    "arms": 1,
+    "retires": []
+   },
+   {
+    "reach_h": 1.89,
+    "overshoot_c": 0.307,
+    "cap_min": 3.5,
+    "cap_toggles": 6,
+    "water_limited_min": 0.0,
+    "arms": 1,
+    "retires": []
+   },
+   {
+    "reach_h": 2.07,
+    "overshoot_c": 0.096,
+    "cap_min": 0.0,
+    "cap_toggles": 0,
+    "water_limited_min": 0.0,
+    "arms": 1,
+    "retires": []
+   },
+   {
+    "reach_h": 2.06,
+    "overshoot_c": 0.194,
+    "cap_min": 0.0,
+    "cap_toggles": 0,
+    "water_limited_min": 0.0,
+    "arms": 1,
+    "retires": []
+   }
+  ],
+  "label": "governor"
+ },
+ {
+  "variant": "no_water_input",
+  "phase_s": 170.0,
+  "water_factor": 1.0,
+  "a_ratio": 1.013,
+  "approaches": [
+   {
+    "reach_h": 2.38,
+    "overshoot_c": 0.096,
+    "cap_min": 0.0,
+    "cap_toggles": 0,
+    "water_limited_min": 0.0,
+    "arms": 1,
+    "retires": []
+   },
+   {
+    "reach_h": 2.22,
+    "overshoot_c": 0.1,
+    "cap_min": 0.0,
+    "cap_toggles": 0,
+    "water_limited_min": 0.0,
+    "arms": 1,
+    "retires": []
+   },
+   {
+    "reach_h": 2.22,
+    "overshoot_c": 0.13,
+    "cap_min": 0.0,
+    "cap_toggles": 0,
+    "water_limited_min": 0.0,
+    "arms": 1,
+    "retires": []
+   },
+   {
+    "reach_h": 2.07,
+    "overshoot_c": 0.14,
+    "cap_min": 0.0,
+    "cap_toggles": 0,
+    "water_limited_min": 0.0,
+    "arms": 1,
+    "retires": []
+   }
+  ],
+  "label": "governor"
+ },
+ {
+  "variant": "no_water_input",
+  "phase_s": 340.0,
+  "water_factor": 1.0,
+  "a_ratio": 0.955,
+  "approaches": [
+   {
+    "reach_h": 2.07,
+    "overshoot_c": 0.249,
+    "cap_min": 0.0,
+    "cap_toggles": 0,
+    "water_limited_min": 0.0,
+    "arms": 1,
+    "retires": []
+   },
+   {
+    "reach_h": 2.06,
+    "overshoot_c": 0.289,
+    "cap_min": 0.0,
+    "cap_toggles": 0,
+    "water_limited_min": 0.0,
+    "arms": 1,
+    "retires": []
+   },
+   {
+    "reach_h": 2.06,
+    "overshoot_c": 0.189,
+    "cap_min": 0.0,
+    "cap_toggles": 0,
+    "water_limited_min": 0.0,
+    "arms": 1,
+    "retires": []
+   },
+   {
+    "reach_h": 2.06,
+    "overshoot_c": 0.191,
+    "cap_min": 0.0,
+    "cap_toggles": 0,
+    "water_limited_min": 0.0,
+    "arms": 1,
+    "retires": []
+   }
+  ],
+  "label": "governor"
+ },
+ {
+  "variant": "water_60C_data",
+  "phase_s": 0.0,
+  "water_factor": 0.971,
+  "a_ratio": 1.041,
+  "approaches": [
+   {
+    "reach_h": 2.23,
+    "overshoot_c": 0.272,
+    "cap_min": 0.0,
+    "cap_toggles": 0,
+    "water_limited_min": 0.0,
+    "arms": 1,
+    "retires": []
+   },
+   {
+    "reach_h": 1.91,
+    "overshoot_c": 0.23,
+    "cap_min": 0.0,
+    "cap_toggles": 0,
+    "water_limited_min": 0.0,
+    "arms": 1,
+    "retires": []
+   },
+   {
+    "reach_h": 2.22,
+    "overshoot_c": 0.06,
+    "cap_min": 0.0,
+    "cap_toggles": 0,
+    "water_limited_min": 0.0,
+    "arms": 1,
+    "retires": []
+   },
+   {
+    "reach_h": 2.23,
+    "overshoot_c": 0.042,
+    "cap_min": 0.0,
+    "cap_toggles": 0,
+    "water_limited_min": 0.0,
+    "arms": 1,
+    "retires": []
+   }
+  ],
+  "label": "governor"
+ },
+ {
+  "variant": "water_60C_data",
+  "phase_s": 170.0,
+  "water_factor": 0.971,
+  "a_ratio": 1.047,
+  "approaches": [
+   {
+    "reach_h": 2.07,
+    "overshoot_c": 0.181,
+    "cap_min": 0.0,
+    "cap_toggles": 0,
+    "water_limited_min": 0.0,
+    "arms": 1,
+    "retires": []
+   },
+   {
+    "reach_h": 2.07,
+    "overshoot_c": 0.192,
+    "cap_min": 0.0,
+    "cap_toggles": 0,
+    "water_limited_min": 0.0,
+    "arms": 1,
+    "retires": []
+   },
+   {
+    "reach_h": 2.22,
+    "overshoot_c": 0.082,
+    "cap_min": 0.0,
+    "cap_toggles": 0,
+    "water_limited_min": 0.0,
+    "arms": 1,
+    "retires": []
+   },
+   {
+    "reach_h": 2.22,
+    "overshoot_c": 0.077,
+    "cap_min": 0.0,
+    "cap_toggles": 0,
+    "water_limited_min": 0.0,
+    "arms": 1,
+    "retires": []
+   }
+  ],
+  "label": "governor"
+ },
+ {
+  "variant": "water_60C_data",
+  "phase_s": 340.0,
+  "water_factor": 0.968,
+  "a_ratio": 1.055,
+  "approaches": [
+   {
+    "reach_h": 2.07,
+    "overshoot_c": 0.188,
+    "cap_min": 0.0,
+    "cap_toggles": 0,
+    "water_limited_min": 0.0,
+    "arms": 1,
+    "retires": []
+   },
+   {
+    "reach_h": 2.07,
+    "overshoot_c": 0.186,
+    "cap_min": 0.0,
+    "cap_toggles": 0,
+    "water_limited_min": 0.0,
+    "arms": 1,
+    "retires": []
+   },
+   {
+    "reach_h": 2.22,
+    "overshoot_c": 0.075,
+    "cap_min": 0.0,
+    "cap_toggles": 0,
+    "water_limited_min": 0.0,
+    "arms": 1,
+    "retires": []
+   },
+   {
+    "reach_h": 2.22,
+    "overshoot_c": 0.076,
+    "cap_min": 0.0,
+    "cap_toggles": 0,
+    "water_limited_min": 0.0,
+    "arms": 1,
+    "retires": []
+   }
+  ],
+  "label": "governor"
+ },
+ {
+  "variant": "water_45C_data",
+  "phase_s": 0.0,
+  "water_factor": 0.518,
+  "a_ratio": 0.913,
+  "approaches": [
+   {
+    "reach_h": 4.28,
+    "overshoot_c": 0.348,
+    "cap_min": 0.0,
+    "cap_toggles": 0,
+    "water_limited_min": 220.0,
+    "arms": 1,
+    "retires": []
+   },
+   {
+    "reach_h": 4.3,
+    "overshoot_c": 0.312,
+    "cap_min": 0.0,
+    "cap_toggles": 0,
+    "water_limited_min": 221.2,
+    "arms": 1,
+    "retires": []
+   },
+   {
+    "reach_h": 4.6,
+    "overshoot_c": 0.034,
+    "cap_min": 0.0,
+    "cap_toggles": 0,
+    "water_limited_min": 202.8,
+    "arms": 0,
+    "retires": []
+   },
+   {
+    "reach_h": 4.76,
+    "overshoot_c": 0.037,
+    "cap_min": 0.0,
+    "cap_toggles": 0,
+    "water_limited_min": 202.3,
+    "arms": 0,
+    "retires": []
+   }
+  ],
+  "label": "governor"
+ },
+ {
+  "variant": "water_45C_data",
+  "phase_s": 170.0,
+  "water_factor": 0.515,
+  "a_ratio": 0.952,
+  "approaches": [
+   {
+    "reach_h": 4.38,
+    "overshoot_c": 0.295,
+    "cap_min": 0.0,
+    "cap_toggles": 0,
+    "water_limited_min": 212.2,
+    "arms": 1,
+    "retires": []
+   },
+   {
+    "reach_h": 4.44,
+    "overshoot_c": 0.219,
+    "cap_min": 0.0,
+    "cap_toggles": 0,
+    "water_limited_min": 214.2,
+    "arms": 1,
+    "retires": []
+   },
+   {
+    "reach_h": 4.59,
+    "overshoot_c": 0.094,
+    "cap_min": 0.0,
+    "cap_toggles": 0,
+    "water_limited_min": 203.0,
+    "arms": 0,
+    "retires": []
+   },
+   {
+    "reach_h": 4.59,
+    "overshoot_c": 0.096,
+    "cap_min": 0.0,
+    "cap_toggles": 0,
+    "water_limited_min": 201.3,
+    "arms": 0,
+    "retires": []
+   }
+  ],
+  "label": "governor"
+ },
+ {
+  "variant": "water_45C_data",
+  "phase_s": 340.0,
+  "water_factor": 0.515,
+  "a_ratio": 0.942,
+  "approaches": [
+   {
+    "reach_h": 4.3,
+    "overshoot_c": 0.331,
+    "cap_min": 0.0,
+    "cap_toggles": 0,
+    "water_limited_min": 221.3,
+    "arms": 1,
+    "retires": []
+   },
+   {
+    "reach_h": 4.42,
+    "overshoot_c": 0.237,
+    "cap_min": 0.0,
+    "cap_toggles": 0,
+    "water_limited_min": 214.3,
+    "arms": 1,
+    "retires": []
+   },
+   {
+    "reach_h": 4.58,
+    "overshoot_c": 0.088,
+    "cap_min": 0.0,
+    "cap_toggles": 0,
+    "water_limited_min": 203.0,
+    "arms": 0,
+    "retires": []
+   },
+   {
+    "reach_h": 4.59,
+    "overshoot_c": 0.089,
+    "cap_min": 0.0,
+    "cap_toggles": 0,
+    "water_limited_min": 200.8,
+    "arms": 0,
+    "retires": []
+   }
+  ],
+  "label": "governor"
+ },
+ {
+  "variant": "water_40C_data",
+  "phase_s": 0.0,
+  "water_factor": 0.38,
+  "a_ratio": 0.964,
+  "approaches": [
+   {
+    "reach_h": 7.59,
+    "overshoot_c": 0.009,
+    "cap_min": 0.0,
+    "cap_toggles": 0,
+    "water_limited_min": 419.5,
+    "arms": 1,
+    "retires": []
+   },
+   {
+    "reach_h": 7.93,
+    "overshoot_c": -0.086,
+    "cap_min": 0.0,
+    "cap_toggles": 0,
+    "water_limited_min": 387.3,
+    "arms": 0,
+    "retires": []
+   },
+   {
+    "reach_h": 7.94,
+    "overshoot_c": -0.09,
+    "cap_min": 0.0,
+    "cap_toggles": 0,
+    "water_limited_min": 385.5,
+    "arms": 0,
+    "retires": []
+   },
+   {
+    "reach_h": 7.94,
+    "overshoot_c": -0.089,
+    "cap_min": 0.0,
+    "cap_toggles": 0,
+    "water_limited_min": 385.5,
+    "arms": 0,
+    "retires": []
+   }
+  ],
+  "label": "governor"
+ },
+ {
+  "variant": "water_40C_data",
+  "phase_s": 170.0,
+  "water_factor": 0.38,
+  "a_ratio": 0.944,
+  "approaches": [
+   {
+    "reach_h": 7.74,
+    "overshoot_c": -0.039,
+    "cap_min": 0.0,
+    "cap_toggles": 0,
+    "water_limited_min": 404.0,
+    "arms": 1,
+    "retires": []
+   },
+   {
+    "reach_h": null,
+    "overshoot_c": -0.11,
+    "cap_min": 0.0,
+    "cap_toggles": 0,
+    "water_limited_min": 392.2,
+    "arms": 0,
+    "retires": []
+   },
+   {
+    "reach_h": 7.94,
+    "overshoot_c": -0.091,
+    "cap_min": 0.0,
+    "cap_toggles": 0,
+    "water_limited_min": 385.8,
+    "arms": 0,
+    "retires": []
+   },
+   {
+    "reach_h": 7.94,
+    "overshoot_c": -0.087,
+    "cap_min": 0.0,
+    "cap_toggles": 0,
+    "water_limited_min": 385.0,
+    "arms": 0,
+    "retires": []
+   }
+  ],
+  "label": "governor"
+ },
+ {
+  "variant": "water_40C_data",
+  "phase_s": 340.0,
+  "water_factor": 0.38,
+  "a_ratio": 0.941,
+  "approaches": [
+   {
+    "reach_h": 7.76,
+    "overshoot_c": -0.048,
+    "cap_min": 0.0,
+    "cap_toggles": 0,
+    "water_limited_min": 406.8,
+    "arms": 1,
+    "retires": []
+   },
+   {
+    "reach_h": 7.64,
+    "overshoot_c": -0.03,
+    "cap_min": 0.0,
+    "cap_toggles": 0,
+    "water_limited_min": 404.3,
+    "arms": 1,
+    "retires": []
+   },
+   {
+    "reach_h": 7.94,
+    "overshoot_c": -0.088,
+    "cap_min": 0.0,
+    "cap_toggles": 0,
+    "water_limited_min": 386.2,
+    "arms": 0,
+    "retires": []
+   },
+   {
+    "reach_h": 7.94,
+    "overshoot_c": -0.09,
+    "cap_min": 0.0,
+    "cap_toggles": 0,
+    "water_limited_min": 384.2,
+    "arms": 0,
+    "retires": []
+   }
+  ],
+  "label": "governor"
+ },
+ {
+  "variant": "water_45C_no_data",
+  "phase_s": 0.0,
+  "water_factor": 1.0,
+  "a_ratio": 0.518,
+  "approaches": [
+   {
+    "reach_h": 5.42,
+    "overshoot_c": 0.026,
+    "cap_min": 0.0,
+    "cap_toggles": 0,
+    "water_limited_min": 0.0,
+    "arms": 0,
+    "retires": []
+   },
+   {
+    "reach_h": 4.43,
+    "overshoot_c": 0.23,
+    "cap_min": 0.0,
+    "cap_toggles": 0,
+    "water_limited_min": 0.0,
+    "arms": 1,
+    "retires": []
+   },
+   {
+    "reach_h": 4.22,
+    "overshoot_c": 0.33,
+    "cap_min": 0.0,
+    "cap_toggles": 0,
+    "water_limited_min": 0.0,
+    "arms": 1,
+    "retires": []
+   },
+   {
+    "reach_h": 4.6,
+    "overshoot_c": 0.036,
+    "cap_min": 0.0,
+    "cap_toggles": 0,
+    "water_limited_min": 0.0,
+    "arms": 1,
+    "retires": []
+   }
+  ],
+  "label": "governor"
+ },
+ {
+  "variant": "water_45C_no_data",
+  "phase_s": 170.0,
+  "water_factor": 1.0,
+  "a_ratio": 0.529,
+  "approaches": [
+   {
+    "reach_h": 5.09,
+    "overshoot_c": 0.043,
+    "cap_min": 0.0,
+    "cap_toggles": 0,
+    "water_limited_min": 0.0,
+    "arms": 0,
+    "retires": []
+   },
+   {
+    "reach_h": 4.4,
+    "overshoot_c": 0.238,
+    "cap_min": 0.0,
+    "cap_toggles": 0,
+    "water_limited_min": 0.0,
+    "arms": 1,
+    "retires": []
+   },
+   {
+    "reach_h": 4.28,
+    "overshoot_c": 0.198,
+    "cap_min": 0.0,
+    "cap_toggles": 0,
+    "water_limited_min": 0.0,
+    "arms": 1,
+    "retires": []
+   },
+   {
+    "reach_h": 4.61,
+    "overshoot_c": 0.0,
+    "cap_min": 0.0,
+    "cap_toggles": 0,
+    "water_limited_min": 0.0,
+    "arms": 0,
+    "retires": []
+   }
+  ],
+  "label": "governor"
+ },
+ {
+  "variant": "water_45C_no_data",
+  "phase_s": 340.0,
+  "water_factor": 1.0,
+  "a_ratio": 0.516,
+  "approaches": [
+   {
+    "reach_h": 4.92,
+    "overshoot_c": 0.064,
+    "cap_min": 0.0,
+    "cap_toggles": 0,
+    "water_limited_min": 0.0,
+    "arms": 0,
+    "retires": []
+   },
+   {
+    "reach_h": 5.09,
+    "overshoot_c": 0.048,
+    "cap_min": 0.0,
+    "cap_toggles": 0,
+    "water_limited_min": 0.0,
+    "arms": 0,
+    "retires": []
+   },
+   {
+    "reach_h": 5.09,
+    "overshoot_c": 0.051,
+    "cap_min": 0.0,
+    "cap_toggles": 0,
+    "water_limited_min": 0.0,
+    "arms": 0,
+    "retires": []
+   },
+   {
+    "reach_h": 4.58,
+    "overshoot_c": 0.096,
+    "cap_min": 0.0,
+    "cap_toggles": 0,
+    "water_limited_min": 0.0,
+    "arms": 1,
+    "retires": []
+   }
+  ],
+  "label": "governor"
+ }
+]

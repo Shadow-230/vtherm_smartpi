@@ -6,13 +6,13 @@ styku) i §16 (decyzje). Nazwy w kodzie, commitach i dokumentacji tylko ze słow
 
 Numery linii dotyczą `dev@34c1440`; szukaj po nazwie funkcji albo po cytowanym kodzie.
 
-Stan na: 2026-10-16.
+Stan na: 2026-10-17.
 
 ---
 
 ## Stan prac (dla kolejnej sesji)
 
-**Gałąź integracyjna: `dev2`** (start: `dev@34c1440`; teraz `705b3f2`, w forku). Każdy etap na własnej
+**Gałąź integracyjna: `dev2`** (start: `dev@34c1440`; teraz `9868b33`, po PR #29, w forku). Każdy etap na własnej
 gałęzi od `dev2`, **osobny PR na etap** do `dev2`. Na `dev`, `qas`, `master` nic nie wypychamy (decyzja
 D10). Na `dev2` trafiają także nasze własne funkcje (np. Z1, Z2, H1), nie tylko zmiany autora. Po scaleniu gałąź etapu jest usuwana (D23): gdy właściciel potwierdził PR i scalenie, a PR jest
 scalony, sesja sama usuwa gałąź lokalnie (gałąź i worktree) i na GitHubie; przed usunięciem SHA
@@ -30,17 +30,19 @@ sesji w chmurze), sesja mówi o tym właścicielowi. Wzorzec testów `dev2@705b3
 | B3 | `feat/spinew-b3-service-targets` | #27 | scalone 2026-10-16 |
 | B4 | `fix/spinew-b4-events` | #22 | scalone 2026-10-16 |
 | H1 | `feat/humidity-events` | #28 | scalone 2026-10-16 |
+| C1 | `feat/spinew-c1-reference-governor` (od `9868b33`) | – | commity lokalne 2026-10-17; push i PR czekają na „tak” |
+| C2 | `feat/spinew-c2-cool` (od głowicy C1) | – | commity lokalne 2026-10-17; PR po scaleniu C1 |
 
 Konflikty przy scalaniu były tylko w `CHANGELOG.md` i `testing.md` §4 (wpisy obu stron zostały,
 podwójny wpis D11 usunięty), w teście `test_smartpi_dependencies_handler.py` (dwie funkcje
 dopisane na końcu) i w `config.step.global` (`en.json`/`fr.json`: krok usunięty przez B2).
 Narzędzie: `tools/union_resolve.py`.
 
-Wszystkie gałęzie z tabeli są scalone i usunięte (lokalnie i na GitHubie, 2026-10-16).
+Gałęzie A1–H1 są scalone i usunięte (lokalnie i na GitHubie, 2026-10-16). Wyniki fazy C: `ANALIZA.md` §23.
 
-**Następny krok:** faza C (reference governor, poprawki COOL) – dopiero po potwierdzeniu właściciela.
-Przed C1: `git fetch origin`, gałąź od aktualnego `dev2`; przy C1 sprawdzić współpracę reference
-governora z H1 (wstrzymana całka w czasie zdarzenia wilgotności): sprawdzenie C-j i jego testy.
+**Następny krok:** push gałęzi C1 i PR do `dev2` za „tak” właściciela; po scaleniu C1 gałąź C2
+przenieść na nowe `dev2` i PR. Faza C wykonana lokalnie 2026-10-17 (`ANALIZA.md` §23); sprawdzenie
+C-j (H1) z testami zrobione.
 
 Odtworzenie środowiska i pomiarów: `ANALIZA.md` §3, `tools/` (skrypty), `results/` (wyniki).
 
