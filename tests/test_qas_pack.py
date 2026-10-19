@@ -7,7 +7,10 @@
   expectation, and the catalogue in documentation/en/testing.md lists them all;
 - the runner's base compares the stored neighbours and zone by what they mean;
 - compare.py judges QB1 and QE5 as the plan says, from the two results files it is given;
-- the seeded state is one SmartPI loads.
+- the seeded state is one SmartPI loads;
+- each scenario says what it does to SmartPI's learned state and the phase it needs; the runner
+  lists both, runs the learned set (L) in its order, and reports a scenario NOT RUN when SmartPI is
+  not in its phase, without calling the harness.
 """
 
 from __future__ import annotations
@@ -28,6 +31,8 @@ for path in (QAS, QAS / "setup"):
 
 import compare  # noqa: E402
 import run  # noqa: E402
+from scenarios import ql  # noqa: E402
+from scenarios.registry import ANY, FRESH, LEARNED, SEED, Phase, State, changes  # noqa: E402
 from config.build import configuration, render  # noqa: E402
 from roles import ROLES  # noqa: E402
 from scenarios import PLANNED, SCENARIOS  # noqa: E402
@@ -38,8 +43,12 @@ from custom_components.smartpi_room_sim.engine import spec_from_config  # noqa: 
 PLAN_IDS = (
     "QA1 QA2 QA3 QA4 QA5 QA6 QB1 QB2 QB3 QC1 QC2 QC3 QC4 "
     "QD1 QD2 QD3 QD4 QD5 QD6 QE1 QE2 QE3 QE4 QE5 QE6 QE7 "
-    "QW1 QW2 QW3 QW4 QW5 QW6 QW7 QW8 QW9 QW10"
+    "QW1 QW2 QW3 QW4 QW5 QW6 QW7 QW8 QW9 QW10 "
+    "QL0 QL1 QL2 QL3 QL4 QL5"
 ).split()
+# The learned set ("L"): QL0 loads the models, the others need them; QL2 and QL4 run detached and
+# their short variants are in the set.
+PLAN_LEARNED = "QL0 QL1 QL2s QL3 QL4s QL5".split()
 # The plan's minimum set (§5, "M"); QC2's minimum is its short variant QC2s, QB2's needs QB2a,
 # QW1's is QW1s.
 PLAN_MINIMUM = (
@@ -103,6 +112,68 @@ def test_the_minimum_set_of_each_role() -> None:
         run.expand(["QC1"], ROLES["base"])
 
 
+def test_the_learned_set_of_each_role() -> None:
+    """L: QL0 first (it loads the models), then what keeps the state, then what changes it."""
+    learned = {s.id for s in SCENARIOS.values() if s.learned_set}
+    assert learned == set(PLAN_LEARNED)
+    assert not learned & {s.id for s in SCENARIOS.values() if s.minimum}
+    assert run.expand(["L"], ROLES["base"]) == ["QL0", "QL3", "QL2s"]
+    water = run.expand(["L"], ROLES["water"])
+    assert water[0] == "QL0" and set(water) == {"QL0", "QL1", "QL3", "QL4s", "QL5"}
+    assert run.expand(["L"], ROLES["zone"]) == []
+    # Every scenario needing a learned SmartPI runs where QL0 loads the models.
+    for scenario in SCENARIOS.values():
+        if scenario.phase.need == LEARNED:
+            assert set(scenario.roles) <= set(SCENARIOS["QL0"].roles) == set(ql.LEARNED_MODELS), scenario.id
+    for models in ql.LEARNED_MODELS.values():
+        for _climate, fixture, _zone in models:
+            assert (QAS / "custom_components/smartpi_qas_helpers/fixtures" / f"{fixture}.json").is_file()
+
+
+def test_each_scenario_says_what_it_does_to_the_learned_state_and_the_phase_it_needs() -> None:
+    for scenario in SCENARIOS.values():
+        assert isinstance(scenario.state, State) and isinstance(scenario.phase, Phase), scenario.id
+        assert scenario.state.label in run.listing(None)
+    # A scenario that loads a learned state says so; a long learning run starts fresh.
+    for sid in ("QB2a", "QD2", "QW3", "QW4", "QL0"):
+        assert SEED in SCENARIOS[sid].state.changes, sid
+    for sid in ("QB1", "QB1s", "QC4", "QD5", "QD6", "QE5", "QE5s", "QW1"):
+        assert SCENARIOS[sid].phase.need == FRESH, sid
+    assert changes(SEED).label == "changes: seed" and State().label == "keeps"
+    assert changes("calibration", "reset", restored=True).label == "changes: calibration, reset (put back)"
+    with pytest.raises(ValueError):
+        changes("something else")
+    with pytest.raises(ValueError):
+        Phase(FRESH, zone_model=True)
+
+
+def _live(phase: str | None, a: float | None = 0.03, published: bool | None = None) -> dict:
+    data: dict = {"control": {"phase": phase}, "model": {"a": a, "b": 0.001}}
+    if published is not None:
+        data["dependencies"] = {"second_source": {"zone_fit": {"published": published}}}
+    return data
+
+
+def test_the_phase_a_scenario_needs() -> None:
+    """Fresh: still learning (Hysteresis); learned: Stable with a and b (and the zone's model
+    published where asked); a calibration or missing diagnostics meet neither."""
+    assert Phase(ANY).problem({"Living": {}}) is None
+    assert Phase(FRESH).problem({"Living": _live("Hysteresis")}) is None
+    assert "fresh" in Phase(FRESH).problem({"Living": _live("Stable")})
+    assert Phase(LEARNED).problem({"Living": _live("Stable")}) is None
+    assert "QL0" in Phase(LEARNED).problem({"Living": _live("Hysteresis")})
+    assert "QL0" in Phase(LEARNED).problem({"Living": _live("Stable", a=None)})
+    assert "calibration" in Phase(LEARNED).problem({"Living": _live("Calibration")})
+    assert "no SmartPI diagnostics" in Phase(FRESH).problem({"Living": {}})
+    zone = Phase(LEARNED, zone_model=True)
+    lives = {"Studio": _live("Stable"), "Lounge radiator": _live("Stable", published=False)}
+    assert "zone's model" in zone.problem(lives, zone_main="Lounge radiator")
+    lives["Lounge radiator"] = _live("Stable", published=True)
+    assert zone.problem(lives, zone_main="Lounge radiator") is None
+    two = Phase(FRESH).problem({"Studio": _live("Stable"), "Nursery": _live("Hysteresis")})
+    assert two.startswith("Studio:") and "Nursery" not in two
+
+
 def test_the_base_compares_the_neighbours_by_what_they_mean() -> None:
     names = {"r1": "climate.hall", "r2": "binary_sensor.smartpi_room_sim_kitchen_door", "r3": "climate.dining"}
     expected = run.Dependencies(run.expected_dependencies(ROLES["neighbours"], "Kitchen"), names)
@@ -162,6 +233,13 @@ class Pack:
 
 async def main(pack, scenarios, ids, reset=None, role=None):
     CALLS.append((pack, dict(scenarios), list(ids), reset, role))
+
+def results_file(pack):
+    import os, pathlib
+    return pathlib.Path(os.environ["TESTBED_RESULTS"])
+
+def tested_commit():
+    return "vtherm_smartpi abc1234"
 '''
 STUB_CLIENT = '''
 class HA:
@@ -172,36 +250,77 @@ class HA:
     async def __aexit__(self, *exc):
         return None
     async def ws_cmd(self, payload):
-        return [{"id": "r-hall", "entity_id": "climate.hall"}, {"id": "r-dining", "entity_id": "climate.dining"}]
+        if payload["type"] == "config/device_registry/list":
+            return []
+        return [
+            {"id": "r-hall", "entity_id": "climate.hall"},
+            {"id": "r-dining", "entity_id": "climate.dining"},
+            {"id": "r-living", "entity_id": "climate.living", "unique_id": "u-living", "platform": "versatile_thermostat"},
+            {"id": "r-diag", "entity_id": "sensor.living_smartpi", "unique_id": "smartpi_diag_u-living", "platform": "vtherm_smartpi"},
+        ]
+    async def state(self, entity_id):
+        import os
+        if entity_id != "sensor.living_smartpi":
+            return None
+        return {"state": "ok", "attributes": {"live": {"control": {"phase": os.environ["QAS_STUB_PHASE"]}, "model": {"a": 0.035, "b": 0.0012}}}}
 '''
 
 
-def test_the_runner_hands_the_harness_its_scenarios_and_base(tmp_path, monkeypatch) -> None:
-    """With a stand-in for the bench's lib/, run.main builds the named role's base and gives the
-    harness the role's minimum set; nothing connects anywhere."""
+@pytest.fixture
+def stub_bench(tmp_path, monkeypatch):
+    """A stand-in for the bench's lib/ (its harness and its client); nothing connects anywhere."""
     lib = tmp_path / "lib"
     lib.mkdir()
     (lib / "harness.py").write_text(STUB_HARNESS)
     (lib / "ha_client.py").write_text(STUB_CLIENT)
     monkeypatch.setenv("TESTBED_ROOT", str(tmp_path))
+    monkeypatch.setenv("TESTBED_RESULTS", str(tmp_path / "results.md"))
     monkeypatch.setenv("HA_INSTANCE", "2")
     for name in ("harness", "ha_client"):
         monkeypatch.delitem(sys.modules, name, raising=False)
+    yield tmp_path
+    for name in ("harness", "ha_client"):
+        sys.modules.pop(name, None)
+    if str(lib) in sys.path:
+        sys.path.remove(str(lib))
+
+
+def test_the_runner_hands_the_harness_its_scenarios_and_base(stub_bench) -> None:
+    """run.main builds the named role's base and gives the harness the role's minimum set, one
+    scenario at a time."""
     with pytest.raises(SystemExit):
         run.main(["M"])  # the role is named, never taken from the instance
     assert run.main(["--role", "neighbours", "M"]) == 0
     import harness  # noqa: PLC0415 — the stand-in
 
-    pack, scenarios, ids, reset, role = harness.CALLS[-1]
+    ids = run.expand(["M"], ROLES["neighbours"])
+    assert [call[2] for call in harness.CALLS] == [[sid] for sid in ids]
+    pack, scenarios, _ids, reset, role = harness.CALLS[-1]
     assert role == "neighbours" and pack.multi_entry and pack.domain == "vtherm_smartpi"
-    assert ids == run.expand(["M"], ROLES["neighbours"]) and set(scenarios) == set(ids)
+    assert set(scenarios) == set(_ids)
     base = pack.base["neighbours"]
     assert set(base) == {"SmartPI defaults", "Kitchen"}
     assert base["Kitchen"]["smart_pi_heating_type"] == "radiator"
     assert base["Kitchen"]["smart_pi_dependencies"].expected[0][1] in ("climate.dining", "climate.hall")
-    for name in ("harness", "ha_client"):
-        sys.modules.pop(name, None)
-    sys.path.remove(str(lib))
+
+
+def test_a_scenario_whose_phase_is_not_met_is_not_run(stub_bench, monkeypatch) -> None:
+    """QL3 needs the living room learned: in Hysteresis it is NOT RUN, with the reason, in the
+    results file as the harness writes a result, and the harness is not called; in Stable it runs."""
+    monkeypatch.setenv("QAS_STUB_PHASE", "Hysteresis")
+    assert run.main(["--role", "base", "QL3"]) == 0
+    import harness  # noqa: PLC0415 — the stand-in
+
+    assert harness.CALLS == []
+    text = (stub_bench / "results.md").read_text(encoding="utf-8")
+    assert "### QL3 — NOT RUN (" in text and SCENARIOS["QL3"].doc in text
+    assert "-      commit vtherm_smartpi abc1234" in text
+    assert "Living: phase Hysteresis, the scenario needs a learned SmartPI (run QL0 first)" in text
+
+    monkeypatch.setenv("QAS_STUB_PHASE", "Stable")
+    assert run.main(["--role", "base", "QL3"]) == 0
+    assert [call[2] for call in harness.CALLS] == [["QL3"]]
+    assert text == (stub_bench / "results.md").read_text(encoding="utf-8")
 
 
 def test_the_water_role_s_base_holds_its_sources() -> None:

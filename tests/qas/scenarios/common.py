@@ -25,6 +25,8 @@ from stages import SMARTPI, VT
 
 STAGE = pathlib.Path(__file__).resolve().parents[3]
 PLUGIN = STAGE / "custom_components" / "vtherm_smartpi"
+HELPERS = "smartpi_qas_helpers"
+FIXTURES = pathlib.Path(__file__).resolve().parents[1] / "custom_components" / HELPERS / "fixtures"
 
 
 def _load(name: str, path: pathlib.Path) -> Any:
@@ -297,6 +299,102 @@ async def wait_loaded(r: Any, climates: Sequence[str], within_s: float = 300.0) 
     return False
 
 
+# --- SmartPI's learned state -------------------------------------------------------------------
+
+SEED_TOLERANCE = 0.01  # a zone's a and b come from its fit, which takes the windows since in too
+
+
+def fixture_model(fixture: str) -> tuple[float, float]:
+    """The a and b a fixture holds (``smartpi_qas_helpers/fixtures/<fixture>.json``)."""
+    est = json.loads((FIXTURES / f"{fixture}.json").read_text(encoding="utf-8"))["est_state"]
+    return float(est["a"]), float(est["b"])
+
+
+def _near(value: Any, expected: float, rel: float) -> bool:
+    return value is not None and abs(float(value) - expected) <= rel * abs(expected)
+
+
+def zone_fit(data: Mapping[str, Any]) -> dict[str, Any]:
+    """The zone's model in a main source's diagnostics (empty without one)."""
+    return path(data, "dependencies.second_source.zone_fit") or {}
+
+
+async def seed_learned(r: Any, climate: str, fixture: str, zone: bool = False) -> dict[str, Any]:
+    """A learned model loaded into a thermostat (the helpers' ``seed_state``), and its
+    diagnostics once they show it: phase Stable, a and b the fixture's within 1 %, and with
+    ``zone`` the zone's model published. Returns the diagnostics (``live``)."""
+    a, b = fixture_model(fixture)
+    await api(r).call(HELPERS, "seed_state", {"entity_id": climate, "fixture": fixture})
+
+    def shows(data: dict[str, Any]) -> bool:
+        return (
+            path(data, "control.phase") == "Stable"
+            and _near(path(data, "model.a"), a, SEED_TOLERANCE)
+            and _near(path(data, "model.b"), b, SEED_TOLERANCE)
+            and (not zone or bool(zone_fit(data).get("published")))
+        )
+
+    took, data = await wait_live(r, climate, shows, 2 * RECALC_S + MARGIN_S, 10.0)
+    r.check(
+        took is not None,
+        f"{climate} seeded with {fixture}: phase {path(data, 'control.phase')}, a {path(data, 'model.a')} "
+        f"(fixture {a:.4g}), b {path(data, 'model.b')} (fixture {b:.4g})"
+        + (f", zone model published {zone_fit(data).get('published')}" if zone else ""),
+    )
+    return data
+
+
+async def keep_state(r: Any, climate: str, name: str) -> None:
+    """The thermostat's SmartPI state kept under ``name`` (the helpers' storage)."""
+    await api(r).call(HELPERS, "keep_state", {"entity_id": climate, "name": name})
+
+
+async def restore_state(r: Any, climate: str, name: str, a: float | None) -> dict[str, Any]:
+    """The state kept under ``name`` put back, and its diagnostics once they show it (phase
+    Stable, and ``a`` within 1 % when given)."""
+    await api(r).call(HELPERS, "restore_state", {"entity_id": climate, "name": name})
+    took, data = await wait_live(
+        r,
+        climate,
+        lambda d: path(d, "control.phase") == "Stable" and (a is None or _near(path(d, "model.a"), a, SEED_TOLERANCE)),
+        2 * RECALC_S + MARGIN_S,
+        10.0,
+    )
+    r.check(took is not None, f"put back: {climate} phase {path(data, 'control.phase')}, a {path(data, 'model.a')} (kept {a})")
+    return data
+
+
+def phase_thermostats(scenario: Any, a_role: Role) -> list[Thermostat]:
+    """The thermostats a scenario's phase need is about, in this role."""
+    additional = a_role.zone.additional if a_role.zone is not None else None
+    names = scenario.phase.thermostats
+    return [
+        t
+        for t in a_role.thermostats
+        if t.smartpi and t.climate != additional and (not names or t.name in names)
+    ]
+
+
+async def phase_problem(r: Any, scenario: Any, a_role: Role, within_s: float = 0.0) -> str | None:
+    """Why the instance's SmartPI is not in the phase the scenario needs, or None. Diagnostics
+    not there yet (just after a restart) are waited for up to ``within_s``."""
+    if scenario.phase.need == "any":
+        return None
+    thermostats = phase_thermostats(scenario, a_role)
+    zone_main = next((t.name for t in a_role.thermostats if a_role.zone is not None and t.climate == a_role.zone.main), None)
+    start = time.time()
+    while True:
+        lives: dict[str, Any] = {}
+        for t in thermostats:
+            try:
+                lives[t.name] = await live(r, t.climate)
+            except LookupError:
+                lives[t.name] = {}
+        if all(path(data, "control.phase") for data in lives.values()) or time.time() - start >= within_s:
+            return scenario.phase.problem(lives, zone_main)
+        await asyncio.sleep(10.0)
+
+
 def results_dir() -> pathlib.Path:
     """Where the runner writes its results (the bench's ``results/<domain>/``)."""
     from harness import Pack, results_file  # noqa: PLC0415
@@ -328,6 +426,7 @@ def thermostat(name: str) -> Thermostat:
 
 __all__ = [
     "BOILER_GRACE_S",
+    "HELPERS",
     "CYCLE_S",
     "DOOR_SETTLING_S",
     "MARGIN_S",

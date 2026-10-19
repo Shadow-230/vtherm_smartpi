@@ -31,6 +31,7 @@ from .common import (
     options_flow,
     path,
     role,
+    seed_learned,
     set_temperature,
     settle_s,
     sim,
@@ -39,7 +40,7 @@ from .common import (
     thermostat,
     wait_live,
 )
-from .registry import WITH_WATER, scenario
+from .registry import FRESH, RESET, SEED, WITH_WATER, Phase, changes, scenario
 
 STUDIO = "climate.studio"
 NURSERY = "climate.nursery"
@@ -84,9 +85,7 @@ async def _fix(r: Any, climate: str, reset: bool) -> dict[str, Any]:
 
 async def _seed(r: Any, climate: str) -> None:
     """A learned model, so that the repair is offered (it is not while SmartPI learns)."""
-    await api(r).call(HELPERS, "seed_state", {"entity_id": climate, "fixture": "learned_room"})
-    took, data = await wait_live(r, climate, lambda d: path(d, "control.phase") not in (None, "Hysteresis"), 2 * MARGIN_S, 10.0)
-    r.check(took is not None, f"{climate} seeded with a learned model: phase {path(data, 'control.phase')}")
+    await seed_learned(r, climate, "learned_room")
 
 
 async def _calls_for_heat(r: Any, climate: str) -> None:
@@ -139,7 +138,7 @@ async def _live_water(r: Any, minutes: float) -> None:
     r.check(not errors, f"no error: {errors[:3]}")
 
 
-@scenario("QW1", ("water",), 48 * 60, "W1 (test_smartpi_sim_water.py)", set=WITH_WATER)
+@scenario("QW1", ("water",), 48 * 60, "W1 (test_smartpi_sim_water.py)", set=WITH_WATER, phase=Phase(FRESH))
 async def QW1(r: Any) -> None:
     """With water data for 48 h (the studio from entities, the nursery from the provider), both water blocks read source live with the factor of the boiler's 40 °C water, and each learned a is within 0.5–1.2 of its emitter's true a at the reference water."""
     await _live_water(r, 48 * 60.0)
@@ -179,12 +178,15 @@ async def QW2(r: Any) -> None:
     commands = {c for c, _i, _p in samples}
     integrals = {i for _c, i, p in samples if p != "Hysteresis"}
     r.check(len(samples) >= 10 and len(commands) == 1, f"the command held during hot water: {sorted(map(str, commands))}")
-    r.check(len(integrals) <= 1, f"the integral held while SmartPI regulates: {sorted(map(str, integrals))}")
+    if any(p != "Hysteresis" for _c, _i, p in samples):
+        r.check(len(integrals) <= 1, f"the integral held while SmartPI regulates: {sorted(map(str, integrals))}")
+    else:
+        r.note("the integral not checked: SmartPI still learns (Hysteresis) — QL5 checks it on a learned model")
     took, data = await wait_live(r, STUDIO, lambda d: path(d, "water.source") == "live", 10 * 60.0, 15.0)
     r.check(took is not None, f"after hot water the source is live again: {path(data, 'water.source')}")
 
 
-@scenario("QW3", ("water",), 50, "gaps (test_smartpi_sim_water.py); test_smartpi_water_handler.py", minimum=True, set=WITH_WATER)
+@scenario("QW3", ("water",), 50, "gaps (test_smartpi_sim_water.py); test_smartpi_water_handler.py", minimum=True, set=WITH_WATER, state=changes(SEED, RESET))
 async def QW3(r: Any) -> None:
     """With a learned model, the provider's data missing (flow_stale) keep the nursery's long-term average; lasting (not_mapped) give the factor 1 and the repair water_data_gone once; its fix resets the model."""
     await _seed(r, NURSERY)
@@ -212,7 +214,7 @@ async def QW3(r: Any) -> None:
     r.check(took is not None and await _issue(r, NURSERY) is None, "the data back while SmartPI learns again: no repair")
 
 
-@scenario("QW4", ("water",), 40, "test_smartpi_water_handler.py", minimum=True, set=WITH_WATER)
+@scenario("QW4", ("water",), 40, "test_smartpi_water_handler.py", minimum=True, set=WITH_WATER, state=changes(SEED))
 async def QW4(r: Any) -> None:
     """With a learned model, the nursery's data lost for good and back: the repair water_data_gone, then water_data_appeared once; kept through its fix, the model stays."""
     await _seed(r, NURSERY)

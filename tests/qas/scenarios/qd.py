@@ -29,6 +29,7 @@ from .common import (
     path,
     restart,
     role,
+    seed_learned,
     set_temperature,
     sim,
     stored_options,
@@ -36,7 +37,7 @@ from .common import (
     wait_live,
     wait_loaded,
 )
-from .registry import scenario
+from .registry import FRESH, NEIGHBOURS, RESET, SEED, Phase, changes, scenario
 
 KITCHEN = "climate.kitchen"
 HALL = "climate.hall"
@@ -120,7 +121,7 @@ async def _base_neighbours_back(r: Any) -> None:
             r.note(f"put back: {neighbour.entity} {neighbour.mode}, window action {neighbour.window_action}")
 
 
-@scenario("QD1", ("neighbours",), 45, "test_config_flow_neighbours.py", minimum=True)
+@scenario("QD1", ("neighbours",), 45, "test_config_flow_neighbours.py", minimum=True, state=changes(NEIGHBOURS))
 async def QD1(r: Any) -> None:
     """The neighbour forms show each error and warning, suggest the door sensor of the two zones' areas, edit and remove with the reset question at save, refuse a neighbour that is gone on the form, go back to the menu when nothing is chosen to remove, and stop the save with zone_changed."""
     transport = RestTransport(r.ha)
@@ -202,19 +203,16 @@ async def QD1(r: Any) -> None:
     r.check(len(items) == 2, f"the kitchen has its two neighbours again: {[(i.get('mode'), i.get('neighbour_window_action')) for i in items]}")
 
 
-@scenario("QD2", ("neighbours",), 20, "test_smartpi_dependencies_handler.py", minimum=True)
+@scenario("QD2", ("neighbours",), 20, "test_smartpi_dependencies_handler.py", minimum=True, state=changes(SEED, RESET))
 async def QD2(r: Any) -> None:
     """A reset chosen in a neighbour form resets the kitchen's model once, and the next restart does not reset it again."""
     dining = await _item_id(r, DINING)
     try:
-        await api(r).call("smartpi_qas_helpers", "seed_state", {"entity_id": KITCHEN, "fixture": FIXTURE})
-        seeded = path(await live(r, KITCHEN), "model.a")
-        r.check(seeded is not None, f"a learned model to start from: a {seeded}")
+        seeded = path(await seed_learned(r, KITCHEN, FIXTURE), "model.a")
         await options_flow(r, TITLE, _edit(dining, {"mode": "none", "door_sensors": [], "neighbour_window_action": "nothing"}, reset=True))
         took, data = await wait_live(r, KITCHEN, lambda d: path(d, "model.a") != seeded, 2 * MARGIN_S, 10.0)
         r.check(took is not None, f"the form's reset: a {seeded} → {path(data, 'model.a')}")
-        await api(r).call("smartpi_qas_helpers", "seed_state", {"entity_id": KITCHEN, "fixture": FIXTURE})
-        again = path(await live(r, KITCHEN), "model.a")
+        again = path(await seed_learned(r, KITCHEN, FIXTURE), "model.a")
         await restart(r)
         r.check(await wait_loaded(r, [KITCHEN]), "the kitchen is back after the restart")
         after = path(await live(r, KITCHEN), "model.a")
@@ -323,7 +321,7 @@ async def _door_run(r: Any, hours: float, schedule: list[list[float]] | None, op
     r.check({"door_open"} <= gates, f"learning gates seen: {sorted(map(str, gates))}")
 
 
-@scenario("QD5", ("neighbours",), 72 * 60, "N2, N5")
+@scenario("QD5", ("neighbours",), 72 * 60, "N2, N5", phase=Phase(FRESH))
 async def QD5(r: Any) -> None:
     """With the door open every day 7–9, 12–13:30 and 18–22 for 72 h, the kitchen learns the hall's k within ±25 % of the true exchange and no dead time while the door is open."""
     try:
@@ -358,7 +356,7 @@ async def _dining_steps(r: Any, hours: float, step_s: float) -> None:
         await set_temperature(r, DINING, dining.setpoint)
 
 
-@scenario("QD6", ("neighbours",), 72 * 60, "N3")
+@scenario("QD6", ("neighbours",), 72 * 60, "N3", phase=Phase(FRESH))
 async def QD6(r: Any) -> None:
     """With the dining room always open and its temperature stepping on its own for 72 h, the kitchen learns its k within ±20 % of the true exchange, or flags it indistinguishable."""
     await _dining_steps(r, 72.0, 5 * 3600.0 + 13 * 60.0)

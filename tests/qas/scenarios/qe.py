@@ -42,7 +42,7 @@ from .common import (
     wait_live,
     wait_loaded,
 )
-from .registry import scenario
+from .registry import FRESH, HEATING_TYPE, ZONE, ZONE_MODEL, Phase, changes, scenario
 
 
 EXTRA = "climate.lounge_extra"
@@ -91,7 +91,7 @@ def _master(name: str, devices: tuple[str, ...], self_regulation: str = "auto_re
     return Thermostat(name, "climate", "lounge", devices, algorithm="", heating_type=None, self_regulation=self_regulation)
 
 
-@scenario("QE1", ("zone",), 60, "test_config_flow_zone.py", minimum=True)
+@scenario("QE1", ("zone",), 60, "test_config_flow_zone.py", minimum=True, state=changes(ZONE))
 async def QE1(r: Any) -> None:
     """The zone form refuses each wrong master, creates at save the missing entry of a device restarting only that thermostat, moves a zone set up from the additional source to the main one, stops the save with zone_changed, and removes the zone."""
     zone = _zone()
@@ -171,7 +171,7 @@ async def QE1(r: Any) -> None:
         r.check(await wait_loaded(r, [zone.main, zone.additional]), "the zone runs again")
 
 
-@scenario("QE2", ("zone",), 60, "test_smartpi_sim_second_source.py", minimum=True)
+@scenario("QE2", ("zone",), 60, "test_smartpi_sim_second_source.py", minimum=True, state=changes(HEATING_TYPE, ZONE_MODEL))
 async def QE2(r: Any) -> None:
     """In the running zone the additional source learns nothing and applies the main source's command, and changing its heating type restarts the main source."""
     zone = _zone()
@@ -292,7 +292,7 @@ async def _zone_run(r: Any, hours: float, name: str, restart_at_h: float | None)
     r.check(not errors_logged, f"no error over the run: {errors_logged[:3]}")
 
 
-@scenario("QE5", ("zone", "zone-ref"), 48 * 60, "Z1 compared")
+@scenario("QE5", ("zone", "zone-ref"), 48 * 60, "Z1 compared", phase=Phase(FRESH))
 async def QE5(r: Any) -> None:
     """Over 48 h the zone publishes its model before about 30 h, regulates no more than 0.05 °C worse than the independent pair, the floor gives over 20 % of the heat, and a restart at 36 h keeps the model; compare.py qe5 judges it."""
     await _zone_run(r, 48.0, "qe5", 36.0)
@@ -300,7 +300,7 @@ async def QE5(r: Any) -> None:
         r.note("the zone's own checks are in compare.py qe5, against the instance that ran zone-ref")
 
 
-@scenario("QE5s", ("zone", "zone-ref"), 45, "Z1 compared", minimum=True, short_of=("QE5",))
+@scenario("QE5s", ("zone", "zone-ref"), 45, "Z1 compared", minimum=True, short_of=("QE5",), phase=Phase(FRESH))
 async def QE5s(r: Any) -> None:
     """For 45 minutes the zone (or the independent pair) regulates and nothing logs an error, the floor following the radiator in the zone."""
     await _zone_run(r, 0.75, "qe5s", None)

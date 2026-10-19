@@ -4,6 +4,7 @@ From the bench's directory (its docs/workflow.md), after ``setup/setup_role.py``
 
     HA_INSTANCE=N python <stage>/tests/qas/run.py --role ROLE ID [ID ...]
     HA_INSTANCE=N python <stage>/tests/qas/run.py --role ROLE M   # the minimum set of the role
+    HA_INSTANCE=N python <stage>/tests/qas/run.py --role ROLE L   # the learned set (after M)
     python <stage>/tests/qas/run.py --list [--role ROLE]          # the catalogue; no instance needed
 
 - ``--role``: the role instance N was set up as (required to run): the testing session chooses
@@ -13,6 +14,10 @@ From the bench's directory (its docs/workflow.md), after ``setup/setup_role.py``
   action, master and rule — not by the random ids the forms give; the water and boiler sources and
   the entities they read). A scenario on an instance in another state is NOT RUN (the bench's
   harness).
+- Before each scenario the runner reads the phase of the role's SmartPI thermostats: a scenario
+  that needs a fresh SmartPI (still learning, as after the setup) or a learned one (as after QL0)
+  and does not find it is NOT RUN, with the reason, in the results file; the harness is not
+  called for it.
 - Between scenarios the simulator's inputs and the thermostats go back to the base
   (``scenarios.common.reset``).
 """
@@ -21,8 +26,10 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import datetime as dt
 import pathlib
 import sys
+import types
 from collections.abc import Mapping
 from typing import Any
 
@@ -32,7 +39,7 @@ sys.path.insert(0, str(HERE))
 from bench import bench_lib  # noqa: E402
 from roles import ROLES, SMARTPI_DEFAULTS_TITLE, Role, supply_sensor  # noqa: E402
 from scenarios import PLANNED, SCENARIOS  # noqa: E402
-from scenarios.common import CONTEXT, reset  # noqa: E402
+from scenarios.common import CONTEXT, MARGIN_S, phase_problem, reset  # noqa: E402
 from stages import BOILER_SIGNALS, CALL_SOURCE, SMARTPI, SUPPLY_ENTITY, WATER_SOURCE  # noqa: E402
 
 
@@ -132,11 +139,25 @@ async def build_base(role: Role) -> dict[str, dict[str, Any]]:
     return base
 
 
+def _learned_order(ids: list[str]) -> list[str]:
+    """The learned set's order: what loads the models first (it changes the state but needs no
+    phase), then the scenarios that keep the state, then those that change it."""
+    def rank(sid: str) -> int:
+        s = SCENARIOS[sid]
+        if s.phase.need == "any":
+            return 0
+        return 1 if s.state.keeps else 2
+
+    return sorted(ids, key=rank)
+
+
 def expand(ids: list[str], role: Role) -> list[str]:
     out: list[str] = []
     for sid in ids:
         if sid == "M":
             out += [s.id for s in SCENARIOS.values() if s.minimum and role.name in s.roles]
+        elif sid == "L":
+            out += _learned_order([s.id for s in SCENARIOS.values() if s.learned_set and role.name in s.roles])
         elif sid in SCENARIOS:
             if role.name not in SCENARIOS[sid].roles:
                 raise SystemExit(f"{sid} is not a scenario of role {role.name} ({', '.join(SCENARIOS[sid].roles)})")
@@ -151,8 +172,10 @@ def listing(role: Role | None) -> str:
     for s in SCENARIOS.values():
         if role is not None and role.name not in s.roles:
             continue
-        flags = ("M" if s.minimum else "-") + ("D" if s.detached else "-")
-        rows.append(f"{s.id:5} {flags} {s.minutes:5} min  {','.join(s.roles):40}  {s.doc}")
+        flags = s.run_set.replace("—", "-") + ("D" if s.detached else "-")
+        rows.append(
+            f"{s.id:5} {flags} {s.minutes:5} min  {s.state.label:42} {s.phase.label:20} {','.join(s.roles):40}  {s.doc}"
+        )
     return "\n".join(rows)
 
 
@@ -170,11 +193,49 @@ def catalogue() -> str:
         short = f" Short variant of {', '.join(s.short_of)}." if s.short_of else ""
         rows.append(
             f"| {s.id} | {s.doc}{short} | {where} | {_duration(s.minutes)} | "
-            f"{'yes' if s.detached else 'no'} | {s.twin} | {'yes' if s.minimum else 'no'} | {s.set} |"
+            f"{'yes' if s.detached else 'no'} | {s.twin} | {s.run_set} | {s.state.label} | {s.phase.label} | {s.set} |"
         )
     for p in PLANNED:
-        rows.append(f"| {p.id} | {p.what[0].upper() + p.what[1:]} (planned, not built) | — | — | — | {p.twin} | — | {p.set} |")
+        rows.append(
+            f"| {p.id} | {p.what[0].upper() + p.what[1:]} (planned, not built) | — | — | — | {p.twin} | — | — | — | {p.set} |"
+        )
     return "\n".join(rows)
+
+
+async def not_run(pack: Any, sid: str, reason: str) -> str:
+    """A scenario NOT RUN for its phase, written to the results file as the harness writes one."""
+    from harness import results_file, tested_commit  # noqa: PLC0415
+
+    out = results_file(pack)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    commit = await asyncio.to_thread(tested_commit)
+    now = dt.datetime.now(dt.UTC)
+    text = (
+        f"\n### {sid} — NOT RUN ({now:%H:%M}–{now:%H:%M} UTC)\n{SCENARIOS[sid].doc}\n"
+        f"-      commit {commit}\n- NOT RUN — SmartPI is not in the phase the scenario needs: {reason}\n"
+    )
+    with out.open("a", encoding="utf-8") as f:
+        f.write(text)
+    print(text, flush=True)
+    return text
+
+
+async def run_all(pack: Any, ids: list[str], role: Role) -> None:
+    """Each scenario on its own: its phase checked first (NOT RUN when it is not met), then the
+    harness runs it from the role's base."""
+    from ha_client import HA  # noqa: PLC0415 — the bench's client
+    from harness import main as harness_main  # noqa: PLC0415
+
+    for sid in ids:
+        scenario = SCENARIOS[sid]
+        reason = None
+        if scenario.phase.need != "any":
+            async with HA(SMARTPI) as ha:
+                reason = await phase_problem(types.SimpleNamespace(ha=ha), scenario, role, within_s=MARGIN_S)
+        if reason:
+            await not_run(pack, sid, reason)
+            continue
+        await harness_main(pack, {sid: scenario.fn}, [sid], reset=reset, role=role.name)
 
 
 def main(argv: list[str]) -> int:
@@ -192,15 +253,14 @@ def main(argv: list[str]) -> int:
     role = ROLES[args.role]
     ids = expand(args.ids, role)
     if not ids:
-        raise SystemExit("name the scenarios to run (or M for the minimum set)")
+        raise SystemExit("name the scenarios to run (or M for the minimum set, L for the learned set)")
     bench_lib()
     from harness import Pack  # noqa: PLC0415
-    from harness import main as harness_main  # noqa: PLC0415
 
     CONTEXT.role = role
     base = asyncio.run(build_base(role))
     pack = Pack(domain=SMARTPI, base={role.name: base}, multi_entry=True)
-    asyncio.run(harness_main(pack, {sid: SCENARIOS[sid].fn for sid in ids}, ids, reset=reset, role=role.name))
+    asyncio.run(run_all(pack, ids, role))
     return 0
 
 

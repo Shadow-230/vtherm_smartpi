@@ -34,7 +34,7 @@ from .common import (
     system_log,
     wait_loaded,
 )
-from .registry import scenario
+from .registry import FRESH, NEIGHBOURS, PAUSED, SEED, Phase, changes, scenario
 
 LIVING = "climate.living"
 ATTIC_SENSOR = "sensor.smartpi_room_sim_attic_temperature"
@@ -72,19 +72,19 @@ async def _twin_run(r: Any, hours: float, name: str) -> None:
     r.check(not errors, f"no error over the run: {errors[:3]}")
 
 
-@scenario("QB1", ("base", "ref-0.4.0"), 48 * 60, "test_smartpi_regression_no_dependencies.py, test_smartpi_sim_baseline.py")
+@scenario("QB1", ("base", "ref-0.4.0"), 48 * 60, "test_smartpi_regression_no_dependencies.py, test_smartpi_sim_baseline.py", phase=Phase(FRESH))
 async def QB1(r: Any) -> None:
     """Over 48 h the twin room learns and regulates; the instance keeps a, b and its mean error from 24 to 48 h, and compare.py qb1 passes when the qas instance's a and b are within ±10 % of 0.4.0's and its mean error is no more than 0.03 °C above."""
     await _twin_run(r, 48.0, "qb1")
 
 
-@scenario("QB1s", ("base", "ref-0.4.0"), 45, "test_smartpi_sim_baseline.py", minimum=True, short_of=("QB1",))
+@scenario("QB1s", ("base", "ref-0.4.0"), 45, "test_smartpi_sim_baseline.py", minimum=True, short_of=("QB1",), phase=Phase(FRESH))
 async def QB1s(r: Any) -> None:
     """For 45 minutes the twin room regulates and nothing logs an error, and the instance keeps what compare.py qb1s reads (both instances regulating, phases named)."""
     await _twin_run(r, 0.75, "qb1s")
 
 
-@scenario("QB2a", ("ref-0.4.0",), 10, "test_algo_persistence.py", minimum=True)
+@scenario("QB2a", ("ref-0.4.0",), 10, "test_algo_persistence.py", minimum=True, state=changes(SEED, PAUSED))
 async def QB2a(r: Any) -> None:
     """On 0.4.0, before the upgrade: SmartPI's state is the learned fixture, saved by 0.4.0 itself with learning paused, and its model is kept for QB2."""
     await _hold_learning(r, False)
@@ -119,7 +119,7 @@ async def QB2(r: Any) -> None:
     r.note("put back: learning enabled")
 
 
-@scenario("QB3a", ("ref-0.4.0",), 10, "—")
+@scenario("QB3a", ("ref-0.4.0",), 10, "—", state=changes(NEIGHBOURS, PAUSED))
 async def QB3a(r: Any) -> None:
     """On qas, before going back to 0.4.0: a neighbour (the attic's sensor) is added to the entry, learning is paused and the model is kept for QB3; this is left in place on purpose."""
     await options_flow(
@@ -142,7 +142,7 @@ async def QB3a(r: Any) -> None:
     r.note("left in place for QB3 (on 0.4.0), which removes it by saving the options there; learning paused until then")
 
 
-@scenario("QB3", ("ref-0.4.0",), 30, "—")
+@scenario("QB3", ("ref-0.4.0",), 30, "—", state=changes(NEIGHBOURS))
 async def QB3(r: Any) -> None:
     """Back on 0.4.0 with a neighbour configured, the entries migrated to version 1.2 load without errors (their major version is still 1) and the state too; saving the options in 0.4.0 drops the fork's keys, as known."""
     before = kept("qb3") or {}
@@ -165,7 +165,7 @@ async def QB3(r: Any) -> None:
         r.note(f"still stored: smart_pi_dependencies = {stored.get('smart_pi_dependencies')}")
 
 
-@scenario("QB2l", ("ref-0.4.0",), 5, "test_algo_persistence.py")
+@scenario("QB2l", ("ref-0.4.0",), 5, "test_algo_persistence.py", state=changes(PAUSED))
 async def QB2l(r: Any) -> None:
     """On 0.4.0 after QB1, before the upgrade: the model 0.4.0 learned itself is kept for QB2 with learning paused, without seeding."""
     await _hold_learning(r, False)
