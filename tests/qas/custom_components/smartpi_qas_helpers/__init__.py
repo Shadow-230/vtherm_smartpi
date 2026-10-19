@@ -8,7 +8,13 @@ What the in-process tests do with patches, for scenarios on a real Home Assistan
 - ``silence_lead``: the main source of a zone stops publishing its commands to its additional
   source, while the link stays attached — for QE3, which checks the 15-minute fallback;
 - ``seed_state``: SmartPI's learned state replaced by a fixture (``fixtures/<name>.json``) and
-  saved by SmartPI itself, so a later version starts from what this one stored — for QB2;
+  saved by SmartPI itself, so a later version starts from what this one stored — for QB2, and the
+  learned model the QL scenarios start from. The fixture is made ready for the thermostat first
+  (``prepared_state``): it keeps the reset token the thermostat already applied (a restart then
+  does not reset the model again), and its zone's item takes the id the zone form gave here;
+- ``keep_state`` / ``restore_state``: a thermostat's SmartPI state kept under a name (in the
+  helpers' own storage, so it survives a restart) and put back later — for QL2, which resets the
+  model and puts back the one it found;
 - ``recorded_events``: the AutoCalib and SmartPI events fired since the start (or since
   ``clear``), with their data, as the service's response — the bench's client hears only service
   calls;
@@ -27,6 +33,7 @@ Each other service names the VTherm climate entity.
 
 from __future__ import annotations
 
+import copy
 import json
 import logging
 import pathlib
@@ -38,6 +45,7 @@ from homeassistant.core import Event, HomeAssistant, ServiceCall, ServiceRespons
 from homeassistant.helpers.dispatcher import async_dispatcher_connect
 from homeassistant.exceptions import ServiceValidationError
 from homeassistant.helpers import config_validation as cv
+from homeassistant.helpers.storage import Store
 from homeassistant.helpers.typing import ConfigType
 
 _LOGGER = logging.getLogger(__name__)
@@ -61,6 +69,32 @@ RECORDED = (
     "vtherm_smartpi_event",
 )
 MAX_RECORDED = 200
+KEPT_STORE_KEY = f"{DOMAIN}.kept_states"
+
+
+def prepared_state(payload: dict[str, Any], applied_reset_token: str | None, source_item_id: str | None) -> dict[str, Any]:
+    """A saved SmartPI state made ready for one thermostat.
+
+    - The reset token it applied stays the thermostat's own: a fixture's token (or none) would
+      make SmartPI apply the entry's reset again at the next start.
+    - A zone's item (the item holding a ``zone_fit``) takes the id of the thermostat's configured
+      zone item, which the form chose at random; without a zone here it is dropped, as SmartPI
+      drops what is not configured when it starts.
+    """
+    state = copy.deepcopy(payload)
+    if applied_reset_token is not None:
+        state["dependency_reset_token"] = applied_reset_token
+    else:
+        state.pop("dependency_reset_token", None)
+    dependencies = state.get("dependencies")
+    items = dependencies.get("items") if isinstance(dependencies, dict) else None
+    if isinstance(items, dict):
+        zone_items = [key for key, value in items.items() if isinstance(value, dict) and "zone_fit" in value]
+        for key in zone_items:
+            value = items.pop(key)
+            if source_item_id is not None and key == zone_items[0]:
+                items[source_item_id] = value
+    return state
 
 
 class SimProvider:
@@ -251,19 +285,51 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
             "silenced" if call.data["silent"] else "publishing again",
         )
 
+    def _load(thermostat: Any, payload: dict[str, Any]) -> None:
+        """Load a saved state into a running thermostat as SmartPI does when it starts (0.4.0,
+        for QB2a, has no reset token and no dependencies: the state is loaded as it is)."""
+        handler = thermostat._algo_handler  # noqa: SLF001 — a test helper reaches in
+        algo = thermostat.prop_algorithm
+        items = list(getattr(handler, "_dependency_items", ()))
+        source = next((item.item_id for item in items if item.is_source), None)
+        algo.load_state(prepared_state(payload, getattr(algo, "applied_reset_token", None), source))
+        forget = getattr(algo, "forget_dependencies_except", None)
+        if forget is not None:
+            forget(item.item_id for item in items)
+
     async def seed_state(call: ServiceCall) -> None:
         thermostat = _thermostat(hass, call.data["entity_id"])
         path = FIXTURES / f"{call.data['fixture']}.json"
         if not path.is_file():
             raise ServiceValidationError(f"no fixture {path.name}")
         payload = await hass.async_add_executor_job(path.read_text, "utf-8")
-        thermostat.prop_algorithm.load_state(json.loads(payload))
+        _load(thermostat, json.loads(payload))
         await thermostat._algo_handler._async_save()  # noqa: SLF001
         _LOGGER.warning(
             "smartpi_qas_helpers: SmartPI state of %s replaced by the fixture %s",
             thermostat.entity_id,
             path.name,
         )
+
+    kept_store: Store = Store(hass, 1, KEPT_STORE_KEY)
+
+    async def keep_state(call: ServiceCall) -> None:
+        thermostat = _thermostat(hass, call.data["entity_id"])
+        kept = await kept_store.async_load() or {}
+        state = json.loads(json.dumps(thermostat.prop_algorithm.save_state()))
+        kept.setdefault(thermostat.entity_id, {})[call.data["name"]] = state
+        await kept_store.async_save(kept)
+        _LOGGER.warning("smartpi_qas_helpers: SmartPI state of %s kept as %s", thermostat.entity_id, call.data["name"])
+
+    async def restore_state(call: ServiceCall) -> None:
+        thermostat = _thermostat(hass, call.data["entity_id"])
+        kept = await kept_store.async_load() or {}
+        state = (kept.get(thermostat.entity_id) or {}).get(call.data["name"])
+        if state is None:
+            raise ServiceValidationError(f"no state of {thermostat.entity_id} kept as {call.data['name']}")
+        _load(thermostat, state)
+        await thermostat._algo_handler._async_save()  # noqa: SLF001
+        _LOGGER.warning("smartpi_qas_helpers: SmartPI state of %s put back from %s", thermostat.entity_id, call.data["name"])
 
     hass.services.async_register(
         DOMAIN,
@@ -327,4 +393,7 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
         seed_state,
         vol.Schema({vol.Required("entity_id"): cv.entity_id, vol.Required("fixture"): cv.slug}),
     )
+    kept_schema = vol.Schema({vol.Required("entity_id"): cv.entity_id, vol.Optional("name", default="kept"): cv.slug})
+    hass.services.async_register(DOMAIN, "keep_state", keep_state, kept_schema)
+    hass.services.async_register(DOMAIN, "restore_state", restore_state, kept_schema)
     return True

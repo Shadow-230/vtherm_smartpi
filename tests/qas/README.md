@@ -19,10 +19,15 @@ choice: a role names no instance.
 
        HA_INSTANCE=N python stage/vtherm_smartpi/tests/qas/setup/setup_role.py --role ROLE
 
-3. Run the role's minimum set, or named scenarios (the long ones detached):
+3. Run the role's minimum set, then its learned set, or named scenarios (the long ones detached):
 
        HA_INSTANCE=N python stage/vtherm_smartpi/tests/qas/run.py --role ROLE M
+       HA_INSTANCE=N python stage/vtherm_smartpi/tests/qas/run.py --role ROLE L
        HA_INSTANCE=N python stage/vtherm_smartpi/tests/qas/run.py --role neighbours QD1 QD4
+
+   `M` runs from a fresh setup, where SmartPI still learns. `L` starts with QL0, which loads the
+   learned models. A scenario whose SmartPI phase is not met (`--list` shows the phase each one
+   needs, and what it does to the learned state) is NOT RUN, with the reason, in the results file.
 
 4. Compare the pairs once both instances have run, naming the two instances (or their results
    files): `python stage/vtherm_smartpi/tests/qas/compare.py qb1 NEW REF` (NEW ran `base`, REF
@@ -30,4 +35,6 @@ choice: a role names no instance.
 
 The runner finds the bench's `lib/` in `TESTBED_ROOT` or the current directory. Nothing here is
 named `test_*.py`: the fork's CI does not collect it. After a change to `roles.py`, run
-`python tests/qas/config/build.py` (CI checks the files are up to date).
+`python tests/qas/config/build.py` (CI checks the files are up to date), and, after a change to a
+room the learned states come from, `python tests/qas/build_fixtures.py` (CI checks each file holds
+a learned model of its room).

@@ -25,7 +25,7 @@ silence_lead:
         boolean:
 seed_state:
   name: Seed SmartPI's learned state
-  description: Replace a thermostat's SmartPI state by a fixture and save it through SmartPI (test only).
+  description: Replace a thermostat's SmartPI state by a fixture (keeping its applied reset token, its zone's item renamed to its own) and save it through SmartPI (test only).
   fields:
     entity_id:
       name: Thermostat
@@ -36,6 +36,38 @@ seed_state:
     fixture:
       name: Fixture
       required: true
+      selector:
+        text:
+keep_state:
+  name: Keep SmartPI's state
+  description: Keep a thermostat's SmartPI state under a name, in the helpers' storage (test only).
+  fields:
+    entity_id:
+      name: Thermostat
+      required: true
+      selector:
+        entity:
+          domain: climate
+    name:
+      name: Name
+      required: false
+      default: kept
+      selector:
+        text:
+restore_state:
+  name: Put SmartPI's state back
+  description: Load a thermostat's SmartPI state kept under a name and save it through SmartPI (test only).
+  fields:
+    entity_id:
+      name: Thermostat
+      required: true
+      selector:
+        entity:
+          domain: climate
+    name:
+      name: Name
+      required: false
+      default: kept
       selector:
         text:
 recorded_events:

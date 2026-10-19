@@ -1,5 +1,6 @@
 """The QAS room simulator (tests/qas/custom_components/smartpi_room_sim): its physics, the same
-file as the in-process simulator's, its real-time engine and its Home Assistant entities."""
+file as the in-process simulator's, its real-time engine and its Home Assistant entities; and the
+helpers (smartpi_qas_helpers): their heating provider and the learned states they load and keep."""
 
 from __future__ import annotations
 
@@ -535,3 +536,88 @@ async def test_without_a_provider_configured_the_helpers_register_none(hass: Hom
     assert status == {"configured": False, "providers": []}
     with pytest.raises(ServiceValidationError):
         await hass.services.async_call("smartpi_qas_helpers", "set_provider", {"registered": True}, blocking=True)
+
+
+# --- the helpers' learned states (seed_state, keep_state, restore_state) ---------------------
+
+
+class _Item:
+    def __init__(self, item_id: str, is_source: bool) -> None:
+        self.item_id, self.is_source = item_id, is_source
+
+
+class _Handler:
+    def __init__(self, items: list[_Item]) -> None:
+        self._dependency_items = items
+        self.saved = 0
+
+    async def _async_save(self) -> None:
+        self.saved += 1
+
+
+class _Thermostat:
+    """A VTherm thermostat with SmartPI, as the helpers reach it: the climate entity's
+    ``prop_algorithm`` (a real SmartPI) and its ``_algo_handler``."""
+
+    def __init__(self, entity_id: str, items: list[_Item]) -> None:
+        from custom_components.vtherm_smartpi.algo import SmartPI  # noqa: PLC0415
+
+        self.entity_id = entity_id
+        self.prop_algorithm = SmartPI(None, cycle_min=10, minimal_activation_delay=0, minimal_deactivation_delay=0, name=entity_id)
+        self._algo_handler = _Handler(items)
+
+
+@pytest.fixture
+async def helpers_hass(hass: HomeAssistant):
+    thermostats = {
+        "climate.lounge_radiator": _Thermostat("climate.lounge_radiator", [_Item("form-id", True)]),
+        "climate.living": _Thermostat("climate.living", []),
+    }
+
+    class _Climate:
+        def get_entity(self, entity_id):
+            return thermostats.get(entity_id)
+
+    hass.data["climate"] = _Climate()
+    assert await async_setup_component(hass, "smartpi_qas_helpers", {"smartpi_qas_helpers": None})
+    await hass.async_block_till_done()
+    hass.data["qas_thermostats"] = thermostats
+    yield hass
+
+
+async def test_seed_state_makes_the_fixture_ready_for_the_thermostat(helpers_hass: HomeAssistant) -> None:
+    """The zone's fixture loaded into the lounge's main source: the learned model, its zone item
+    under the id the zone form gave here, the reset token it applied kept; saved through SmartPI."""
+    lounge = helpers_hass.data["qas_thermostats"]["climate.lounge_radiator"]
+    lounge.prop_algorithm.applied_reset_token = "entry-token"
+    await helpers_hass.services.async_call(
+        "smartpi_qas_helpers", "seed_state", {"entity_id": "climate.lounge_radiator", "fixture": "learned_lounge_zone"}, blocking=True
+    )
+    algo = lounge.prop_algorithm
+    assert algo.phase.value == "Stable"
+    assert algo.applied_reset_token == "entry-token"
+    assert list(algo.save_state()["dependencies"]["items"]) == ["form-id"]
+    assert lounge._algo_handler.saved == 1
+    with pytest.raises(ServiceValidationError):
+        await helpers_hass.services.async_call(
+            "smartpi_qas_helpers", "seed_state", {"entity_id": "climate.living", "fixture": "no_such_fixture"}, blocking=True
+        )
+
+
+async def test_a_kept_state_is_put_back(helpers_hass: HomeAssistant) -> None:
+    """keep_state, a reset, restore_state: the learned model is back and saved through SmartPI."""
+    living = helpers_hass.data["qas_thermostats"]["climate.living"]
+    call = helpers_hass.services.async_call
+    await call("smartpi_qas_helpers", "seed_state", {"entity_id": "climate.living", "fixture": "learned_room"}, blocking=True)
+    a = living.prop_algorithm.est.a
+    await call("smartpi_qas_helpers", "keep_state", {"entity_id": "climate.living", "name": "ql2"}, blocking=True)
+    living.prop_algorithm.reset_learning()
+    assert living.prop_algorithm.phase.value == "Hysteresis"
+    await call("smartpi_qas_helpers", "restore_state", {"entity_id": "climate.living", "name": "ql2"}, blocking=True)
+    assert living.prop_algorithm.phase.value == "Stable"
+    assert living.prop_algorithm.est.a == pytest.approx(a)
+    assert living._algo_handler.saved == 2
+    with pytest.raises(ServiceValidationError):
+        await call("smartpi_qas_helpers", "restore_state", {"entity_id": "climate.living", "name": "never_kept"}, blocking=True)
+    with pytest.raises(ServiceValidationError):
+        await call("smartpi_qas_helpers", "keep_state", {"entity_id": "climate.nowhere"}, blocking=True)

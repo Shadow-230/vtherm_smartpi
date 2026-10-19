@@ -4,6 +4,19 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+- The QAS test pack tests SmartPI with a learned model, not only just after the setup. Each
+  scenario says what it does to SmartPI's learned state (keeps it, or changes it: reset, seed,
+  calibration, heating type, zone, …) and the phase SmartPI must be in (fresh, learned or any);
+  `run.py --list` and the catalogue show both, and a scenario whose phase is not met is NOT RUN,
+  with the reason, in the results file. A new learned set `L` (QL0–QL5): QL0 loads learned models
+  and waits until the diagnostics show them; then the floor of a zone on water applies the main
+  power over its water factor below 100 % (QL1), a forced calibration and a reset on a learned
+  thermostat (QL2), restarts and reloads keep the model and the zone's model (QL3), a boiler not
+  called leaves the learned a alone (QL4), and hot water holds the integral while SmartPI
+  regulates (QL5). The helpers' `seed_state` keeps the reset token the thermostat applied and
+  renames the zone's item; new `keep_state` and `restore_state` put back the state a scenario
+  found. New learned states for the studio and the lounge zone (`tests/qas/build_fixtures.py`)
+  and the in-process twins `tests/test_smartpi_sim_learned.py`.
 - `testing.md` gets a section "Coverage": the code coverage per file against the baseline, the
   fork's own lines (99.2 % of the lines, 98.0 % of the branches) with the reason for each line left
   uncovered, and a matrix of the features, their variants and use cases with where each is tested.

@@ -30,7 +30,7 @@ from .common import (
     wait_live,
     wait_loaded,
 )
-from .registry import scenario
+from .registry import CALIBRATED, HEATING_TYPE, RESET, changes, scenario
 
 LIVING = "climate.living"
 
@@ -90,7 +90,7 @@ async def QA2(r: Any) -> None:
     r.check((await entry(r, SMARTPI, title)).get("state") == "loaded", "the entry is loaded")
 
 
-@scenario("QA3", ("base",), 30, "test_services.py")
+@scenario("QA3", ("base",), 30, "test_services.py", state=changes(RESET, CALIBRATED))
 async def QA3(r: Any) -> None:
     """SmartPI's four services work on VTherm 10.5.1, and a paused learning stays paused across a restart."""
     target = {"entity_id": LIVING}
@@ -123,7 +123,7 @@ async def QA3(r: Any) -> None:
         r.note("put back: learning enabled")
 
 
-@scenario("QA4", ("base",), 60, "test_smartpi_autocalib_events.py", minimum=True)
+@scenario("QA4", ("base",), 60, "test_smartpi_autocalib_events.py", minimum=True, state=changes(CALIBRATED))
 async def QA4(r: Any) -> None:
     """AutoCalib events carry the thermostat's climate entity in entity_id and its name in name, and neither the recorder nor the logbook logs an invalid entity id."""
     since = time.time()
@@ -202,7 +202,7 @@ def _close(a: Any, b: Any, rel: float = 1e-6) -> bool:
     return abs(float(a) - float(b)) <= rel * max(abs(float(b)), 1e-12)
 
 
-@scenario("QA6", ("base", "electric"), 20, "test_smartpi_water_handler.py, test_smartpi_boiler_handler.py", minimum=True)
+@scenario("QA6", ("base", "electric"), 20, "test_smartpi_water_handler.py, test_smartpi_boiler_handler.py", minimum=True, state=changes(HEATING_TYPE, restored=True))
 async def QA6(r: Any) -> None:
     """A water heating type without a water data source shows the water block with source none, factor 1 and its inputs from no source, and no boiler block without a call source, an electric type shows neither, and nothing is logged at each control call."""
     since = time.time()

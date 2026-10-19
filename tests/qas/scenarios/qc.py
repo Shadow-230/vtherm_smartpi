@@ -29,7 +29,7 @@ from .common import (
     thermostat,
     wait_live,
 )
-from .registry import scenario
+from .registry import FRESH, Phase, scenario
 
 BEDROOM = "climate.bedroom"
 OFFICE = "climate.office"
@@ -182,7 +182,7 @@ async def _present(r: Any, entity_id: str) -> bool:
     return bool(state) and state["state"] in ("on", "off")
 
 
-@scenario("QC4", ("central-boiler",), 48 * 60, "B1 (test_smartpi_sim_boiler_call.py)")
+@scenario("QC4", ("central-boiler",), 48 * 60, "B1 (test_smartpi_sim_boiler_call.py)", phase=Phase(FRESH))
 async def QC4(r: Any) -> None:
     """Every day from 2:00 to 8:00 the big zone stays off, so the small zone calls without the boiler; after 48 h its learned a is within 0.85–1.2 of its radiator's true a."""
     true_a = role().sim["heaters"]["bedroom_radiator"]["a"]
