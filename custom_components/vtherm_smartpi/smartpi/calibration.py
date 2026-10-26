@@ -227,6 +227,7 @@ class CalibrationManager:
         dt_est: "DeadTimeEstimator",
         max_on_percent: float | None,
         twin_diag: dict | None = None,
+        learning_active: bool = True,
     ) -> CalibrationResult:
         """
         Execute calibration state machine.
@@ -239,6 +240,8 @@ class CalibrationManager:
             max_on_percent: Maximum on_percent allowed
             twin_diag: Latest thermal twin diagnostics, used to end the cycle
                 with UNREACHABLE when a threshold cannot be reached
+            learning_active: False while SmartPI's learning is paused; the
+                dead-time estimator is then not fed
 
         Returns:
             CalibrationResult with on_percent (or None if not calibrating)
@@ -332,8 +335,8 @@ class CalibrationManager:
         if max_on_percent is not None and on_percent > max_on_percent:
             on_percent = max_on_percent
 
-        # Feed Estimator (Critical for detection!)
-        if current_temp is not None:
+        # Feed Estimator (Critical for detection!), unless learning is paused
+        if current_temp is not None and learning_active:
             dt_est.update(
                 now=time.monotonic(),
                 tin=current_temp,

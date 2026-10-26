@@ -254,7 +254,9 @@ cours sont abandonnées, et la chauffe suivante est un nouvel épisode, donc
 SmartPI n'apprend pas pendant le temps mort de la pièce après la pause (3.2).
 L'apprentissage reprend lorsque le seuil est atteint ou que SmartPI cesse de
 demander. La régulation ne change pas : SmartPI voit la pièce refroidir et
-continue de demander. Chaque changement est journalisé.
+continue de demander. La pause vaut aussi pendant une calibration (4.6). Elle
+apparaît dans le diagnostic sous `learning.boiler_paused`, et chaque changement
+est journalisé.
 
 Sources :
 
@@ -559,6 +561,10 @@ Le cycle forcé est géré par `CalibrationManager` :
 - `COOL_DOWN` jusqu'à `sp - 0.3°C`,
 - `HEAT_UP`,
 - `COOL_DOWN_FINAL` jusqu'au retour à `sp`.
+
+Les phases alimentent l'estimateur de temps mort, sauf tant que l'apprentissage
+est en pause (réglage de l'utilisateur, ou sous le seuil de la chaudière
+centrale, 3.7) : les phases se déroulent alors normalement, sans mesurer.
 
 Avant et pendant chaque phase, le manager vérifie, avec le jumeau thermique, que le seuil de la phase peut être atteint. La température mesurée passe en premier : dès qu'elle a atteint le seuil de la phase, la phase avance et le jumeau n'est pas consulté. Une phase passive converge vers `T_steady_passive` ; une phase active pilotée à la puissance autorisée `u_max` (`max_on_percent` dans l'espace linéaire) converge vers `T_steady_passive + u_max·(T_steady_max − T_steady_passive)`, l'équilibre 1R1C étant linéaire en puissance (`T_steady_max` lorsque `u_max` vaut 1 ou que l'équilibre passif n'est pas valide) ; le seuil est atteignable lorsque cet équilibre se situe au-delà de lui d'une marge `CALIBRATION_REACHABILITY_MARGIN_C = 0.5°C` (HEAT : `COOL_DOWN` et `COOL_DOWN_FINAL` passifs, `HEAT_UP` actif ; COOL : `COOL_DOWN` et `COOL_DOWN_FINAL` actifs, `HEAT_UP` passif). La vérification ne s'applique que lorsque le jumeau est utilisable (`status` ok, `model_reliable`, passé sa phase de chauffe, équilibre valide, et `cooling_model_available` en COOL). Lorsque le seuil n'est pas atteignable, le cycle se termine immédiatement avec le résultat `Unreachable`, distinct de `Cancelled` (HVAC OFF, timeout de `CALIBRATION_TIMEOUT_MIN = 600` minutes, reset) : `last_calibration_time` n'est pas défini, `AutoCalibTrigger` ne consomme aucun retry et publie `smartpi_autocalib_unreachable`, et la tentative suivante attend `AUTOCALIB_COOLDOWN_H` heures (`autocalib.next_check_ts`). Le résultat n'est pas un diagnostic publié : `calibration.state` ne porte que la phase.
 

@@ -224,6 +224,7 @@
   "learning.accepted_updates_a",
   "learning.accepted_updates_b",
   "learning.b_drift_state",
+  "learning.boiler_paused",
   "learning.bootstrap_progress_percent",
   "learning.bootstrap_status",
   "learning.bootstrap_target_a",
