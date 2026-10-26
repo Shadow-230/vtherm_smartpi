@@ -780,6 +780,11 @@ retirées des motifs ; les événements des pools sont préfixés par `pool:`).
 chaque pool et le pas de capteur utilisé pour leur incertitude ; ces valeurs
 sont propres à la session Home Assistant courante. Quand le jumeau thermique est exploitable, ses champs
 publics sont exposés sous `analysis.twin`.
+`analysis.deadtime.heat_episode_start` et `cool_episode_start` donnent le début
+de l'épisode de chauffe ou de refroidissement en cours, le moment à partir duquel
+compte la fenêtre de temps mort (3.2), en heure ISO UTC ; `null` hors épisode. La
+pause d'apprentissage sous le seuil de la chaudière centrale (3.7) termine
+l'épisode, de sorte que la chauffe suivante en commence un nouveau.
 
 `feedforward.fftrim.command_ownership` indique si le scheduler émet des reçus
 et expose le dernier état de rattachement, son motif de rejet, l’identifiant de

@@ -10,7 +10,7 @@ and intentional.
 from __future__ import annotations
 
 import time
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any, Dict, TYPE_CHECKING
 from .const import (
     ABConfidenceState,
@@ -22,6 +22,7 @@ from .const import (
     FF_TRIM_RHO,
     clamp,
 )
+from .timestamp_utils import monotonic_to_wall_ts
 
 if TYPE_CHECKING:
     from ..algo import SmartPI
@@ -55,6 +56,12 @@ def _integral_time_min(kp: float, ki: float) -> float | None:
     if ki is None or kp is None or ki <= 0.0:
         return None
     return round(kp / ki, 1)
+
+
+def _episode_start(monotonic_ts: float | None) -> str | None:
+    """The start of a heating or cooling episode, as an ISO time in UTC (None outside one)."""
+    wall_ts = monotonic_to_wall_ts(monotonic_ts)
+    return datetime.fromtimestamp(wall_ts, tz=UTC).isoformat() if wall_ts is not None else None
 
 
 def _build_control(algo: SmartPI) -> Dict[str, Any]:
@@ -641,6 +648,8 @@ def _build_analysis(algo: SmartPI, twin_diag: Dict[str, Any]) -> Dict[str, Any]:
         "deadtime": {
             "state": algo.dt_est.state,
             "last_power": algo.dt_est.last_power,
+            "heat_episode_start": _episode_start(algo._t_heat_episode_start),
+            "cool_episode_start": _episode_start(algo._t_cool_episode_start),
         },
         "governance": {
             "last_freeze_reason_gains": gov.last_freeze_reason_gains.value,

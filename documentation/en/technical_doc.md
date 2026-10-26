@@ -737,6 +737,11 @@ pairs (numeric values removed from the reasons; pool events are prefixed with
 in each pool and the sensor resolution used for their uncertainty; these values
 are specific to the current Home Assistant session. When the thermal twin is
 usable, its public diagnostic fields are exposed under `analysis.twin`.
+`analysis.deadtime.heat_episode_start` and `cool_episode_start` give the start
+of the current heating or cooling episode, the moment the dead-time window
+(3.2) counts from, as an ISO time in UTC; `null` outside an episode. The
+learning pause below the central boiler threshold (3.7) ends the episode, so
+the next heating after it starts a new one.
 
 `feedforward.fftrim.command_ownership` exposes whether the scheduler emits
 receipts, the latest binding status and rejection reason, the request
