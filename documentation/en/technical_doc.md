@@ -198,7 +198,8 @@ Reliability becomes true as soon as at least one valid measurement has been capt
 ### 3.7 Learning pause below the central boiler threshold
 
 Versatile Thermostat's central boiler starts only when the number of active
-thermostats, or their total power, reaches a threshold. Below it, a thermostat
+devices (valve heads or switches) of the thermostats it counts, or their total
+power, reaches a threshold. Below it, a thermostat
 that calls for heat gets none: the room cools although the command says it
 heats. Learning from that time would make the heater look weak.
 

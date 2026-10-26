@@ -226,7 +226,8 @@ La fiabilité devient vraie dès qu'au moins une mesure valide a été capturée
 ### 3.7 Pause d'apprentissage sous le seuil de la chaudière centrale
 
 La chaudière centrale de Versatile Thermostat ne démarre que lorsque le nombre
-de thermostats actifs, ou leur puissance totale, atteint un seuil. En dessous,
+d'appareils actifs (têtes de vanne ou interrupteurs) des thermostats qu'elle
+compte, ou leur puissance totale, atteint un seuil. En dessous,
 un thermostat qui demande de la chaleur n'en reçoit pas : la pièce refroidit
 alors que la commande dit qu'elle chauffe. Apprendre pendant ce temps ferait
 paraître l'émetteur faible.

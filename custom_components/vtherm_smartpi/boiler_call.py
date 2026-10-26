@@ -1,7 +1,8 @@
 """Versatile Thermostat's central boiler threshold, read for SmartPI's learning.
 
-Versatile Thermostat starts its central boiler when enough thermostats call for
-heat, or when their total power reaches a threshold. Below the threshold the
+Versatile Thermostat starts its central boiler when enough devices (valve heads
+or switches) of its thermostats are active, or when their total power reaches a
+threshold. Below the threshold the
 boiler does not heat: a thermostat that calls gets no heat, and the room keeps
 cooling although SmartPI's command says it heats. SmartPI pauses its learning
 then (documentation/en/technical_doc.md, 3.7).
@@ -45,8 +46,8 @@ def central_boiler_threshold_reached(hass: Any) -> bool | None:
     """Whether the demand reaches Versatile Thermostat's central boiler threshold.
 
     Versatile Thermostat's rule: a threshold counts when it is above 0 and the
-    number of active thermostats, or their total power, reaches it. None when
-    the values cannot be read.
+    number of active devices (valve heads or switches), or their total power,
+    reaches it. None when the values cannot be read.
     """
     try:
         registry = er.async_get(hass)
