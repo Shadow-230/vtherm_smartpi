@@ -238,7 +238,10 @@ donc en pause tant que toutes ces conditions sont vraies :
 - Versatile Thermostat compte le thermostat pour sa chaudière centrale
   (`is_used_by_central_boiler`),
 - SmartPI demande de la chaleur (puissance engagée supérieure à 0),
-- le seuil n'est pas atteint. `boiler_call.py` le lit dans les entités de
+- le seuil n'est pas atteint, à deux calculs consécutifs : quand un thermostat
+  commence à demander, Versatile Thermostat compte son appareil un instant après
+  que SmartPI lit le seuil, de sorte qu'une chaudière qui démarre mettrait sinon
+  l'apprentissage en pause pendant un calcul. `boiler_call.py` le lit dans les entités de
   Versatile Thermostat (`nb_device_active_boiler` comparé à
   `boiler_activation_threshold`, `total_power_active_boiler` comparé à
   `boiler_power_activation_threshold`) avec la règle de Versatile Thermostat :
@@ -247,16 +250,16 @@ donc en pause tant que toutes ces conditions sont vraies :
   en pause.
 
 Le handler vérifie cela avant chaque calcul
-(`SmartPIHandler._below_boiler_threshold()` règle
+(`SmartPIHandler._update_boiler_learning_pause()` règle
 `SmartPI.set_boiler_learning_paused()`). La pause fonctionne comme la pause de
 l'utilisateur (`set_smartpi_learning`) sans la modifier : les observations en
 cours sont abandonnées, et la chauffe suivante est un nouvel épisode, donc
 SmartPI n'apprend pas pendant le temps mort de la pièce après la pause (3.2).
-L'apprentissage reprend lorsque le seuil est atteint ou que SmartPI cesse de
-demander. La régulation ne change pas : SmartPI voit la pièce refroidir et
+L'apprentissage reprend dès le premier calcul où le seuil est atteint ou où
+SmartPI cesse de demander. La régulation ne change pas : SmartPI voit la pièce refroidir et
 continue de demander. La pause vaut aussi pendant une calibration (4.6). Elle
-apparaît dans le diagnostic sous `learning.boiler_paused`, et chaque changement
-est journalisé.
+apparaît dans le diagnostic sous `learning.boiler_paused`, publié dès qu'il
+change, et chaque changement est journalisé.
 
 Sources :
 

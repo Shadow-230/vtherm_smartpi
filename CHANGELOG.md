@@ -4,6 +4,13 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+- Learning: the pause below the central boiler threshold starts only when the
+  threshold is not reached at two consecutive calculations. When a thermostat
+  starts calling, Versatile Thermostat counts its device a moment after
+  SmartPI reads the threshold, so each boiler start paused learning for one
+  calculation and dropped its observations twice. Learning still resumes at
+  once. A change of `learning.boiler_paused` is now published at once, not
+  with the next change of an input.
 - Learning: a calibration no longer feeds the dead-time estimator while
   learning is paused, by the user's `set_smartpi_learning` or below the
   central boiler threshold; its phases run as before. Until now a calibration

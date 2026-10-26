@@ -302,21 +302,42 @@ def _handler(counted: bool = True) -> SmartPIHandler:
 
 
 async def _control(handler: SmartPIHandler, reached: bool | None, power: float) -> SmartPI:
+    """One calculation; returns the algorithm, with the diagnostics' publications in ``handler.published``."""
     algo = handler._thermostat.prop_algorithm
     algo._committed_on_percent = power
     with (
         patch("custom_components.vtherm_smartpi.handler.central_boiler_threshold_reached", return_value=reached),
-        patch("custom_components.vtherm_smartpi.handler.async_dispatcher_send"),
+        patch("custom_components.vtherm_smartpi.handler.async_dispatcher_send") as send,
         patch.object(handler, "_async_save", new_callable=AsyncMock),
     ):
         await handler.control_heating(force=False)
+    handler.published = send.call_count
+    handler.should_publish_intermediate()  # as Versatile Thermostat asks after each calculation
     return algo
 
 
-async def test_handler_pauses_learning_below_the_threshold() -> None:
-    algo = await _control(_handler(), reached=False, power=0.5)
+async def test_handler_pauses_learning_below_the_threshold_at_two_calculations() -> None:
+    """The first calculation below the threshold does not pause: at a boiler's start Versatile
+    Thermostat counts the new call a moment later. The second one does."""
+    handler = _handler()
 
+    algo = await _control(handler, reached=False, power=0.5)
+    assert algo.boiler_learning_paused is False
+
+    algo = await _control(handler, reached=False, power=0.5)
     assert algo.boiler_learning_paused is True
+
+
+async def test_no_pause_when_the_boiler_starts() -> None:
+    """Below the threshold at one calculation only, as when the boiler starts: no pause."""
+    handler = _handler()
+
+    await _control(handler, reached=False, power=0.5)
+    algo = await _control(handler, reached=True, power=0.5)
+    assert algo.boiler_learning_paused is False
+
+    algo = await _control(handler, reached=False, power=0.5)
+    assert algo.boiler_learning_paused is False
 
 
 @pytest.mark.parametrize(
@@ -329,15 +350,37 @@ async def test_handler_pauses_learning_below_the_threshold() -> None:
     ],
 )
 async def test_handler_does_not_pause(counted, reached, power) -> None:
-    algo = await _control(_handler(counted), reached=reached, power=power)
+    handler = _handler(counted)
+    await _control(handler, reached=reached, power=power)
+    algo = await _control(handler, reached=reached, power=power)
 
     assert algo.boiler_learning_paused is False
 
 
-async def test_handler_resumes_learning_when_the_threshold_is_reached() -> None:
+async def test_handler_resumes_learning_at_once() -> None:
+    """Learning resumes at the first calculation that reaches the threshold, or does not call."""
+    for reached, power in ((True, 0.5), (False, 0.0)):
+        handler = _handler()
+        await _control(handler, reached=False, power=0.5)
+        await _control(handler, reached=False, power=0.5)
+
+        algo = await _control(handler, reached=reached, power=power)
+
+        assert algo.boiler_learning_paused is False
+
+
+async def test_a_change_of_the_pause_is_published_at_once() -> None:
+    """The diagnostics are published when the pause changes, though no input changed. SmartPI
+    past its first phase: in hysteresis every calculation commits a new command, which publishes."""
     handler = _handler()
+    force_smartpi_stable_mode(handler._thermostat.prop_algorithm)
     await _control(handler, reached=False, power=0.5)
+    await _control(handler, reached=False, power=0.5)
+    assert handler._thermostat.prop_algorithm.boiler_learning_paused is True
+    assert handler.published >= 1
 
-    algo = await _control(handler, reached=True, power=0.5)
+    await _control(handler, reached=False, power=0.5)
+    assert handler.published == 0
 
-    assert algo.boiler_learning_paused is False
+    await _control(handler, reached=True, power=0.5)
+    assert handler.published >= 1
