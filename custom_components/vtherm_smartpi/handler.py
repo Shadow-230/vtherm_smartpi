@@ -45,6 +45,7 @@ from .const import (
 from .hvac_mode import VThermHvacMode_OFF, VThermHvacMode_HEAT, VThermHvacMode_COOL
 from .commons import write_event_log
 from .valve_config_check import apply_valve_config_check, clear_valve_config_issues
+from .boiler_call import central_boiler_threshold_reached
 from .smartpi.valve_curve import ValveCurveParams
 
 if TYPE_CHECKING:
@@ -394,6 +395,7 @@ class SmartPIHandler:
             )
             safety = getattr(getattr(t, "safety_manager", None), "is_safety_detected", False)
             algo.vt_safety_override = safety is True
+            algo.set_boiler_learning_paused(self._below_boiler_threshold(algo))
             t.prop_algorithm.calculate(
                 target_temp=t.target_temperature,
                 current_temp=t.current_temperature,
@@ -528,6 +530,20 @@ class SmartPIHandler:
 
         if self._should_publish_intermediate:
             async_dispatcher_send(t.hass, diag_update_signal(t.unique_id))
+
+    def _below_boiler_threshold(self, algo: SmartPI) -> bool:
+        """True while SmartPI calls for heat below the central boiler threshold.
+
+        Only for a thermostat that Versatile Thermostat counts for its central
+        boiler: the boiler does not heat for it until the threshold is reached.
+        """
+        t = self._thermostat
+        if getattr(t, "is_used_by_central_boiler", False) is not True:
+            return False
+        power = algo.committed_on_percent
+        if not isinstance(power, (int, float)) or power <= 0.0:
+            return False
+        return central_boiler_threshold_reached(t.hass) is False
 
     async def on_state_changed(self, changed: bool):
         """Handle state changes."""

@@ -420,6 +420,8 @@ Use this service to pause or resume thermal learning for one SmartPI thermostat.
 
 While learning is paused, regulation continues with the model already learned, but SmartPI does not collect A/B or dead-time observations. Pausing does not erase the learned parameters or dead-time history. SmartPI starts fresh observation windows when the setting changes, and the setting is preserved across Home Assistant restarts.
 
+SmartPI also pauses learning by itself while it calls for heat and the central boiler threshold set in Versatile Thermostat is not reached, for a thermostat that Versatile Thermostat counts for its central boiler: the boiler does not heat then. This pause works in the same way, does not change the `learning_enabled` setting, and ends when the threshold is reached or SmartPI stops calling. See [technical documentation, 3.7](technical_doc.md#37-learning-pause-below-the-central-boiler-threshold).
+
 The current setting is available as `specific_states.smartpi_learning_enabled` on the climate entity and as `live.learning.enabled` in the diagnostic sensor attributes.
 
 ### `reset_smartpi_learning`
