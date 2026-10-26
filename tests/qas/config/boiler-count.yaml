@@ -1,0 +1,59 @@
+# QAS role 'boiler-count': SmartPI QAS boiler, device count.
+# Written by tests/qas/config/build.py from tests/qas/roles.py; do not edit by hand.
+homeassistant:
+  name: SmartPI QAS boiler, device count
+frontend:
+config:
+api:
+history:
+logbook:
+system_log:
+  max_entries: 500
+recorder:
+  purge_keep_days: 7
+logger:
+  default: warning
+  logs:
+    custom_components.vtherm_smartpi: info
+    custom_components.versatile_thermostat: info
+    custom_components.smartpi_room_sim: info
+    custom_components.smartpi_qas_helpers: info
+smartpi_qas_helpers:
+smartpi_room_sim:
+  rooms:
+    lounge:
+      temperature: 19.5
+      b: 0.001
+    bedroom:
+      temperature: 19.5
+      b: 0.0012
+    office:
+      temperature: 19.5
+      b: 0.0012
+  heaters:
+    lounge_radiator:
+      room: lounge
+      kind: valve
+      a: 0.04
+      delay_min: 3.0
+      lag_min: 10.0
+      emitter: radiator
+    bedroom_radiator:
+      room: bedroom
+      kind: valve
+      a: 0.04
+      delay_min: 3.0
+      lag_min: 10.0
+      emitter: radiator
+    office_heater:
+      room: office
+      a: 0.035
+      delay_min: 2.0
+  boiler:
+    fire_c: 60.0
+    idle_c: 12.0
+    tau_up_min: 4.0
+    tau_down_min: 20.0
+  outdoor:
+    mean: 3.0
+    swing: 3.0
