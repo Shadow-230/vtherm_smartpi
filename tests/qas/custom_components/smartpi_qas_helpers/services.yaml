@@ -1,0 +1,15 @@
+seed_state:
+  name: Load a learned SmartPI state
+  description: Replace a thermostat's SmartPI state by a learned one from the helpers' fixtures, saved by SmartPI itself (test only).
+  fields:
+    entity_id:
+      name: Thermostat
+      required: true
+      selector:
+        entity:
+          domain: climate
+    fixture:
+      name: Fixture
+      required: true
+      selector:
+        text:
