@@ -110,6 +110,8 @@ The code no longer uses a `WINDOW_MIN_MINUTES` constant. Learning now relies on 
   blocked by this setpoint gate,
 - blocks bootstrap collection until the required dead times are reliable,
 - applies a post-resume pause (`LEARNING_PAUSE_RESUME_MIN = 20`),
+- pauses, with the dead-time detection, while SmartPI calls for heat below
+  Versatile Thermostat's central boiler threshold (3.7),
 - anchors the window start after the dead-time end when needed,
 - monitors power stability through the coefficient of variation (`U_CV_MAX`),
   evaluated once the window mean power reaches `U_CV_MIN_MEAN = 0.05` (below
@@ -192,6 +194,54 @@ ON -> OFF transition learns the opposite passive response.
 Detection tracks the filtered indoor temperature. A detection in progress is not resumed after a restart, and the minimum OFF duration must be observed again in the new session before a detection can be armed.
 
 Reliability becomes true as soon as at least one valid measurement has been captured on the corresponding channel. Each channel keeps its last 6 detections; the published value is their median, so a single aberrant detection does not move it (with one or two detections the median equals their mean). On restart, the published value is recomputed from the restored detections.
+
+### 3.7 Learning pause below the central boiler threshold
+
+Versatile Thermostat's central boiler starts only when the number of active
+thermostats, or their total power, reaches a threshold. Below it, a thermostat
+that calls for heat gets none: the room cools although the command says it
+heats. Learning from that time would make the heater look weak.
+
+Learning (the `a`/`b` windows and the dead-time detection) therefore pauses
+while all of these hold:
+
+- Versatile Thermostat counts the thermostat for its central boiler
+  (`is_used_by_central_boiler`),
+- SmartPI calls for heat (committed power above 0),
+- the threshold is not reached. `boiler_call.py` reads it from Versatile
+  Thermostat's entities (`nb_device_active_boiler` against
+  `boiler_activation_threshold`, `total_power_active_boiler` against
+  `boiler_power_activation_threshold`) with Versatile Thermostat's rule: one
+  threshold above 0 that is reached is enough; kW are converted. When the
+  values cannot be read, learning does not pause.
+
+The handler checks this before each calculation
+(`SmartPIHandler._below_boiler_threshold()` sets
+`SmartPI.set_boiler_learning_paused()`). The pause works like the user's pause
+(`set_smartpi_learning`) without changing it: the observations in flight are
+dropped, and the next heating is a new episode, so SmartPI does not learn
+during the room's dead time after the pause (3.2). Learning resumes when the
+threshold is reached or SmartPI stops calling. Regulation is unchanged:
+SmartPI sees the room cool and keeps calling. Each change is logged.
+
+Sources:
+
+- An estimator assumes that the change of the output is caused by the control
+  signal. When another cause dominates, the estimates "will not converge to
+  their true values", and adaptation should be "interrupted as quickly as
+  possible" (reference 4, §5, p. 1175). For a saturated signal, the same
+  problem, the estimation is interrupted and "kept off for a while" afterwards
+  (§7, p. 1178); when it starts again, its signals "should be initialized by
+  actual values" (§8, p. 1178).
+- An adaptive controller must find out why the control changed before it
+  retunes: poor tuning is only one cause (reference 5, §6.7, p. 262 and
+  p. 269).
+
+Limits:
+
+- SmartPI follows the threshold, not the boiler: when the threshold is reached,
+  learning resumes even if the boiler starts a little later.
+- A boiler that stops for another reason is not seen.
 
 ---
 
@@ -490,6 +540,7 @@ Before and during each phase the manager checks, with the thermal twin, that the
 | `algo.py`                 | `SmartPI`        | algorithm facade, full orchestration                                     |
 | `handler.py`              | `SmartPIHandler` | Home Assistant bridge: periodic timer, services, attributes              |
 | `state_store.py`          | `SmartPIStateStore` | Home Assistant `Store` persistence of the algorithm state             |
+| `boiler_call.py`          | —                | reading of Versatile Thermostat's central boiler threshold               |
 
 ### 5.2 `smartpi/` modules effectively used
 
@@ -794,3 +845,5 @@ The matrix drives the gain updates and thermal learning only. A regime transitio
 1. **Astrom K.J. and Hagglund T.**, work on PID regulation and FOPDT model usage.
 2. **Sundaresan K.R. and Krishnaswamy P.R.**, estimation of delay and time-constant parameters.
 3. **OLS** regression with Student t-test for slope validation.
+4. **Hagglund T. and Astrom K.J.**, Supervision of adaptive control algorithms, *Automatica* 36(8), 2000, 1171–1180: learning pause below the central boiler threshold (3.7).
+5. **Astrom K.J. and Hagglund T.**, *PID Controllers: Theory, Design, and Tuning*, 2nd ed., Instrument Society of America, 1995: learning pause below the central boiler threshold (3.7).

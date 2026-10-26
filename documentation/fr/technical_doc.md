@@ -113,6 +113,8 @@ Le code n'utilise plus de constante `WINDOW_MIN_MINUTES`. L'apprentissage repose
   perturbation ne sont pas bloquées par ce gate de consigne,
 - bloque la collecte en bootstrap tant que les temps morts requis ne sont pas fiables,
 - applique une pause après reprise (`LEARNING_PAUSE_RESUME_MIN = 20`),
+- se met en pause, avec la détection du temps mort, tant que SmartPI demande de
+  la chaleur sous le seuil de la chaudière centrale de Versatile Thermostat (3.7),
 - ancre le début de fenêtre après la fin du temps mort quand c'est nécessaire,
 - surveille la stabilité de puissance via le coefficient de variation (`U_CV_MAX`),
   évalué dès que la puissance moyenne de la fenêtre atteint `U_CV_MIN_MEAN = 0.05`
@@ -220,6 +222,57 @@ La transition ON -> OFF apprend la réponse passive opposée.
 La détection suit la température intérieure filtrée. Une détection en cours n'est pas reprise après un redémarrage, et la durée minimale OFF doit être observée dans la session en cours avant qu'une détection puisse être armée.
 
 La fiabilité devient vraie dès qu'au moins une mesure valide a été capturée sur le canal correspondant. Chaque canal garde ses 6 dernières détections ; la valeur publiée est leur médiane, de sorte qu'une détection aberrante isolée ne la déplace pas (avec une ou deux détections, la médiane vaut leur moyenne). Au redémarrage, la valeur publiée est recalculée à partir des détections restaurées.
+
+### 3.7 Pause d'apprentissage sous le seuil de la chaudière centrale
+
+La chaudière centrale de Versatile Thermostat ne démarre que lorsque le nombre
+de thermostats actifs, ou leur puissance totale, atteint un seuil. En dessous,
+un thermostat qui demande de la chaleur n'en reçoit pas : la pièce refroidit
+alors que la commande dit qu'elle chauffe. Apprendre pendant ce temps ferait
+paraître l'émetteur faible.
+
+L'apprentissage (les fenêtres `a`/`b` et la détection du temps mort) se met
+donc en pause tant que toutes ces conditions sont vraies :
+
+- Versatile Thermostat compte le thermostat pour sa chaudière centrale
+  (`is_used_by_central_boiler`),
+- SmartPI demande de la chaleur (puissance engagée supérieure à 0),
+- le seuil n'est pas atteint. `boiler_call.py` le lit dans les entités de
+  Versatile Thermostat (`nb_device_active_boiler` comparé à
+  `boiler_activation_threshold`, `total_power_active_boiler` comparé à
+  `boiler_power_activation_threshold`) avec la règle de Versatile Thermostat :
+  un seul seuil supérieur à 0 et atteint suffit ; les kW sont convertis.
+  Lorsque les valeurs ne peuvent pas être lues, l'apprentissage ne se met pas
+  en pause.
+
+Le handler vérifie cela avant chaque calcul
+(`SmartPIHandler._below_boiler_threshold()` règle
+`SmartPI.set_boiler_learning_paused()`). La pause fonctionne comme la pause de
+l'utilisateur (`set_smartpi_learning`) sans la modifier : les observations en
+cours sont abandonnées, et la chauffe suivante est un nouvel épisode, donc
+SmartPI n'apprend pas pendant le temps mort de la pièce après la pause (3.2).
+L'apprentissage reprend lorsque le seuil est atteint ou que SmartPI cesse de
+demander. La régulation ne change pas : SmartPI voit la pièce refroidir et
+continue de demander. Chaque changement est journalisé.
+
+Sources :
+
+- Un estimateur suppose que la variation de la sortie est causée par le signal
+  de commande. Lorsqu'une autre cause domine, les estimations « will not
+  converge to their true values », et l'adaptation doit être « interrupted as
+  quickly as possible » (référence 4, §5, p. 1175). Pour un signal saturé, le
+  même problème, l'estimation est interrompue et « kept off for a while »
+  ensuite (§7, p. 1178) ; lorsqu'elle reprend, ses signaux « should be
+  initialized by actual values » (§8, p. 1178).
+- Un régulateur adaptatif doit trouver pourquoi la régulation a changé avant de
+  se réajuster : un mauvais réglage n'est qu'une cause parmi d'autres
+  (référence 5, §6.7, p. 262 et p. 269).
+
+Limites :
+
+- SmartPI suit le seuil, pas la chaudière : lorsque le seuil est atteint,
+  l'apprentissage reprend même si la chaudière démarre un peu plus tard.
+- Une chaudière qui s'arrête pour une autre raison n'est pas vue.
 
 ---
 
@@ -521,6 +574,7 @@ Avant et pendant chaque phase, le manager vérifie, avec le jumeau thermique, qu
 | `algo.py`                 | `SmartPI`        | façade algorithmique, orchestration complète                             |
 | `handler.py`              | `SmartPIHandler` | pont Home Assistant : timer périodique, services, attributs              |
 | `state_store.py`          | `SmartPIStateStore` | persistance Home Assistant (`Store`) de l'état de l'algorithme        |
+| `boiler_call.py`          | —                | lecture du seuil de la chaudière centrale de Versatile Thermostat        |
 
 ### 5.2 Modules `smartpi/` réellement utilisés
 
@@ -834,5 +888,7 @@ La matrice pilote uniquement la mise à jour des gains et l'apprentissage thermi
 1. **Astrom K.J. et Hagglund T.**, travaux sur la régulation PID et l'usage de modèles FOPDT.
 2. **Sundaresan K.R. et Krishnaswamy P.R.**, estimation des paramètres de délai et de constante de temps.
 3. Régression **OLS** avec test t de Student pour la validation de pente.
+4. **Hagglund T. et Astrom K.J.**, Supervision of adaptive control algorithms, *Automatica* 36(8), 2000, 1171–1180 : pause d'apprentissage sous le seuil de la chaudière centrale (3.7).
+5. **Astrom K.J. et Hagglund T.**, *PID Controllers: Theory, Design, and Tuning*, 2e éd., Instrument Society of America, 1995 : pause d'apprentissage sous le seuil de la chaudière centrale (3.7).
 
 Ce document sert de référence alignée sur l'implémentation SmartPI actuelle.

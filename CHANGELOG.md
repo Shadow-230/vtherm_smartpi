@@ -4,6 +4,14 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+- Learning: SmartPI pauses its learning (room model and dead time) while it
+  calls for heat below Versatile Thermostat's central boiler threshold, for a
+  thermostat that Versatile Thermostat counts for its central boiler: the
+  boiler does not heat then, and the room cools although the command says it
+  heats. The pause works like the user's `set_smartpi_learning` pause, without
+  changing that setting; learning resumes when the threshold is reached or
+  SmartPI stops calling, and the next heating is a new start. Regulation is
+  unchanged. No new setting. See `documentation/en/technical_doc.md`, 3.7.
 - Learning: a learning window closed without a robust slope (coarse sensor of
   0.2 °C, or a sensor publishing only a few times per hour) is no longer lost.
   The integral heat balance between its first and last raw temperature steps
