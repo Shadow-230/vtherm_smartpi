@@ -1089,6 +1089,7 @@ class SmartPI:
             dt_est=self.dt_est,
             max_on_percent=self._linear_max_on(),
             twin_diag=self._last_twin_diag,
+            learning_active=self._learning_active,
         )
 
         # Apply result

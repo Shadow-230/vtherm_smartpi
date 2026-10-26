@@ -4,6 +4,13 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+- Learning: a calibration no longer feeds the dead-time estimator while
+  learning is paused, by the user's `set_smartpi_learning` or below the
+  central boiler threshold; its phases run as before. Until now a calibration
+  measured the dead time despite the pause, and below the threshold it could
+  count the wait for the boiler as the room's dead time.
+  The boiler pause is now shown as `learning.boiler_paused` in the
+  diagnostics.
 - Learning: SmartPI pauses its learning (room model and dead time) while it
   calls for heat below Versatile Thermostat's central boiler threshold, for a
   thermostat that Versatile Thermostat counts for its central boiler: the

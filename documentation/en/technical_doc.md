@@ -223,7 +223,9 @@ The handler checks this before each calculation
 dropped, and the next heating is a new episode, so SmartPI does not learn
 during the room's dead time after the pause (3.2). Learning resumes when the
 threshold is reached or SmartPI stops calling. Regulation is unchanged:
-SmartPI sees the room cool and keeps calling. Each change is logged.
+SmartPI sees the room cool and keeps calling. The pause also holds during a
+calibration (4.6). It is shown in the diagnostics as `learning.boiler_paused`,
+and each change is logged.
 
 Sources:
 
@@ -525,6 +527,10 @@ The forced cycle is managed by `CalibrationManager`:
 - `COOL_DOWN` down to `sp - 0.3°C`,
 - `HEAT_UP`,
 - `COOL_DOWN_FINAL` back to `sp`.
+
+The phases feed the dead-time estimator, except while learning is paused (the
+user's setting, or below the central boiler threshold, 3.7): the phases then
+run as usual, without measuring.
 
 Before and during each phase the manager checks, with the thermal twin, that the threshold of the phase can be reached. The measured temperature comes first: once it has reached the threshold of the phase, the phase moves on and the twin is not consulted. A passive phase converges to `T_steady_passive`; an active phase driven at the allowed power `u_max` (`max_on_percent` in linear space) converges to `T_steady_passive + u_max·(T_steady_max − T_steady_passive)`, the 1R1C equilibrium being linear in power (`T_steady_max` when `u_max` is 1 or the passive equilibrium is not valid); the threshold is reachable when that equilibrium lies beyond it by `CALIBRATION_REACHABILITY_MARGIN_C = 0.5°C` (HEAT: passive `COOL_DOWN` and `COOL_DOWN_FINAL`, active `HEAT_UP`; COOL: active `COOL_DOWN` and `COOL_DOWN_FINAL`, passive `HEAT_UP`). The check only applies while the twin is usable (`status` ok, `model_reliable`, past its warm-up, valid equilibrium, and `cooling_model_available` in COOL). When the threshold is not reachable the cycle ends at once with the result `Unreachable`, distinct from `Cancelled` (HVAC OFF, timeout of `CALIBRATION_TIMEOUT_MIN = 600` minutes, reset): `last_calibration_time` is not set, `AutoCalibTrigger` consumes no retry and publishes `smartpi_autocalib_unreachable`, and the next attempt waits `AUTOCALIB_COOLDOWN_H` hours (`autocalib.next_check_ts`). The result is not a published diagnostic: `calibration.state` carries the phase only.
 

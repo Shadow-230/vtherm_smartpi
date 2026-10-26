@@ -51,7 +51,7 @@ Le bloc `live` est organisé par responsabilité :
 | `power` | Puissances du cycle courant et suivant, PI/FF, limites et puissance appliquée |
 | `temperature` | Températures intérieure/extérieure, erreurs et état de l'intégrale |
 | `model` | Modèle A/B, confiance, constante de temps et temps morts |
-| `learning` | Étape d'apprentissage, bootstrap, mises à jour acceptées et dérive |
+| `learning` | Étape d'apprentissage, bootstrap, mises à jour acceptées et dérive ; `enabled` (réglage de l'utilisateur) et `boiler_paused` (pause sous le seuil de la chaudière centrale) |
 | `governance` | Régime thermique et décision de mise à jour du modèle |
 | `feedforward` | État FF3, source de bande morte et diagnostics FFTrim canoniques |
 | `setpoint` | Consigne filtrée, trajectoire et résumé du boost |

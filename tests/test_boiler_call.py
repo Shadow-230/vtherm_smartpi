@@ -19,6 +19,9 @@ from custom_components.vtherm_smartpi.boiler_call import (
 )
 from custom_components.vtherm_smartpi.handler import SmartPIHandler
 from custom_components.vtherm_smartpi.hvac_mode import VThermHvacMode_HEAT
+from custom_components.vtherm_smartpi.smartpi.ab_estimator import ABEstimator
+from custom_components.vtherm_smartpi.smartpi.const import SmartPICalibrationPhase
+from custom_components.vtherm_smartpi.smartpi.diagnostics import build_published_diagnostics
 from fakes.fake_thermostat_runtime import FakeThermostatRuntime
 from helpers import force_smartpi_stable_mode
 
@@ -141,6 +144,86 @@ def test_dead_time_before_the_model_is_learned(paused, monkeypatch) -> None:
     _calculate_twice(smartpi, monkeypatch)
 
     assert smartpi.dt_est.update.called is not paused
+
+
+@pytest.mark.parametrize("paused", [False, True])
+def test_the_estimator_learns_nothing_during_the_pause(paused, monkeypatch) -> None:
+    """Watches the estimator itself, so that any path to it is covered.
+
+    Eight hours of a room cooling by 0.18 °C per hour: without the pause the
+    data reach the estimator; with the pause they never do, and a and b stay.
+    """
+    smartpi = _smartpi()
+    smartpi._committed_on_percent = 0.0
+    for channel in ("heat", "cool"):
+        setattr(smartpi.dt_est, f"deadtime_{channel}_s", 300.0)
+        setattr(smartpi.dt_est, f"deadtime_{channel}_reliable", True)
+    smartpi.set_boiler_learning_paused(paused)
+    learn_calls = []
+    learn = ABEstimator.learn
+
+    def spy(estimator, *args, **kwargs):
+        learn_calls.append(1)
+        return learn(estimator, *args, **kwargs)
+
+    monkeypatch.setattr(ABEstimator, "learn", spy)
+    now = [10000.0]
+    monkeypatch.setattr(algo_module.time, "monotonic", lambda: now[0])
+    a_before, b_before = smartpi.est.a, smartpi.est.b
+    temperature = 19.0
+    for _ in range(8 * 60):
+        now[0] += 60.0
+        temperature -= 0.003
+        smartpi.calculate(
+            target_temp=21.0,
+            current_temp=round(temperature, 1),
+            ext_current_temp=5.0,
+            slope=-0.18,
+            hvac_mode=VThermHvacMode_HEAT,
+        )
+        smartpi._committed_on_percent = 0.0
+
+    if paused:
+        assert learn_calls == []
+        assert (smartpi.est.a, smartpi.est.b) == (a_before, b_before)
+    else:
+        assert learn_calls
+
+
+@pytest.mark.parametrize("pause", [None, "boiler", "user"])
+def test_calibration_measures_the_dead_time_only_while_learning_runs(pause, monkeypatch) -> None:
+    """A calibration's heating step does not feed the dead-time estimator during a pause, whatever its cause."""
+    smartpi = _smartpi()
+    smartpi.force_calibration()
+    now = [1000.0]
+    monkeypatch.setattr(algo_module.time, "monotonic", lambda: now[0])
+    smartpi.calculate(target_temp=18.0, current_temp=17.9, ext_current_temp=5.0, slope=0.0, hvac_mode=VThermHvacMode_HEAT)
+    smartpi.calibration_mgr._calibration_state = SmartPICalibrationPhase.HEAT_UP
+    smartpi._committed_on_percent = 1.0
+    if pause == "boiler":
+        smartpi.set_boiler_learning_paused(True)
+    elif pause == "user":
+        smartpi.set_learning_enabled(False)
+    smartpi.dt_est.update = MagicMock()
+
+    now[0] += 60.0
+    smartpi.calculate(target_temp=18.0, current_temp=17.9, ext_current_temp=5.0, slope=0.0, hvac_mode=VThermHvacMode_HEAT)
+
+    assert smartpi.calibration_state == SmartPICalibrationPhase.HEAT_UP
+    assert smartpi.on_percent == pytest.approx(1.0)
+    assert smartpi.dt_est.update.called is (pause is None)
+
+
+def test_diagnostics_show_the_pause() -> None:
+    smartpi = _smartpi()
+
+    assert build_published_diagnostics(smartpi)["learning"]["boiler_paused"] is False
+
+    smartpi.set_boiler_learning_paused(True)
+
+    learning = build_published_diagnostics(smartpi)["learning"]
+    assert learning["boiler_paused"] is True
+    assert learning["enabled"] is True
 
 
 def test_learning_runs_without_the_pause(monkeypatch) -> None:
