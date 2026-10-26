@@ -209,7 +209,10 @@ while all of these hold:
 - Versatile Thermostat counts the thermostat for its central boiler
   (`is_used_by_central_boiler`),
 - SmartPI calls for heat (committed power above 0),
-- the threshold is not reached. `boiler_call.py` reads it from Versatile
+- the threshold is not reached, at two consecutive calculations: when a
+  thermostat starts calling, Versatile Thermostat counts its device a moment
+  after SmartPI reads the threshold, so a boiler that starts would otherwise
+  pause learning for one calculation. `boiler_call.py` reads it from Versatile
   Thermostat's entities (`nb_device_active_boiler` against
   `boiler_activation_threshold`, `total_power_active_boiler` against
   `boiler_power_activation_threshold`) with Versatile Thermostat's rule: one
@@ -217,15 +220,15 @@ while all of these hold:
   values cannot be read, learning does not pause.
 
 The handler checks this before each calculation
-(`SmartPIHandler._below_boiler_threshold()` sets
+(`SmartPIHandler._update_boiler_learning_pause()` sets
 `SmartPI.set_boiler_learning_paused()`). The pause works like the user's pause
 (`set_smartpi_learning`) without changing it: the observations in flight are
 dropped, and the next heating is a new episode, so SmartPI does not learn
-during the room's dead time after the pause (3.2). Learning resumes when the
-threshold is reached or SmartPI stops calling. Regulation is unchanged:
+during the room's dead time after the pause (3.2). Learning resumes at the first
+calculation where the threshold is reached or SmartPI stops calling. Regulation is unchanged:
 SmartPI sees the room cool and keeps calling. The pause also holds during a
 calibration (4.6). It is shown in the diagnostics as `learning.boiler_paused`,
-and each change is logged.
+published at once when it changes, and each change is logged.
 
 Sources:
 

@@ -72,6 +72,8 @@ class SmartPIHandler:
         self._last_publish_signature = None
         self._pending_publish_signature = None
         self._allow_pwm_cycle_force: bool = False
+        # Whether the central boiler threshold was not reached at the previous calculation.
+        self._below_boiler_threshold_before: bool = False
         self._valve_linearization_configured: bool = False
         self._valve_curve_params: ValveCurveParams | None = None
 
@@ -395,7 +397,7 @@ class SmartPIHandler:
             )
             safety = getattr(getattr(t, "safety_manager", None), "is_safety_detected", False)
             algo.vt_safety_override = safety is True
-            algo.set_boiler_learning_paused(self._below_boiler_threshold(algo))
+            self._update_boiler_learning_pause(algo)
             t.prop_algorithm.calculate(
                 target_temp=t.target_temperature,
                 current_temp=t.current_temperature,
@@ -530,6 +532,21 @@ class SmartPIHandler:
 
         if self._should_publish_intermediate:
             async_dispatcher_send(t.hass, diag_update_signal(t.unique_id))
+
+    def _update_boiler_learning_pause(self, algo: SmartPI) -> None:
+        """Pause SmartPI's learning below the central boiler threshold, or resume it.
+
+        The pause starts when the threshold is not reached at two consecutive
+        calculations: when a thermostat starts calling, Versatile Thermostat
+        counts its device a moment after SmartPI reads the threshold. Learning
+        resumes at once. A change is published at once.
+        """
+        below = self._below_boiler_threshold(algo)
+        paused = below and (self._below_boiler_threshold_before or algo.boiler_learning_paused)
+        self._below_boiler_threshold_before = below
+        if paused != algo.boiler_learning_paused:
+            algo.set_boiler_learning_paused(paused)
+            self._should_publish_intermediate = True
 
     def _below_boiler_threshold(self, algo: SmartPI) -> bool:
         """True while SmartPI calls for heat below the central boiler threshold.
