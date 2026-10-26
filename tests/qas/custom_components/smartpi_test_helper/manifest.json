@@ -1,12 +1,13 @@
 {
-  "domain": "smartpi_room_sim",
-  "name": "SmartPI room simulator (QAS tests only)",
+  "domain": "smartpi_test_helper",
+  "name": "SmartPI test helper (QAS tests only)",
   "codeowners": [],
   "config_flow": false,
   "dependencies": [],
+  "after_dependencies": ["vtherm_smartpi"],
   "documentation": "https://github.com/Shadow-230/vtherm_smartpi/blob/dev/tests/qas/README.md",
-  "integration_type": "hub",
+  "integration_type": "service",
   "iot_class": "calculated",
   "requirements": [],
-  "version": "0.2.0"
+  "version": "1.0.0"
 }
