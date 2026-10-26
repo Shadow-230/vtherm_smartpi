@@ -58,7 +58,7 @@ def test_the_catalogue_is_the_scenarios() -> None:
     """README.md's catalogue lists the registered scenarios as run.py writes them."""
     text = (QAS / "README.md").read_text(encoding="utf-8")
     block = text[text.index("<!-- catalogue:") : text.index("<!-- end of catalogue -->")]
-    assert "\n".join(line for line in block.splitlines() if line.startswith("| BP")) == run.catalogue(), (
+    assert "\n".join(line for line in block.splitlines() if line.startswith(("| BP", "| BR"))) == run.catalogue(), (
         "run python tests/qas/run.py --list --markdown"
     )
 
@@ -74,3 +74,31 @@ def test_each_scenario_has_its_checks_roles_and_counterpart() -> None:
 
 def test_nothing_in_the_pack_is_collected_by_pytest() -> None:
     assert not list(QAS.rglob("test_*.py"))
+
+
+def test_the_author_s_release_runs_only_its_scenarios() -> None:
+    """With --author-release, the minimum set is BP0 only, and a scenario of the pause is refused."""
+    assert run.selected(["M"], "boiler-count", author_release=True) == ["BP0"]
+    assert run.selected(["BP0", "BR1"], "boiler-count", author_release=True) == ["BP0", "BR1"]
+    with pytest.raises(SystemExit):
+        run.selected(["BP1"], "boiler-count", author_release=True)
+
+
+def test_each_scenario_s_typical_time_is_within_its_maximum() -> None:
+    for scenario in SCENARIOS.values():
+        assert 0 <= scenario.time.typical_s <= scenario.time.maximum_s, scenario.id
+
+
+def test_the_comparison_of_the_reference_runs(tmp_path: pathlib.Path) -> None:
+    """run.py --compare: a, b and the dead times of both runs at the end, with their ratio to the true values."""
+    from scenarios import reference_truth  # noqa: PLC0415
+
+    def kept(name: str, a: float) -> str:
+        samples = [{"a": a, "b": 0.001, "deadtime_heat_s": 780.0, "deadtime_cool_s": 600.0}, {"a": a / 2, "b": 0.0011, "deadtime_heat_s": 2400.0, "deadtime_cool_s": 600.0}]
+        path = tmp_path / f"{name}.json"
+        path.write_text(json.dumps({"version": name, "truth": reference_truth(), "samples": samples}), encoding="utf-8")
+        return str(path)
+
+    table = run.compare(kept("qas", 0.04), kept("author", 0.03))
+    assert "| a | 0.04 | 0.02 (0.50) | 0.02–0.04 | 0.015 (0.38) | 0.015–0.03 |" in table
+    assert "| heating dead time, s | 780.0 | 2400.0 (3.08) |" in table
