@@ -13,6 +13,8 @@
   "analysis.control.near_band_source",
   "analysis.control.temperature_slope_h",
   "analysis.deadtime",
+  "analysis.deadtime.cool_episode_start",
+  "analysis.deadtime.heat_episode_start",
   "analysis.deadtime.last_power",
   "analysis.deadtime.state",
   "analysis.feedforward",

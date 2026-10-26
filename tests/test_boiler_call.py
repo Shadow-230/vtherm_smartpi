@@ -384,3 +384,35 @@ async def test_a_change_of_the_pause_is_published_at_once() -> None:
 
     await _control(handler, reached=True, power=0.5)
     assert handler.published >= 1
+
+
+def test_the_diagnostics_publish_when_the_heating_episode_started() -> None:
+    """``analysis.deadtime.heat_episode_start``: the heating episode's start in UTC; the pause ends
+    the episode, and the first heating after the resume starts a new one, later than the resume."""
+    import time as clock
+    from datetime import datetime, timedelta
+
+    smartpi = _smartpi()
+    smartpi._t_heat_episode_start = clock.monotonic() - 600.0
+
+    def started() -> datetime | None:
+        value = build_published_diagnostics(smartpi)["analysis"]["deadtime"]["heat_episode_start"]
+        return datetime.fromisoformat(value) if value is not None else None
+
+    before = started()
+    assert before is not None and before.utcoffset().total_seconds() == 0
+    assert abs((datetime.now(before.tzinfo) - before).total_seconds() - 600.0) < 5.0
+
+    smartpi.set_boiler_learning_paused(True)
+    assert started() is None
+    smartpi._update_deadtime_episode_status(0.6, VThermHvacMode_HEAT, clock.monotonic())
+    during = started()
+    smartpi.set_boiler_learning_paused(False)
+    assert started() is None
+    resumed = datetime.now(before.tzinfo)
+    smartpi._update_deadtime_episode_status(0.6, VThermHvacMode_HEAT, clock.monotonic())
+
+    # The wall and monotonic clocks are read a few microseconds apart.
+    assert started() >= resumed - timedelta(milliseconds=50)
+    assert resumed > during
+    assert build_published_diagnostics(smartpi)["analysis"]["deadtime"]["cool_episode_start"] is None

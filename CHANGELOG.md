@@ -4,6 +4,9 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+- Diagnostics: `analysis.deadtime.heat_episode_start` and `cool_episode_start`
+  publish the start of the current heating or cooling episode (ISO time, UTC),
+  from which the dead-time window counts; `null` outside an episode.
 - Learning: the pause below the central boiler threshold starts only when the
   threshold is not reached at two consecutive calculations. When a thermostat
   starts calling, Versatile Thermostat counts its device a moment after
