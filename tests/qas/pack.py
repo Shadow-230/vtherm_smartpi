@@ -6,10 +6,11 @@ Three rooms, the same in every role:
   boiler; it gives heat only while the boiler's switch is on;
 - North: an electric heater, not counted by the central boiler.
 
-The two roles differ only in the central boiler's threshold: two active devices, or 2500 W
-(each device is 2000 W, so one at full power is below it and two at 63 % reach it). Everything
-else in Versatile Thermostat keeps its default. SmartPI runs with its "SmartPI defaults" entry
-only.
+The roles differ in the central boiler: its threshold, two active devices or 2500 W (each device
+is 2000 W, so one at full power is below it and two at 63 % reach it), and in boiler-delay its
+activation delay. In boiler-count, West has a window sensor (an ``input_boolean``) for BP11.
+Everything else in Versatile Thermostat keeps its default. SmartPI runs with its "SmartPI
+defaults" entry only.
 """
 
 from __future__ import annotations
@@ -29,6 +30,7 @@ BOILER_SWITCH = f"switch.{ROOMS_DOMAIN}_boiler"
 # default) would take a steady room for a dead sensor.
 SAFETY_DELAY_MIN = 1440
 DEVICE_POWER_W = 2000.0
+WEST_WINDOW = "input_boolean.west_window"
 
 
 @dataclass(frozen=True)
@@ -75,13 +77,16 @@ class Role:
     title: str
     count_threshold: int  # VTherm's active-device threshold (0: not used)
     power_threshold_w: float  # VTherm's power threshold (0: not used)
+    boiler_delay_s: int = 0  # VTherm's central boiler activation delay
+    west_window: bool = False  # West's window sensor (WEST_WINDOW)
 
 
 ROLES = {
     role.name: role
     for role in (
-        Role("boiler-count", "SmartPI QAS, central boiler by device count", 2, 0.0),
+        Role("boiler-count", "SmartPI QAS, central boiler by device count", 2, 0.0, west_window=True),
         Role("boiler-power", "SmartPI QAS, central boiler by power", 0, 2500.0),
+        Role("boiler-delay", "SmartPI QAS, central boiler with an activation delay", 2, 0.0, boiler_delay_s=120),
     )
 }
 

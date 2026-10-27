@@ -7,12 +7,14 @@ is kept, so it can run again after a failure. In Versatile Thermostat it sets on
 need; everything else keeps VTherm's defaults:
 
 1. the central configuration: the outdoor sensor; the central boiler, switching the test rooms'
-   boiler; the safety delay of the test rooms' sensors (pack.SAFETY_DELAY_MIN);
+   boiler, with the role's activation delay; the safety delay of the test rooms' sensors
+   (pack.SAFETY_DELAY_MIN);
 2. SmartPI's defaults entry, before the thermostats, so that they find SmartPI's algorithm;
 3. one thermostat per room, with SmartPI: its sensor, its device and the device's power, whether
    the central boiler counts it; power management unticked (VTherm ticks it for a device with a
    power, and warns without a power manager); for a valve, VTherm's opening filters off, as
-   SmartPI's repairs advise;
+   SmartPI's repairs advise; West's window sensor where the role has one (VTherm turns West off
+   while the window is open);
 4. the central boiler's threshold of the role.
 
 Home Assistant then restarts (unless ``--no-restart``): SmartPI's defaults entry shows the
@@ -43,6 +45,7 @@ from pack import (  # noqa: E402
     SMARTPI_DEFAULTS,
     VT,
     VT_CENTRAL,
+    WEST_WINDOW,
     Role,
     Room,
 )
@@ -51,7 +54,7 @@ COUNT_THRESHOLD_UID = "boiler_activation_threshold"
 POWER_THRESHOLD_UID = "boiler_power_activation_threshold"
 
 
-def central_steps() -> list[Step]:
+def central_steps(role: Role) -> list[Step]:
     return [
         ("form", "user", {"thermostat_type": "thermostat_central_config"}),
         ("menu", "main"),
@@ -65,6 +68,7 @@ def central_steps() -> list[Step]:
             {
                 "central_boiler_activation_service": f"{BOILER_SWITCH}/switch.turn_on",
                 "central_boiler_deactivation_service": f"{BOILER_SWITCH}/switch.turn_off",
+                "central_boiler_activation_delay_sec": role.boiler_delay_s,
             },
         ),
         ("menu", "advanced"),
@@ -73,12 +77,13 @@ def central_steps() -> list[Step]:
     ]
 
 
-def thermostat_steps(room: Room) -> list[Step]:
+def thermostat_steps(room: Room, role: Role) -> list[Step]:
     kind = "over_valve" if room.heater == "radiator" else "over_switch"
     device: dict[str, Any] = {"underlying_entity_ids": [room.device], "proportional_function": "smartpi"}
     if kind == "over_valve":
         device |= {"auto_regulation_dtemp": 0, "auto_regulation_periode_min": 0}
-    return [
+    window = role.west_window and room.name == "West"
+    steps: list[Step] = [
         ("form", "user", {"thermostat_type": f"thermostat_{kind}"}),
         ("menu", "main"),
         (
@@ -92,18 +97,24 @@ def thermostat_steps(room: Room) -> list[Step]:
             },
         ),
         ("menu", "features"),
-        ("form", "features", {"use_power_feature": False}),
+        ("form", "features", {"use_power_feature": False, "use_window_feature": window}),
         ("menu", "type"),
         ("form", "type", device),
-        ("menu", "finalize"),
     ]
+    if window:
+        steps += [
+            ("menu", "window"),
+            ("form", "window", {"window_sensor_entity_id": WEST_WINDOW, "use_window_central_config": False}),
+            ("form", "window"),
+        ]
+    return steps + [("menu", "finalize")]
 
 
 async def set_up(api: Any, role: Role, say: Any = print) -> None:
     """The role on the instance ``api`` (an ``Instance``, or Home Assistant in a test)."""
     vt_titles = {e["title"] for e in await api.entries(VT)}
     if VT_CENTRAL not in vt_titles:
-        await run_flow(api, VT, central_steps())
+        await run_flow(api, VT, central_steps(role))
         say(f"VTherm: {VT_CENTRAL}")
     if SMARTPI_DEFAULTS not in {e["title"] for e in await api.entries(SMARTPI)}:
         await run_flow(api, SMARTPI, [])
@@ -111,7 +122,7 @@ async def set_up(api: Any, role: Role, say: Any = print) -> None:
     for room in ROOMS:
         if room.name in vt_titles:
             continue
-        await run_flow(api, VT, thermostat_steps(room))
+        await run_flow(api, VT, thermostat_steps(room, role))
         if not await api.wait_state(room.climate, 120.0):
             raise RuntimeError(f"VTherm {room.name}: {room.climate} did not appear")
         say(f"VTherm: {room.name} ({room.heater}, {'counted' if room.counted else 'not counted'} by the central boiler)")

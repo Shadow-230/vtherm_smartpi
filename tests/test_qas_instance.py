@@ -34,7 +34,7 @@ if str(QAS) not in sys.path:
     sys.path.insert(0, str(QAS))
 
 from configuration import configuration  # noqa: E402
-from pack import HELPER_DOMAIN, ROLES, ROOMS, ROOMS_DOMAIN, SMARTPI, VT, Role, room  # noqa: E402
+from pack import HELPER_DOMAIN, ROLES, ROOMS, ROOMS_DOMAIN, SMARTPI, VT, WEST_WINDOW, Role, room  # noqa: E402
 from prepare import COUNT_THRESHOLD_UID, POWER_THRESHOLD_UID, set_up  # noqa: E402
 
 pytestmark = pytest.mark.skipif(
@@ -103,6 +103,8 @@ async def _prepare(hass: HomeAssistant, role: Role) -> list[str]:
     the preparation's restart. The lines it said."""
     config = configuration(role)
     assert await async_setup_component(hass, ROOMS_DOMAIN, {ROOMS_DOMAIN: config[ROOMS_DOMAIN]})
+    if "input_boolean" in config:
+        assert await async_setup_component(hass, "input_boolean", {"input_boolean": config["input_boolean"]})
     assert await async_setup_component(hass, VT, {})
     assert await async_setup_component(hass, SMARTPI, {})
     assert await async_setup_component(hass, HELPER_DOMAIN, {HELPER_DOMAIN: None})
@@ -145,6 +147,10 @@ async def test_each_role_is_prepared_through_the_forms(hass: HomeAssistant, capl
         assert _live(hass, r.climate).get("control", {}).get("phase"), r.name
     for uid, value in ((COUNT_THRESHOLD_UID, role.count_threshold), (POWER_THRESHOLD_UID, role.power_threshold_w)):
         assert float(hass.states.get(registry.async_get_entity_id("number", VT, uid)).state) == value
+    central = next(e for e in hass.config_entries.async_entries(VT) if e.title == "Central configuration")
+    assert central.data.get("central_boiler_activation_delay_sec") == role.boiler_delay_s
+    west = hass.config_entries.async_get_entry(registry.async_get(WEST).config_entry_id)
+    assert (west.data.get("window_sensor_entity_id") == WEST_WINDOW) is role.west_window
     problems = [
         f"{r.levelname} {r.name}: {r.getMessage()[:200]}"
         for r in caplog.records
@@ -232,3 +238,44 @@ async def test_the_boiler_pause_end_to_end(hass: HomeAssistant, freezer: Any) ->
     assert episode is not None and episode != episode_in_pause
     assert dt_util.parse_datetime(episode) >= east_calls
     assert room("West").counted and not room("North").counted
+
+
+@pytest.mark.parametrize("expected_lingering_timers", [True])
+async def test_the_pause_with_a_changed_threshold_off_and_window(hass: HomeAssistant, freezer: Any) -> None:
+    """As BP10 and BP11 run on the bench, with West paused alone: the threshold lowered to 1 device
+    resumes West and starts the boiler, back to 2 pauses it again; West turned off resumes at once,
+    heating again pauses; its window opened turns it off and resumes, closed pauses again."""
+    await _prepare(hass, ROLES["boiler-count"])
+    registry = er.async_get(hass)
+    boiler = registry.async_get_entity_id("binary_sensor", VT, "central_boiler_state")
+    threshold = registry.async_get_entity_id("number", VT, COUNT_THRESHOLD_UID)
+
+    def paused() -> Any:
+        return _live(hass, WEST).get("learning", {}).get("boiler_paused")
+
+    await _targets(hass, **{WEST: 23.0, EAST: 7.0, NORTH: 23.0})
+    await _run_for(hass, freezer, 6 * 60)
+    assert paused() is True and hass.states.get(boiler).state == "off"
+
+    await hass.services.async_call("number", "set_value", {"entity_id": threshold, "value": 1}, blocking=True)
+    await _run_for(hass, freezer, 70)
+    assert paused() is False and hass.states.get(boiler).state == "on"
+    await hass.services.async_call("number", "set_value", {"entity_id": threshold, "value": 2}, blocking=True)
+    await _run_for(hass, freezer, 3 * 60)
+    assert paused() is True and hass.states.get(boiler).state == "off"
+
+    await hass.services.async_call("climate", "set_hvac_mode", {"entity_id": WEST, "hvac_mode": "off"}, blocking=True)
+    await _run_for(hass, freezer, 14)
+    assert paused() is False
+    await hass.services.async_call("climate", "set_hvac_mode", {"entity_id": WEST, "hvac_mode": "heat"}, blocking=True)
+    await _run_for(hass, freezer, 3 * 60)
+    assert paused() is True
+
+    await hass.services.async_call("input_boolean", "turn_on", {"entity_id": WEST_WINDOW}, blocking=True)
+    await _run_for(hass, freezer, 60)
+    assert hass.states.get(WEST).state == "off"
+    assert paused() is False
+    await hass.services.async_call("input_boolean", "turn_off", {"entity_id": WEST_WINDOW}, blocking=True)
+    await _run_for(hass, freezer, 4 * 60)
+    assert hass.states.get(WEST).state == "heat"
+    assert paused() is True

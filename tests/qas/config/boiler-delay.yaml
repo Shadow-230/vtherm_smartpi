@@ -1,0 +1,32 @@
+# QAS role boiler-delay: SmartPI QAS, central boiler with an activation delay.
+# Written by tests/qas/configuration.py from tests/qas/pack.py; do not edit by hand.
+default_config:
+logger:
+  default: warning
+  logs:
+    custom_components.vtherm_smartpi: info
+smartpi_test_rooms:
+  outdoor: 3.0
+  rooms:
+    west:
+      heater: radiator
+      temperature: 19.5
+      loss: 0.001
+      gain: 0.04
+      delay_min: 3.0
+      lag_min: 10.0
+    east:
+      heater: radiator
+      temperature: 19.5
+      loss: 0.0012
+      gain: 0.04
+      delay_min: 3.0
+      lag_min: 10.0
+    north:
+      heater: electric
+      temperature: 19.5
+      loss: 0.0012
+      gain: 0.035
+      delay_min: 2.0
+      lag_min: 0.0
+smartpi_test_helper:

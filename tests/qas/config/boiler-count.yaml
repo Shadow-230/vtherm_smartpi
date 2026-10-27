@@ -30,3 +30,6 @@ smartpi_test_rooms:
       delay_min: 2.0
       lag_min: 0.0
 smartpi_test_helper:
+input_boolean:
+  west_window:
+    name: West window
