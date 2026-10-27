@@ -201,7 +201,15 @@ Versatile Thermostat's central boiler starts only when the number of active
 devices (valve heads or switches) of the thermostats it counts, or their total
 power, reaches a threshold. Below it, a thermostat
 that calls for heat gets none: the room cools although the command says it
-heats. Learning from that time would make the heater look weak.
+heats. Learning from that time would count the wait for the boiler as the
+room's dead time (3.6). SmartPI computes its gain from the dead time: in
+$K_p = 1/(|a|(\lambda + L))$ (4.1), $\lambda$ is three times the dead time $L$
+(four with a valve) once $L$ is longer than a few minutes, so a dead time four
+times too long gives a gain about four times smaller, and the regulation
+reacts much more slowly. This matters most while SmartPI learns from its
+default values, after the installation or a reset (3.1). The `a`/`b` windows
+of that time see no heat either; part of them is already rejected by the
+window checks (3.2), and the pause drops them all.
 
 Learning (the `a`/`b` windows and the dead-time detection) therefore pauses
 while all of these hold:
@@ -232,12 +240,26 @@ published at once when it changes, and each change is logged.
 
 Sources:
 
-- An estimator assumes that the change of the output is caused by the control
-  signal. When another cause dominates, the estimates "will not converge to
-  their true values", and adaptation should be "interrupted as quickly as
-  possible" (reference 4, §5, p. 1175). For a saturated signal, the same
-  problem, the estimation is interrupted and "kept off for a while" afterwards
-  (§7, p. 1178); when it starts again, its signals "should be initialized by
+- Learn only while the heating moves the temperature. An estimator assumes
+  that the change of the output is caused by the control signal. When another
+  cause dominates, the estimates "will not converge to their true values", and
+  adaptation should be "interrupted as quickly as possible" (reference 4, §5,
+  p. 1175). This is the paper's main conclusion: adapt only when the changes
+  of the measurement are caused by the control signal (§10, p. 1179). A boiler
+  that does not heat is such another cause.
+- The start matters most. An adaptive controller first learns the time scale
+  of the process, its dead time and time constant, and the rest depends on it
+  (reference 4, §3, p. 1172–1173). An error made then is carried on.
+- A slow regulation learns ever more slowly. When the estimates give a very
+  slow regulation, the temperature moves little, and the adaptation becomes
+  "very slow" (reference 4, §9, p. 1179).
+- A dead time that is too long does not make the regulation unstable; it makes
+  it slow. A closed-loop time constant equal to the dead time is a good
+  compromise between speed and robustness (reference 6, p. 296); with three
+  to four dead times, SmartPI is already on the gentle side.
+- After a pause, start from fresh data. For a saturated signal, the
+  estimation is interrupted and "kept off for a while" afterwards (reference 4,
+  §7, p. 1178); when it starts again, its signals "should be initialized by
   actual values" (§8, p. 1178).
 - An adaptive controller must find out why the control changed before it
   retunes: poor tuning is only one cause (reference 5, §6.7, p. 262 and
@@ -248,6 +270,11 @@ Limits:
 - SmartPI follows the threshold, not the boiler: when the threshold is reached,
   learning resumes even if the boiler starts a little later.
 - A boiler that stops for another reason is not seen.
+- After the installation or a reset, the first learning takes longer: SmartPI
+  learns only while the boiler heats. In a room that starts heating mostly while
+  the boiler is off, for example when the boiler stays off for hours, SmartPI
+  may stay long in its first phase (3.1): it learns the dead time only from a
+  heating start made while the threshold is reached.
 
 ---
 
@@ -862,3 +889,4 @@ The matrix drives the gain updates and thermal learning only. A regime transitio
 3. **OLS** regression with Student t-test for slope validation.
 4. **Hagglund T. and Astrom K.J.**, Supervision of adaptive control algorithms, *Automatica* 36(8), 2000, 1171–1180: learning pause below the central boiler threshold (3.7).
 5. **Astrom K.J. and Hagglund T.**, *PID Controllers: Theory, Design, and Tuning*, 2nd ed., Instrument Society of America, 1995: learning pause below the central boiler threshold (3.7).
+6. **Skogestad S.**, Simple analytic rules for model reduction and PID controller tuning, *Journal of Process Control* 13, 2003, 291–309: learning pause below the central boiler threshold (3.7).

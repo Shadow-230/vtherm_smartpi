@@ -25,7 +25,11 @@ All notable changes to this project will be documented in this file.
   calls for heat below Versatile Thermostat's central boiler threshold, for a
   thermostat that Versatile Thermostat counts for its central boiler: the
   boiler does not heat then, and the room cools although the command says it
-  heats. The pause works like the user's `set_smartpi_learning` pause, without
+  heats. Without the pause, SmartPI would count the wait for the boiler as the
+  room's dead time, from which it computes its gain, and would regulate much
+  more slowly; this matters most while it learns from its default values. With
+  the pause, the first learning after the installation or a reset takes longer,
+  as SmartPI learns only while the boiler heats. The pause works like the user's `set_smartpi_learning` pause, without
   changing that setting; learning resumes when the threshold is reached or
   SmartPI stops calling, and the next heating is a new start. Regulation is
   unchanged. No new setting. See `documentation/en/technical_doc.md`, 3.7.
