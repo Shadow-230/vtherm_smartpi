@@ -2,9 +2,9 @@
 
     HA_INSTANCE=N python <stage>/tests/qas/run.py --role ROLE ID [ID ...]
     HA_INSTANCE=N python <stage>/tests/qas/run.py --role ROLE M     # the role's minimum set
-    HA_INSTANCE=N python <stage>/tests/qas/run.py --role boiler-count --author-release BP0 BR1
+    HA_INSTANCE=N python <stage>/tests/qas/run.py --role boiler-count --author-release BP0 BR1 BR2
     python <stage>/tests/qas/run.py --list [--markdown]             # the catalogue
-    python <stage>/tests/qas/run.py --compare QAS.json AUTHOR.json  # BR1 on both versions
+    python <stage>/tests/qas/run.py --compare QAS.json AUTHOR.json  # BR1 or BR2 on both versions
 
 ``--role`` is the role the instance was prepared as (prepare.py). ``--author-release``: the
 instance runs the author's release 0.5.2 (c75d803); only the scenarios that run there are
@@ -28,7 +28,7 @@ if str(HERE) not in sys.path:
 
 from instance import bench_lib  # noqa: E402
 from pack import ROLES, SMARTPI, SMARTPI_DEFAULTS  # noqa: E402
-from scenarios import CONTEXT, SCENARIOS, base, reference_truth  # noqa: E402
+from scenarios import CHECKPOINT_HOURS, CONTEXT, SCENARIOS, STARTS_FOR_VALIDITY, base, reference_truth  # noqa: E402
 
 
 def selected(ids: list[str], role: str, author_release: bool) -> list[str]:
@@ -67,36 +67,79 @@ def catalogue() -> str:
     return "\n".join(rows)
 
 
-def _ratio(value: Any, true: float) -> str:
-    return f"{value} ({value / true:.2f})" if isinstance(value, (int, float)) and true else str(value)
+TOLERANCE = 0.20  # the decision rule: an error within 20 % of the true value
+
+
+def _at(samples: list[dict[str, Any]], hours: float) -> dict[str, Any] | None:
+    """The last sample kept at or before ``hours``."""
+    kept = [s for s in samples if s.get("hours", 0.0) <= hours + 0.01]
+    return kept[-1] if kept else None
+
+
+def _error(value: Any, true: float) -> float | None:
+    return value / true - 1.0 if isinstance(value, (int, float)) and true else None
+
+
+def _cell(sample: dict[str, Any] | None, key: str, true: float) -> str:
+    value = (sample or {}).get(key)
+    error = _error(value, true)
+    return "—" if error is None else f"{value:g} ({error:+.0%})"
 
 
 def compare(qas_file: str, author_file: str) -> str:
-    """BR1 on this version and on the author's 0.5.2: West's a, b and dead times at the end and
-    their extremes, against the room's true values."""
+    """BR1 or BR2 on this version and on the author's 0.5.2: West's heating dead time at 48 and
+    96 hours against the room's true value (delay plus lag), whether the comparison is valid, and,
+    for BR1, the decision rule; a and b only as auxiliary readings."""
     runs = {name: json.loads(pathlib.Path(path).read_text(encoding="utf-8")) for name, path in (("qas", qas_file), ("author 0.5.2", author_file))}
+    sids = {run.get("scenario") for run in runs.values()}
+    if len(sids) != 1:
+        raise SystemExit(f"not the same run: {sorted(map(str, sids))}")
+    sid = sids.pop()
     truth = reference_truth()
-    rows = [
-        "| Value | True | " + " | ".join(f"{name}: end (ratio) | {name}: min–max" for name in runs) + " |",
-        "|---|---|" + "---|---|" * len(runs),
+    true_dt = truth["deadtime_delay_lag_s"]
+    lines = [
+        f"{sid}: West's heating dead time against the true {true_dt:.0f} s (delay plus lag; the delay alone is {truth['deadtime_delay_s']:.0f} s)",
+        "",
+        "| Value | " + " | ".join(runs) + " |",
+        "|---|" + "---|" * len(runs),
     ]
-    for key, true, label in (
-        ("a", truth["a"], "a"),
-        ("b", truth["b"], "b"),
-        ("deadtime_heat_s", truth["deadtime_delay_lag_s"], "heating dead time, s"),
-        ("deadtime_cool_s", truth["deadtime_delay_lag_s"], "cooling dead time, s"),
-    ):
-        cells = []
-        for run in runs.values():
-            values = [s[key] for s in run["samples"] if isinstance(s.get(key), (int, float))]
-            end = run["samples"][-1].get(key) if run["samples"] else None
-            cells += [_ratio(end, true), f"{min(values)}–{max(values)}" if values else "—"]
-        rows.append(f"| {label} | {true} | " + " | ".join(cells) + " |")
-    rows.append(
-        f"\nDead times: true between {truth['deadtime_delay_s']:.0f} s (the radiator's delay) and "
-        f"{truth['deadtime_delay_lag_s']:.0f} s (delay plus lag, the learned start); ratios against the latter."
-    )
-    return "\n".join(rows)
+    for hours in CHECKPOINT_HOURS:
+        at = {name: _at(run["samples"], hours) for name, run in runs.items()}
+        lines.append(f"| heating dead time, s, at {hours} h | " + " | ".join(
+            _cell(s, "deadtime_heat_s", true_dt) + ("" if (s or {}).get("deadtime_heat_reliable") else ", not reliable") for s in at.values()
+        ) + " |")
+        for key, label in (("a", "a"), ("b", "b")):
+            lines.append(f"| {label} at {hours} h (auxiliary) | " + " | ".join(
+                f"{_cell(s, key, truth[key])}, {(s or {}).get(f'accepted_updates_{key}')} updates" for s in at.values()
+            ) + " |")
+    lines.append("| West's heating starts, boiler off / on | " + " | ".join(
+        f"{run.get('starts', {}).get('boiler_off')} / {run.get('starts', {}).get('boiler_on')}" for run in runs.values()
+    ) + " |")
+    lines.append("")
+    if sid != "BR1":
+        lines.append(f"{sid} measures a limit of the pause: shown, not judged by the rule.")
+        return "\n".join(lines)
+    reasons = []
+    for name, run in runs.items():
+        last = run["samples"][-1] if run["samples"] else {}
+        if not last.get("deadtime_heat_reliable"):
+            reasons.append(f"{name}: no reliable heating dead time at the end")
+        if (run.get("starts", {}).get("boiler_off") or 0) < STARTS_FOR_VALIDITY:
+            reasons.append(f"{name}: fewer than {STARTS_FOR_VALIDITY} heating starts with the boiler off")
+    if reasons:
+        lines.append("Not valid: " + "; ".join(reasons) + ".")
+        return "\n".join(lines)
+    lines.append(f"Valid: both heating dead times reliable, at least {STARTS_FOR_VALIDITY} heating starts with the boiler off in each run.")
+    for hours in CHECKPOINT_HOURS:
+        qas, author = (_error((_at(run["samples"], hours) or {}).get("deadtime_heat_s"), true_dt) for run in runs.values())
+        if qas is None or author is None:
+            lines.append(f"At {hours} h: a dead time is missing.")
+            continue
+        lines.append(
+            f"At {hours} h: qas's error {qas:+.0%}, 0.5.2's {author:+.0%}; qas's error not larger: "
+            f"{'yes' if abs(qas) <= abs(author) else 'no'}; qas within {TOLERANCE:.0%}: {'yes' if abs(qas) <= TOLERANCE else 'no'}."
+        )
+    return "\n".join(lines)
 
 
 def main(argv: list[str]) -> int:

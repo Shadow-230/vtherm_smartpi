@@ -229,8 +229,17 @@ La chaudière centrale de Versatile Thermostat ne démarre que lorsque le nombre
 d'appareils actifs (têtes de vanne ou interrupteurs) des thermostats qu'elle
 compte, ou leur puissance totale, atteint un seuil. En dessous,
 un thermostat qui demande de la chaleur n'en reçoit pas : la pièce refroidit
-alors que la commande dit qu'elle chauffe. Apprendre pendant ce temps ferait
-paraître l'émetteur faible.
+alors que la commande dit qu'elle chauffe. Apprendre pendant ce temps
+compterait l'attente de la chaudière comme temps mort de la pièce (3.6).
+SmartPI calcule son gain à partir du temps mort : dans
+$K_p = 1/(|a|(\lambda + L))$ (4.1), $\lambda$ vaut trois fois le temps mort $L$
+(quatre avec une vanne) dès que $L$ dépasse quelques minutes, donc un temps
+mort quatre fois trop long donne un gain environ quatre fois plus petit, et la
+régulation réagit beaucoup plus lentement. Cela compte surtout tant que SmartPI
+apprend à partir de ses valeurs par défaut, après l'installation ou une
+réinitialisation (3.1). Les fenêtres `a`/`b` de ce temps ne voient pas de
+chaleur non plus ; une partie est déjà rejetée par les contrôles des fenêtres
+(3.2), et la pause les abandonne toutes.
 
 L'apprentissage (les fenêtres `a`/`b` et la détection du temps mort) se met
 donc en pause tant que toutes ces conditions sont vraies :
@@ -263,12 +272,27 @@ change, et chaque changement est journalisé.
 
 Sources :
 
-- Un estimateur suppose que la variation de la sortie est causée par le signal
-  de commande. Lorsqu'une autre cause domine, les estimations « will not
-  converge to their true values », et l'adaptation doit être « interrupted as
-  quickly as possible » (référence 4, §5, p. 1175). Pour un signal saturé, le
-  même problème, l'estimation est interrompue et « kept off for a while »
-  ensuite (§7, p. 1178) ; lorsqu'elle reprend, ses signaux « should be
+- N'apprendre que lorsque le chauffage fait varier la température. Un
+  estimateur suppose que la variation de la sortie est causée par le signal de
+  commande. Lorsqu'une autre cause domine, les estimations « will not converge
+  to their true values », et l'adaptation doit être « interrupted as quickly
+  as possible » (référence 4, §5, p. 1175). C'est la conclusion principale de
+  l'article : n'adapter que lorsque les variations de la mesure sont causées
+  par le signal de commande (§10, p. 1179). Une chaudière qui ne chauffe pas
+  est une telle autre cause.
+- Le début compte le plus. Un régulateur adaptatif apprend d'abord l'échelle de
+  temps du procédé, son temps mort et sa constante de temps, et le reste en
+  dépend (référence 4, §3, p. 1172–1173). Une erreur faite alors se propage.
+- Une régulation lente apprend de plus en plus lentement. Lorsque les
+  estimations donnent une régulation très lente, la température bouge peu, et
+  l'adaptation devient « very slow » (référence 4, §9, p. 1179).
+- Un temps mort trop long ne rend pas la régulation instable ; il la rend
+  lente. Une constante de temps en boucle fermée égale au temps mort est un bon
+  compromis entre rapidité et robustesse (référence 6, p. 296) ; avec trois à
+  quatre temps morts, SmartPI est déjà du côté prudent.
+- Après une pause, repartir de données fraîches. Pour un signal saturé,
+  l'estimation est interrompue et « kept off for a while » ensuite
+  (référence 4, §7, p. 1178) ; lorsqu'elle reprend, ses signaux « should be
   initialized by actual values » (§8, p. 1178).
 - Un régulateur adaptatif doit trouver pourquoi la régulation a changé avant de
   se réajuster : un mauvais réglage n'est qu'une cause parmi d'autres
@@ -279,6 +303,12 @@ Limites :
 - SmartPI suit le seuil, pas la chaudière : lorsque le seuil est atteint,
   l'apprentissage reprend même si la chaudière démarre un peu plus tard.
 - Une chaudière qui s'arrête pour une autre raison n'est pas vue.
+- Après l'installation ou une réinitialisation, le premier apprentissage prend
+  plus de temps : SmartPI n'apprend que lorsque la chaudière chauffe. Dans une
+  pièce qui commence à chauffer surtout chaudière arrêtée, par exemple quand la
+  chaudière reste arrêtée pendant des heures, SmartPI peut rester longtemps dans
+  sa première phase (3.1) : il n'apprend le temps mort qu'à partir d'un début de
+  chauffe fait pendant que le seuil est atteint.
 
 ---
 
@@ -905,5 +935,6 @@ La matrice pilote uniquement la mise à jour des gains et l'apprentissage thermi
 3. Régression **OLS** avec test t de Student pour la validation de pente.
 4. **Hagglund T. et Astrom K.J.**, Supervision of adaptive control algorithms, *Automatica* 36(8), 2000, 1171–1180 : pause d'apprentissage sous le seuil de la chaudière centrale (3.7).
 5. **Astrom K.J. et Hagglund T.**, *PID Controllers: Theory, Design, and Tuning*, 2e éd., Instrument Society of America, 1995 : pause d'apprentissage sous le seuil de la chaudière centrale (3.7).
+6. **Skogestad S.**, Simple analytic rules for model reduction and PID controller tuning, *Journal of Process Control* 13, 2003, 291–309 : pause d'apprentissage sous le seuil de la chaudière centrale (3.7).
 
 Ce document sert de référence alignée sur l'implémentation SmartPI actuelle.

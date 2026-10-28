@@ -3,6 +3,7 @@ SmartPI as the room's learned model."""
 
 from __future__ import annotations
 
+import itertools
 import json
 import pathlib
 import sys
@@ -79,7 +80,7 @@ def test_nothing_in_the_pack_is_collected_by_pytest() -> None:
 def test_the_author_s_release_runs_only_its_scenarios() -> None:
     """With --author-release, the minimum set is BP0 only, and a scenario of the pause is refused."""
     assert run.selected(["M"], "boiler-count", author_release=True) == ["BP0"]
-    assert run.selected(["BP0", "BR1"], "boiler-count", author_release=True) == ["BP0", "BR1"]
+    assert run.selected(["BP0", "BR1", "BR2"], "boiler-count", author_release=True) == ["BP0", "BR1", "BR2"]
     with pytest.raises(SystemExit):
         run.selected(["BP1"], "boiler-count", author_release=True)
 
@@ -89,16 +90,54 @@ def test_each_scenario_s_typical_time_is_within_its_maximum() -> None:
         assert 0 <= scenario.time.typical_s <= scenario.time.maximum_s, scenario.id
 
 
+def test_the_reference_inputs_are_maximum_length_sequences() -> None:
+    """West's setpoint and East's call follow pseudo-random binary sequences of maximum length (IEA
+    EBC Annex 58, appendix E): each repeats only after 2**n - 1 steps, with 2**(n-1) high steps,
+    holds a level for at most n steps, and neither repeats after 24 hours."""
+    from scenarios import EAST_SEQUENCE, WEST_SEQUENCE  # noqa: PLC0415
+
+    for sequence in (WEST_SEQUENCE, EAST_SEQUENCE):
+        bits = sequence.bits()
+        n = sequence.order
+        assert len(bits) == 2**n - 1
+        assert sum(bits) == 2 ** (n - 1)
+        assert all(bits[k:] + bits[:k] != bits for k in range(1, len(bits)))
+        assert max(len(list(run)) for _, run in itertools.groupby(bits + bits)) == n
+        assert len(bits) * sequence.step_s != 24 * 3600.0
+
+
+def _reference_run(tmp_path: pathlib.Path, name: str, sid: str, dead_times: tuple[float, float], reliable: bool = True, starts_off: int = 20) -> str:
+    samples = [
+        {"hours": hours, "deadtime_heat_s": dead_time, "deadtime_heat_reliable": reliable, "a": 0.036, "b": 0.00098, "accepted_updates_a": 1, "accepted_updates_b": 4}
+        for hours, dead_time in zip((48.0, 96.0), dead_times, strict=True)
+    ]
+    path = tmp_path / f"{sid}-{name}.json"
+    path.write_text(json.dumps({"scenario": sid, "version": name, "starts": {"boiler_off": starts_off, "boiler_on": 30}, "samples": samples}), encoding="utf-8")
+    return str(path)
+
+
 def test_the_comparison_of_the_reference_runs(tmp_path: pathlib.Path) -> None:
-    """run.py --compare: a, b and the dead times of both runs at the end, with their ratio to the true values."""
-    from scenarios import reference_truth  # noqa: PLC0415
+    """run.py --compare: West's heating dead time of both versions at 48 and 96 hours against the
+    true 780 s, a and b as auxiliary readings, and the decision rule's two questions."""
+    table = run.compare(_reference_run(tmp_path, "qas", "BR1", (880.0, 858.0)), _reference_run(tmp_path, "author", "BR1", (2860.0, 3315.0)))
+    assert "| heating dead time, s, at 48 h | 880 (+13%) | 2860 (+267%) |" in table
+    assert "| a at 96 h (auxiliary) | 0.036 (-10%), 1 updates |" in table
+    assert "Valid:" in table
+    assert "At 96 h: qas's error +10%, 0.5.2's +325%; qas's error not larger: yes; qas within 20%: yes." in table
 
-    def kept(name: str, a: float) -> str:
-        samples = [{"a": a, "b": 0.001, "deadtime_heat_s": 780.0, "deadtime_cool_s": 600.0}, {"a": a / 2, "b": 0.0011, "deadtime_heat_s": 2400.0, "deadtime_cool_s": 600.0}]
-        path = tmp_path / f"{name}.json"
-        path.write_text(json.dumps({"version": name, "truth": reference_truth(), "samples": samples}), encoding="utf-8")
-        return str(path)
 
-    table = run.compare(kept("qas", 0.04), kept("author", 0.03))
-    assert "| a | 0.04 | 0.02 (0.50) | 0.02–0.04 | 0.015 (0.38) | 0.015–0.03 |" in table
-    assert "| heating dead time, s | 780.0 | 2400.0 (3.08) |" in table
+def test_a_reference_comparison_without_a_reliable_dead_time_is_not_valid(tmp_path: pathlib.Path) -> None:
+    table = run.compare(
+        _reference_run(tmp_path, "qas", "BR1", (880.0, 880.0), reliable=False),
+        _reference_run(tmp_path, "author", "BR1", (3315.0, 3315.0), starts_off=2),
+    )
+    assert "Not valid: qas: no reliable heating dead time at the end; author 0.5.2: fewer than 6 heating starts with the boiler off." in table
+    assert "At 48 h" not in table
+
+
+def test_the_limit_run_is_shown_not_judged(tmp_path: pathlib.Path) -> None:
+    table = run.compare(_reference_run(tmp_path, "qas", "BR2", (880.0, 880.0), reliable=False), _reference_run(tmp_path, "author", "BR2", (6245.0, 6245.0)))
+    assert "| heating dead time, s, at 96 h | 880 (+13%), not reliable | 6245 (+701%) |" in table
+    assert "BR2 measures a limit of the pause: shown, not judged by the rule." in table
+    with pytest.raises(SystemExit):
+        run.compare(_reference_run(tmp_path, "qas", "BR1", (880.0, 880.0)), _reference_run(tmp_path, "author", "BR2", (880.0, 880.0)))
