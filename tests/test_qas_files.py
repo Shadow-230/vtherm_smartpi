@@ -141,3 +141,19 @@ def test_the_limit_run_is_shown_not_judged(tmp_path: pathlib.Path) -> None:
     assert "BR2 measures a limit of the pause: shown, not judged by the rule." in table
     with pytest.raises(SystemExit):
         run.compare(_reference_run(tmp_path, "qas", "BR1", (880.0, 880.0)), _reference_run(tmp_path, "author", "BR2", (880.0, 880.0)))
+
+
+def test_bp12_takes_the_outcome_of_the_detection_west_s_start_armed() -> None:
+    """BP12 (b): an outcome published before West's start armed its detection is not taken; the
+    outcome is read once the armed detection has ended."""
+    from scenarios import heat_detection  # noqa: PLC0415
+
+    def reading(state: str, outcome: str | None) -> dict:
+        return {"analysis": {"deadtime": {"state": state, "heat_last_outcome": outcome}}}
+
+    stale = reading("OFF", "aborted")
+    waiting = reading("WAITING_HEAT_RESPONSE", "aborted")
+    detected = reading("HEATING", "detected")
+    assert heat_detection([stale]) == (False, None)
+    assert heat_detection([stale, waiting, waiting]) == (True, None)
+    assert heat_detection([stale, waiting, waiting, detected]) == (True, "detected")
