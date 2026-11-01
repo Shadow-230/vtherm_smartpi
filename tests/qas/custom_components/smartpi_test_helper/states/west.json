@@ -113,6 +113,7 @@
    0.04,
    0.04
   ],
+  "a_obs_hist": [],
   "b": 0.001,
   "b_drift": {
    "drift_buffer": [],
@@ -187,7 +188,14 @@
  "last_active_wall_ts": null,
  "learning_enabled": true,
  "lw_state": {
-  "learning_start_date": "2026-01-01T00:00:00"
+  "learning_start_date": "2026-01-01T00:00:00",
+  "response_lag": {
+   "durations": [],
+   "episodes": 0,
+   "estimates": [],
+   "hvac_mode": null,
+   "published": null
+  }
  },
  "sp_mgr_state": {
   "effective_setpoint": null,

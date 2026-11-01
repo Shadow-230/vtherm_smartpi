@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 
 from ..hvac_mode import VThermHvacMode, VThermHvacMode_HEAT
-from .const import NEAR_BAND_HYSTERESIS_C
+from .const import GUARD_CUT_RESET_STEPS, NEAR_BAND_HYSTERESIS_C
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -30,6 +30,9 @@ class SmartPIGuards:
         self._guard_cut_count: int = 0
         self._guard_kick_active: bool = False
         self._guard_kick_count: int = 0
+        # Smallest observed sensor step: a reset closer to the threshold than
+        # one step lets a reading flickering between two levels re-trigger.
+        self.sensor_step_c: float = 0.0
 
     @property
     def guard_cut_active(self) -> bool:
@@ -62,16 +65,25 @@ class SmartPIGuards:
         near_band_above: float,
         is_device_active: bool,
         hvac_mode: VThermHvacMode,
-        is_calibration: bool
+        is_calibration: bool,
+        is_bootstrap: bool = False,
     ) -> str:
         """
         Check for Guard Cut condition (HEAT only).
 
         Triggers when the measured temperature exceeds target + near_band_above
         while the heater is active; resets at or below that threshold minus
-        NEAR_BAND_HYSTERESIS_C.
+        the larger of NEAR_BAND_HYSTERESIS_C and GUARD_CUT_RESET_STEPS observed
+        sensor steps (``sensor_step_c``). The bootstrap heats between its own hysteresis
+        thresholds: the guard does not act there and a running cut is released.
         Returns: GuardAction.CUT_TRIGGER, CUT_MAINTAIN, CUT_RESET, or NONE.
         """
+        if is_bootstrap:
+            if self._guard_cut_active:
+                self._guard_cut_active = False
+                return GuardAction.CUT_RESET
+            return GuardAction.NONE
+
         # Pre-conditions
         if (
             current_temp is None 
@@ -82,7 +94,7 @@ class SmartPIGuards:
             return GuardAction.NONE
 
         threshold_above = target_temp + near_band_above
-        reset_threshold = threshold_above - NEAR_BAND_HYSTERESIS_C
+        reset_threshold = threshold_above - self._reset_margin_c()
 
         if self._guard_cut_active:
             if current_temp <= reset_threshold:
@@ -118,12 +130,22 @@ class SmartPIGuards:
         in_near_band: bool,
         on_percent: float,
         hvac_mode: VThermHvacMode,
-        is_calibration: bool
+        is_calibration: bool,
+        is_bootstrap: bool = False,
     ) -> str:
         """
         Check for Guard Kick condition.
+
+        The bootstrap restarts the heating at its own hysteresis threshold: the
+        guard does not act there and a running kick is released.
         Returns: GuardAction.KICK_TRIGGER, KICK_MAINTAIN, KICK_RESET, or NONE.
         """
+        if is_bootstrap:
+            if self._guard_kick_active:
+                self._guard_kick_active = False
+                return GuardAction.KICK_RESET
+            return GuardAction.NONE
+
         # Pre-conditions
         if (
             current_temp is None 
@@ -164,6 +186,10 @@ class SmartPIGuards:
             return GuardAction.KICK_TRIGGER
             
         return GuardAction.NONE
+
+    def _reset_margin_c(self) -> float:
+        """Guard cut reset hysteresis: at least NEAR_BAND_HYSTERESIS_C and GUARD_CUT_RESET_STEPS sensor steps."""
+        return max(NEAR_BAND_HYSTERESIS_C, GUARD_CUT_RESET_STEPS * self.sensor_step_c)
 
     def save_state(self) -> GuardState:
         """Save state."""

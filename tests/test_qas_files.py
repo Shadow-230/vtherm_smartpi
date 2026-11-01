@@ -18,7 +18,7 @@ if str(QAS) not in sys.path:
 import configuration  # noqa: E402
 import learned_state  # noqa: E402
 import run  # noqa: E402
-from pack import ROLES  # noqa: E402
+from pack import AUTHOR_RELEASE, ROLES  # noqa: E402
 from scenarios import SCENARIOS  # noqa: E402
 
 from custom_components.vtherm_smartpi.algo import SmartPI  # noqa: E402
@@ -123,7 +123,7 @@ def test_the_comparison_of_the_reference_runs(tmp_path: pathlib.Path) -> None:
     assert "| heating dead time, s, at 48 h | 880 (+13%) | 2860 (+267%) |" in table
     assert "| a at 96 h (auxiliary) | 0.036 (-10%), 1 updates |" in table
     assert "Valid:" in table
-    assert "At 96 h: qas's error +10%, 0.5.2's +325%; qas's error not larger: yes; qas within 20%: yes." in table
+    assert f"At 96 h: qas's error +10%, {AUTHOR_RELEASE}'s +325%; qas's error not larger: yes; qas within 20%: yes." in table
 
 
 def test_a_reference_comparison_without_a_reliable_dead_time_is_not_valid(tmp_path: pathlib.Path) -> None:
@@ -131,7 +131,7 @@ def test_a_reference_comparison_without_a_reliable_dead_time_is_not_valid(tmp_pa
         _reference_run(tmp_path, "qas", "BR1", (880.0, 880.0), reliable=False),
         _reference_run(tmp_path, "author", "BR1", (3315.0, 3315.0), starts_off=2),
     )
-    assert "Not valid: qas: no reliable heating dead time at the end; author 0.5.2: fewer than 6 heating starts with the boiler off." in table
+    assert f"Not valid: qas: no reliable heating dead time at the end; author {AUTHOR_RELEASE}: fewer than 6 heating starts with the boiler off." in table
     assert "At 48 h" not in table
 
 

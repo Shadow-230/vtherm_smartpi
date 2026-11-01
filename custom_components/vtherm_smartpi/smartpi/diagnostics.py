@@ -20,6 +20,7 @@ from .const import (
     AB_MIN_SAMPLES_B,
     FF_TRIM_EPSILON,
     FF_TRIM_RHO,
+    RESPONSE_LAG_RESOLVE_EPISODES,
     clamp,
 )
 from .timestamp_utils import monotonic_to_wall_ts
@@ -166,8 +167,11 @@ def _bootstrap_state(algo: SmartPI) -> str | None:
 
     Two steps:
       step1: waiting for deadtimes (A/B collection blocked per mode)
-      step2: both deadtimes acquired, collecting initial emeas (<AB_MIN_SAMPLES_A/B)
-    The HYSTERESIS phase ends once both sample targets are reached.
+      step2: both deadtimes acquired, collecting initial emeas (<AB_MIN_SAMPLES_A/B),
+             then waiting for the response lag once both counts are reached and
+             the delivered power model of a is not resolved
+    The HYSTERESIS phase ends once both sample targets are reached and the
+    delivered power model is resolved.
     """
     if algo.phase != SmartPIPhase.HYSTERESIS:
         return None
@@ -199,6 +203,17 @@ def _bootstrap_state(algo: SmartPI) -> str | None:
         return " ".join(parts)
 
     # Step 2: both deadtimes acquired, collecting initial emeas
+    if (
+        nb_a >= AB_MIN_SAMPLES_A
+        and nb_b >= AB_MIN_SAMPLES_B
+        and not algo.est.a_model_ready
+        and algo.est.learn_ok_count_a == 0
+    ):
+        lag = algo.learn_win.response_lag
+        return (
+            f"step2 - waiting response lag: estimates {lag.estimates_count}, "
+            f"episodes {lag.episodes_count}/{RESPONSE_LAG_RESOLVE_EPISODES}"
+        )
     return f"step2 - collecting emeas: A:{nb_a}/{AB_MIN_SAMPLES_A} B:{nb_b}/{AB_MIN_SAMPLES_B}"
 
 
@@ -537,6 +552,21 @@ def _build_analysis_learning(algo: SmartPI) -> Dict[str, Any]:
             "segments_b": learn_win.balance.pool_size("b"),
             "resolution_c": round(learn_win.balance.resolution_c, 3),
         },
+        "response_lag": _response_lag_diag(learn_win.response_lag),
+    }
+
+
+def _response_lag_diag(response_lag) -> Dict[str, Any]:
+    """Return the response lag estimate and its last outcome."""
+    lag = response_lag.lag_s
+    episode = response_lag.episode_median_s
+    return {
+        "lag_s": round(lag) if lag is not None else None,
+        "estimates": response_lag.estimates_count,
+        "episodes": response_lag.episodes_count,
+        "episodes_target": RESPONSE_LAG_RESOLVE_EPISODES,
+        "episode_median_s": round(episode) if episode is not None else None,
+        "last_reason": response_lag.last_reason,
     }
 
 
@@ -650,6 +680,9 @@ def _build_analysis(algo: SmartPI, twin_diag: Dict[str, Any]) -> Dict[str, Any]:
             "last_power": algo.dt_est.last_power,
             "heat_episode_start": _episode_start(algo._t_heat_episode_start),
             "cool_episode_start": _episode_start(algo._t_cool_episode_start),
+            "waiting_elapsed_s": _round_optional(algo.dt_est.waiting_elapsed_s, 0),
+            "heat_last_outcome": algo.dt_est.last_outcome["heat"],
+            "cool_last_outcome": algo.dt_est.last_outcome["cool"],
         },
         "governance": {
             "last_freeze_reason_gains": gov.last_freeze_reason_gains.value,

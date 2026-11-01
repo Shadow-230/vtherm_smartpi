@@ -350,3 +350,71 @@ async def test_handler_guard_cut_triggers_outside_filtered_near_band():
     assert algo._last_restart_reason == "guard_cut"
     _, _, force = thermostat.cycle_scheduler.start_cycle.call_args[0]
     assert force is True
+
+
+def test_guard_cut_does_not_act_in_the_bootstrap():
+    """The bootstrap heats up to its own hysteresis threshold, beyond SP + near_band_above."""
+    guards = SmartPIGuards()
+    action = guards.check_guard_cut(
+        current_temp=20.4, target_temp=20.0, near_band_above=0.2, is_device_active=True,
+        hvac_mode=VThermHvacMode_HEAT, is_calibration=False, is_bootstrap=True,
+    )
+    assert action == GuardAction.NONE
+    assert guards.guard_cut_active is False
+
+
+def test_a_running_guard_cut_is_released_in_the_bootstrap():
+    guards = SmartPIGuards()
+    assert _cut(guards, 20.25) == GuardAction.CUT_TRIGGER
+    action = guards.check_guard_cut(
+        current_temp=20.4, target_temp=20.0, near_band_above=0.2, is_device_active=True,
+        hvac_mode=VThermHvacMode_HEAT, is_calibration=False, is_bootstrap=True,
+    )
+    assert action == GuardAction.CUT_RESET
+    assert guards.guard_cut_active is False
+
+
+def test_guard_kick_does_not_act_in_the_bootstrap():
+    guards = SmartPIGuards()
+    action = guards.check_guard_kick(
+        current_temp=19.5, target_temp=20.0, near_band_below=0.3, in_near_band=True, on_percent=0.0,
+        hvac_mode=VThermHvacMode_HEAT, is_calibration=False, is_bootstrap=True,
+    )
+    assert action == GuardAction.NONE
+    assert guards.guard_kick_active is False
+
+
+@pytest.mark.asyncio
+async def test_handler_tells_the_guards_about_the_bootstrap():
+    thermostat = _make_thermostat()
+    handler = SmartPIHandler(thermostat)
+    handler._async_save = AsyncMock()
+    algo = _make_algo()
+    algo.calculate = MagicMock()
+    type(algo).phase = PropertyMock(return_value=SmartPIPhase.HYSTERESIS)
+    thermostat.prop_algorithm = algo
+
+    await handler.control_heating(timestamp=datetime.now())
+
+    assert algo.guards.check_guard_cut.call_args.kwargs["is_bootstrap"] is True
+    assert algo.guards.check_guard_kick.call_args.kwargs["is_bootstrap"] is True
+
+
+def test_guard_cut_resets_one_and_a_half_sensor_steps_below_its_threshold():
+    """A reading flickering between two sensor levels cannot re-trigger the cut."""
+    guards = SmartPIGuards()
+    guards.sensor_step_c = 0.1
+    assert _cut(guards, 20.3) == GuardAction.CUT_TRIGGER
+    # One step below the reading, within the former 0.05 C reset: still cut.
+    assert _cut(guards, 20.1) == GuardAction.CUT_MAINTAIN
+    assert _cut(guards, 20.06) == GuardAction.CUT_MAINTAIN
+    assert _cut(guards, 20.05) == GuardAction.CUT_RESET
+
+
+def test_guard_kick_reset_does_not_depend_on_the_sensor_step():
+    guards = SmartPIGuards()
+    guards.sensor_step_c = 0.1
+    kick = dict(target_temp=20.0, near_band_below=0.3, in_near_band=True, on_percent=0.5,
+                hvac_mode=VThermHvacMode_HEAT, is_calibration=False)
+    assert guards.check_guard_kick(current_temp=19.6, **kick) == GuardAction.KICK_TRIGGER
+    assert guards.check_guard_kick(current_temp=19.75, **kick) == GuardAction.KICK_RESET

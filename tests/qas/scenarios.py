@@ -1,5 +1,5 @@
 """The QAS scenarios: SmartPI's learning pause below Versatile Thermostat's central boiler
-threshold (documentation/en/technical_doc.md, 3.7), on a prepared instance.
+threshold (documentation/en/technical_doc.md, 3.8), on a prepared instance.
 
 West and East heat with water radiators the central boiler counts; North with an electric heater
 it does not count. A scenario makes West call alone: one device, below both roles' thresholds (2
@@ -14,7 +14,7 @@ is read from the plugin on the stage: SmartPI calculates every ``RECALC_S``; VTh
 command within a cycle (5 minutes, its default).
 
 BR1 and BR2 are the reference runs: the same case on this version and on the author's release
-0.5.2 (c75d803), which has no learning pause. On 0.5.2 the runner runs with
+(``pack.AUTHOR_RELEASE``), which has no learning pause. On it the runner runs with
 ``--author-release``: only BP0, BR1 and BR2, and BP0 then does not look for
 ``learning.boiler_paused``.
 """
@@ -32,7 +32,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from instance import Instance
-from pack import BOILER_SWITCH, HELPER_DOMAIN, ROLES, SMARTPI, VT, WEST_WINDOW, room
+from pack import AUTHOR_RELEASE, BOILER_SWITCH, HELPER_DOMAIN, ROLES, SMARTPI, VT, WEST_WINDOW, room
 
 _CONST = pathlib.Path(__file__).resolve().parents[2] / "custom_components" / SMARTPI / "smartpi" / "const.py"
 _spec = importlib.util.spec_from_file_location("qas_smartpi_const", _CONST)
@@ -107,7 +107,7 @@ class Scenario:
     counterpart: str
     minimum: bool
     depends: str  # what its time depends on, beyond SmartPI's timing
-    author_release: bool  # runs on the author's 0.5.2 too
+    author_release: bool  # runs on the author's release too
 
     @property
     def detached(self) -> bool:
@@ -140,7 +140,7 @@ def scenario(
 
 
 class Context:
-    """Set by the runner: whether the instance runs the author's release 0.5.2."""
+    """Set by the runner: whether the instance runs the author's release."""
 
     author_release: bool = False
 
@@ -266,7 +266,7 @@ async def west_stops(r: Any) -> None:
     author_release=True,
 )
 async def BP0(r: Any) -> None:
-    """After the preparation's restart every SmartPI and VTherm entry is loaded, the only SmartPI entry is its defaults, SmartPI reports no repair, neither integration logs a warning or an error but VTherm's one-time notice that SmartPI was not registered yet, VTherm's central boiler agrees with the test rooms' boiler switch, and each thermostat has SmartPI's diagnostics with learning.enabled on and learning.boiler_paused published (not on the author's 0.5.2, which has no such field)."""
+    """After the preparation's restart every SmartPI and VTherm entry is loaded, the only SmartPI entry is its defaults, SmartPI reports no repair, neither integration logs a warning or an error but VTherm's one-time notice that SmartPI was not registered yet, VTherm's central boiler agrees with the test rooms' boiler switch, and each thermostat has SmartPI's diagnostics with learning.enabled on and learning.boiler_paused published (not on the author's release, which has no such field)."""
     api = Instance(r.ha)
     for domain in (SMARTPI, VT):
         for entry in await api.entries(domain):
@@ -278,7 +278,7 @@ async def BP0(r: Any) -> None:
         r.check(took is not None, f"{climate}: SmartPI's diagnostics, phase {_get(data, 'control.phase')}")
         r.check(_get(data, "learning.enabled") is True, f"{climate}: learning.enabled {_get(data, 'learning.enabled')}")
         if CONTEXT.author_release:
-            r.note(f"{climate}: the author's 0.5.2 publishes no learning.boiler_paused ({paused(data)})")
+            r.note(f"{climate}: the author's {AUTHOR_RELEASE} publishes no learning.boiler_paused ({paused(data)})")
         else:
             r.check(isinstance(paused(data), bool), f"{climate}: learning.boiler_paused {paused(data)}")
     switch = (await r.ha.state(BOILER_SWITCH) or {}).get("state")
@@ -605,7 +605,7 @@ async def BP12(r: Any) -> None:
 
 # --- the reference runs -----------------------------------------------------------------------
 #
-# The same case on this version and on the author's 0.5.2, from a fresh start (README.md, section
+# The same case on this version and on the author's release, from a fresh start (README.md, section
 # 5). Two inputs, each switched by its own pseudo-random binary sequence (IEA EBC Annex 58,
 # appendix E, p. 54-55): West's setpoint, and East's call, which starts and stops the boiler. A
 # maximum-length sequence of order n repeats after 2**n - 1 steps and holds a level for at most n
@@ -695,7 +695,7 @@ def _reference_file(r: Any, sid: str) -> pathlib.Path:
     from ha_client import N  # noqa: PLC0415 — the bench's client
     from harness import results_file  # noqa: PLC0415 — the bench's harness
 
-    version = "author-0.5.2" if CONTEXT.author_release else "qas"
+    version = f"author-{AUTHOR_RELEASE}" if CONTEXT.author_release else "qas"
     return results_file(r.pack).parent / f"{sid}-{version}-instance{N}.json"
 
 
@@ -726,7 +726,7 @@ async def _reference_run(r: Any, sid: str, east: Callable[[float], float]) -> No
         f"{_get(data, 'model.deadtime_heat_reliable')}, accepted updates of a {_get(data, 'learning.accepted_updates_a')}",
     )
     out = _reference_file(r, sid)
-    version = "author 0.5.2" if CONTEXT.author_release else "qas"
+    version = f"author {AUTHOR_RELEASE}" if CONTEXT.author_release else "qas"
     samples: list[dict[str, Any]] = []
     starts = {"boiler_off": 0, "boiler_on": 0}
     alone = {"readings": 0, "boiler_off": 0, "paused": 0}
@@ -772,7 +772,7 @@ async def _reference_run(r: Any, sid: str, east: Callable[[float], float]) -> No
         f"West calling alone: VTherm's boiler off in {alone['boiler_off']} of {alone['readings']} readings",
     )
     if CONTEXT.author_release:
-        r.note("the author's 0.5.2 publishes no learning.boiler_paused")
+        r.note(f"the author's {AUTHOR_RELEASE} publishes no learning.boiler_paused")
     else:
         r.check(alone["paused"] == alone["readings"], f"West calling alone: learning paused in {alone['paused']} of {alone['readings']} readings")
     r.note(f"West's heating starts: {starts['boiler_off']} with the boiler off, {starts['boiler_on']} with it on")
@@ -788,11 +788,11 @@ async def _reference_run(r: Any, sid: str, east: Callable[[float], float]) -> No
 
 @scenario("BR1", ("boiler-count", "boiler-power"), total(PUBLISHED, REFERENCE), PAUSE_TESTS, author_release=True)
 async def BR1(r: Any) -> None:
-    """Reference run, the same on this version and on the author's 0.5.2: from a fresh start (learning reset), for 96 hours West's setpoint switches between 19 and 21 degC and East's call (so the boiler) on and off, each by its own pseudo-random sequence (steps of 30 and 40 minutes); every 10 minutes West's dead time, a and b are kept (BR1-<version>-instance<N>.json in the results), and run.py --compare judges both versions' heating dead time at 48 and 96 hours against the room's true value."""
+    """Reference run, the same on this version and on the author's release: from a fresh start (learning reset), for 96 hours West's setpoint switches between 19 and 21 degC and East's call (so the boiler) on and off, each by its own pseudo-random sequence (steps of 30 and 40 minutes); every 10 minutes West's dead time, a and b are kept (BR1-<version>-instance<N>.json in the results), and run.py --compare judges both versions' heating dead time at 48 and 96 hours against the room's true value."""
     await _reference_run(r, "BR1", east_by_sequence)
 
 
 @scenario("BR2", ("boiler-count",), total(PUBLISHED, REFERENCE), PAUSE_TESTS, author_release=True)
 async def BR2(r: Any) -> None:
-    """Measures a limit of the pause, the same on this version and on the author's 0.5.2: as BR1, but East calls in fixed phases of 3 hours, off first, so West mostly starts heating while the boiler is off; kept as BR2-<version>-instance<N>.json and shown by run.py --compare, not judged. It passes on the measurement."""
+    """Measures a limit of the pause, the same on this version and on the author's release: as BR1, but East calls in fixed phases of 3 hours, off first, so West mostly starts heating while the boiler is off; kept as BR2-<version>-instance<N>.json and shown by run.py --compare, not judged. It passes on the measurement."""
     await _reference_run(r, "BR2", east_by_phases)

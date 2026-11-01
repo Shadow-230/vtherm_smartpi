@@ -7,7 +7,7 @@
     python <stage>/tests/qas/run.py --compare QAS.json AUTHOR.json  # BR1 or BR2 on both versions
 
 ``--role`` is the role the instance was prepared as (prepare.py). ``--author-release``: the
-instance runs the author's release 0.5.2 (c75d803); only the scenarios that run there are
+instance runs the author's release (``pack.AUTHOR_RELEASE``); only the scenarios that run there are
 allowed. The harness runs each scenario from the role's base, SmartPI's defaults entry with no
 option changed, and reports a scenario NOT RUN on an instance in another state. Before and after
 each scenario every thermostat goes back to heating at its base setpoint (``scenarios.base``).
@@ -27,7 +27,7 @@ if str(HERE) not in sys.path:
     sys.path.insert(0, str(HERE))
 
 from instance import bench_lib  # noqa: E402
-from pack import ROLES, SMARTPI, SMARTPI_DEFAULTS  # noqa: E402
+from pack import AUTHOR_RELEASE, ROLES, SMARTPI, SMARTPI_DEFAULTS  # noqa: E402
 from scenarios import CHECKPOINT_HOURS, CONTEXT, SCENARIOS, STARTS_FOR_VALIDITY, base, reference_truth  # noqa: E402
 
 
@@ -41,7 +41,7 @@ def selected(ids: list[str], role: str, author_release: bool) -> list[str]:
         elif role not in SCENARIOS[sid].roles:
             raise SystemExit(f"{sid} runs on {', '.join(SCENARIOS[sid].roles)}, not on {role}")
         elif author_release and not SCENARIOS[sid].author_release:
-            raise SystemExit(f"{sid} does not run on the author's 0.5.2")
+            raise SystemExit(f"{sid} does not run on the author's {AUTHOR_RELEASE}")
         else:
             out.append(sid)
     return out
@@ -87,10 +87,10 @@ def _cell(sample: dict[str, Any] | None, key: str, true: float) -> str:
 
 
 def compare(qas_file: str, author_file: str) -> str:
-    """BR1 or BR2 on this version and on the author's 0.5.2: West's heating dead time at 48 and
+    """BR1 or BR2 on this version and on the author's release: West's heating dead time at 48 and
     96 hours against the room's true value (delay plus lag), whether the comparison is valid, and,
     for BR1, the decision rule; a and b only as auxiliary readings."""
-    runs = {name: json.loads(pathlib.Path(path).read_text(encoding="utf-8")) for name, path in (("qas", qas_file), ("author 0.5.2", author_file))}
+    runs = {name: json.loads(pathlib.Path(path).read_text(encoding="utf-8")) for name, path in (("qas", qas_file), (f"author {AUTHOR_RELEASE}", author_file))}
     sids = {run.get("scenario") for run in runs.values()}
     if len(sids) != 1:
         raise SystemExit(f"not the same run: {sorted(map(str, sids))}")
@@ -136,7 +136,7 @@ def compare(qas_file: str, author_file: str) -> str:
             lines.append(f"At {hours} h: a dead time is missing.")
             continue
         lines.append(
-            f"At {hours} h: qas's error {qas:+.0%}, 0.5.2's {author:+.0%}; qas's error not larger: "
+            f"At {hours} h: qas's error {qas:+.0%}, {AUTHOR_RELEASE}'s {author:+.0%}; qas's error not larger: "
             f"{'yes' if abs(qas) <= abs(author) else 'no'}; qas within {TOLERANCE:.0%}: {'yes' if abs(qas) <= TOLERANCE else 'no'}."
         )
     return "\n".join(lines)

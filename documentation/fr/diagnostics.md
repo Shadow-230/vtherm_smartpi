@@ -64,6 +64,34 @@ Le bloc `live` est organisé par responsabilité :
 `trajectory`, `deadtime`, `governance`, `feedforward` et, lorsqu'il
 est disponible, `twin`.
 
+`analysis.deadtime` suit la détection du temps mort :
+
+| Champ | Signification |
+|---|---|
+| `state` | État du détecteur (`WAITING_HEAT_RESPONSE`, `WAITING_COOL_RESPONSE`, `HEATING`, `COOLING`, `OFF`) |
+| `last_power` | Dernière puissance vue par le détecteur |
+| `waiting_elapsed_s` | Âge de la réponse attendue en secondes, `null` quand aucune détection n'est armée |
+| `heat_last_outcome` / `cool_last_outcome` | Issue de la dernière attente d'une réponse montante / descendante : `detected`, `timeout`, `aborted` (transition de puissance avant détection), `null` avant la première |
+
+`analysis.learning.response_lag` décrit le retard de réponse utilisé par l'apprentissage de `a` :
+
+| Champ | Signification |
+|---|---|
+| `lag_s` | Retard de réponse publié en secondes, `null` tant qu'il n'existe pas un ensemble cohérent d'estimations |
+| `estimates` | Nombre d'estimations conservées (7 au plus) |
+| `episodes` | Nombre d'épisodes actifs terminés depuis le début de l'apprentissage ; il continue après la publication du retard et peut dépasser `episodes_target` |
+| `episodes_target` | Nombre d'épisodes après lequel le modèle de puissance délivrée est résolu sans retard publié (`7`) |
+| `episode_median_s` | Durée médiane des épisodes actifs récents en secondes, `null` avec moins de 3 épisodes |
+| `last_reason` | Issue du dernier épisode actif (estimation retenue, ou raison de son non-usage). `episode interrupted by restart` : épisode en cours lors d'un redémarrage, non repris, compté sans estimation. Peut être vide juste après un redémarrage |
+
+Pendant le bootstrap, `learning.bootstrap_status` décrit l'étape en cours :
+
+| Valeur | Signification |
+|---|---|
+| `step1 - deadtime: heat:… cool:…` | Attente des temps morts actif et passif |
+| `step2 - collecting emeas: A:n/5 B:n/5` | Collecte des mesures de `a` et `b` |
+| `step2 - waiting response lag: estimates N, episodes K/7` | Collectes complètes ; la publication de `a` attend le modèle de puissance délivrée (retard publié, ou `K` atteint 7) |
+
 `valve` vaut `null` sauf si le thermostat pilote une vanne. En mode vanne, il contient :
 
 | Champ | Signification |
@@ -72,7 +100,7 @@ est disponible, `twin`.
 | `vt_period_min` | Période minimale de régulation de Versatile Thermostat en minutes (`null` si indisponible) |
 | `opening_remap_active` | `true` lorsque les réglages d'ouverture de Versatile Thermostat modifient l'ouverture envoyée à la vanne |
 | `quantization_step_linear_percent` | Demande linéaire, en pourcentage, déplacée par un pas de vanne de `1%` à la position de vanne engagée ; `1.0` sans linéarisation, `null` lorsque la vanne est fermée |
-| `issues` | Codes des réglages non transparents pour SmartPI : `dpercent_filter`, `period_filter`, `opening_remap`. Les mêmes problèmes sont signalés dans les Réparations de Home Assistant |
+| `issues` | Codes de filtrage, de retard de commande ou de transformation d'ouverture en conflit avec la linéarisation SmartPI : `dpercent_filter`, `period_filter`, `opening_remap`. Les mêmes avertissements apparaissent dans les Réparations de Home Assistant ; un filtrage ou un retard ne prouve pas, à lui seul, un échec de l'apprentissage |
 
 FFTrim utilise des blocs canoniques imbriqués :
 

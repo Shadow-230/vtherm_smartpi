@@ -169,6 +169,7 @@ def test_resume_after_override_does_not_integrate_gap(override):
     from custom_components.vtherm_smartpi.smartpi.const import (
         AB_MIN_SAMPLES_A,
         AB_MIN_SAMPLES_B,
+        RESPONSE_LAG_RESOLVE_EPISODES,
     )
 
     algo = make_algo(integral=0.0, i_mode="I:RUN")
@@ -177,6 +178,9 @@ def test_resume_after_override_does_not_integrate_gap(override):
     algo.est.b = 0.002
     algo.est.a_meas_hist.extend([0.02] * AB_MIN_SAMPLES_A)
     algo.est.b_meas_hist.extend([0.002] * AB_MIN_SAMPLES_B)
+    # A model past the bootstrap has a resolved response lag: the learning,
+    # fed during a guard cut, keeps the stable phase.
+    algo.learn_win.response_lag._episodes = RESPONSE_LAG_RESOLVE_EPISODES
     clock = [10_000.0]
     target, current = 20.0, 19.0
     error = abs(target - current)
@@ -503,3 +507,22 @@ def test_back_calculation_only_moves_toward_zero(integral_power, du, expected_po
     ctl.integral = integral_power / KI
     ctl._back_calculate(du, KP, KI, 1.0)  # beta = 1 / Ti = 0.1
     assert KI * ctl.integral == pytest.approx(expected_power)
+
+
+def test_room_is_still_observed_during_a_guard_cut():
+    """The forced zero output keeps the published temperature and the dead time detector up to date."""
+    algo = make_algo(integral=-50.0, i_mode="I:RUN")
+    force_smartpi_stable_mode(algo)
+    assert algo.phase == SmartPIPhase.STABLE
+    algo.guards._guard_cut_active = True
+    calls = []
+    original = algo.dt_est.update
+    algo.dt_est.update = lambda **kw: (calls.append(kw), original(**kw))
+
+    algo.calculate(target_temp=20.0, current_temp=20.37, ext_current_temp=6.0, hvac_mode=VThermHvacMode_HEAT)
+    algo.calculate(target_temp=20.0, current_temp=20.42, ext_current_temp=6.0, hvac_mode=VThermHvacMode_HEAT)
+
+    assert algo.ctl.last_i_mode == "I:OVERRIDE(guard_cut)"
+    assert algo._last_current_temp == 20.42
+    assert [kw["tin_raw"] for kw in calls] == [20.37, 20.42]
+    assert algo.guards.sensor_step_c == algo.learn_win.balance.resolution_c

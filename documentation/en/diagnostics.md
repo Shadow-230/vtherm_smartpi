@@ -64,6 +64,35 @@ The `live` block is organized by responsibility:
 `trajectory`, `deadtime`, `governance`, `feedforward` and, when
 available, `twin`.
 
+`analysis.deadtime` follows the dead time detection:
+
+| Field | Meaning |
+|---|---|
+| `state` | Detector state (`WAITING_HEAT_RESPONSE`, `WAITING_COOL_RESPONSE`, `HEATING`, `COOLING`, `OFF`) |
+| `last_power` | Last power seen by the detector |
+| `waiting_elapsed_s` | Age of the response being waited for in seconds, `null` when no detection is armed |
+| `heat_last_outcome` / `cool_last_outcome` | Outcome of the last wait for a rising / falling response: `detected`, `timeout`, `aborted` (power transition before a detection), `null` before the first one |
+
+`analysis.learning.response_lag` describes the response lag used by the `a`
+learning:
+
+| Field | Meaning |
+|---|---|
+| `lag_s` | Published response lag in seconds, `null` until a consistent set of estimates |
+| `estimates` | Number of retained estimates (at most 7) |
+| `episodes` | Number of active episodes ended since the start of the learning; it keeps counting after the lag is published and may exceed `episodes_target` |
+| `episodes_target` | Number of episodes after which the delivered power model is resolved without a published lag (`7`) |
+| `episode_median_s` | Median duration of the recent active episodes in seconds, `null` with fewer than 3 episodes |
+| `last_reason` | Outcome of the last active episode (estimate kept, or reason it was not used). `episode interrupted by restart`: episode in progress at a restart, not resumed, counted without an estimate. May be empty right after a restart |
+
+During the bootstrap, `learning.bootstrap_status` describes the current step:
+
+| Value | Meaning |
+|---|---|
+| `step1 - deadtime: heat:… cool:…` | Waiting for the active and passive dead times |
+| `step2 - collecting emeas: A:n/5 B:n/5` | Collecting the `a` and `b` measurements |
+| `step2 - waiting response lag: estimates N, episodes K/7` | Collections complete; the `a` publication waits for the delivered power model (published lag, or `K` reaches 7) |
+
 `valve` is `null` unless the thermostat drives a valve. In valve mode it contains:
 
 | Field | Meaning |
@@ -72,7 +101,7 @@ available, `twin`.
 | `vt_period_min` | Versatile Thermostat regulation minimum period in minutes (`null` when unavailable) |
 | `opening_remap_active` | `true` when the Versatile Thermostat opening settings change the opening sent to the valve |
 | `quantization_step_linear_percent` | Linear demand, in percent, moved by one `1%` valve step at the committed valve position; `1.0` without linearization, `null` when the valve is closed |
-| `issues` | Codes of the settings that are not transparent for SmartPI: `dpercent_filter`, `period_filter`, `opening_remap`. The same issues are raised in Home Assistant Repairs |
+| `issues` | Codes for command filtering, delay or an opening remap conflicting with SmartPI linearization: `dpercent_filter`, `period_filter`, `opening_remap`. The same warnings appear in Home Assistant Repairs; filtering or delay alone does not prove a learning failure |
 
 FFTrim uses nested canonical blocks:
 
