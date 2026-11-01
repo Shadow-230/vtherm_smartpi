@@ -263,6 +263,22 @@ async def pause_holds(r: Any) -> None:
         await asyncio.sleep(RECALC_S)
 
 
+WAITING_HEAT = "WAITING_HEAT_RESPONSE"  # deadtime_estimator.py: a heating detection waits for the room
+
+
+def heat_detection(readings: list[dict[str, Any]]) -> tuple[bool, str | None]:
+    """From a thermostat's diagnostics read in order after its start: whether a heating dead-time
+    detection was armed, and its outcome once that detection ended (None while it waits, or when
+    none was armed). An outcome published before the detection was armed belongs to another one."""
+    armed = False
+    for data in readings:
+        if _get(data, "analysis.deadtime.state") == WAITING_HEAT:
+            armed = True
+        elif armed:
+            return True, _get(data, "analysis.deadtime.heat_last_outcome")
+    return armed, None
+
+
 async def boiler_off_for(r: Any, hold_s: float, within_s: float) -> float | None:
     """Seconds until VTherm's boiler has been off for ``hold_s`` in a row, or None after ``within_s``."""
     start = time.time()
@@ -607,12 +623,12 @@ async def BP11(r: Any) -> None:
     ("boiler-delay",),
     total(
         PUBLISHED, EAST_STOPS, PAUSE_ON_SETPOINT, BOILER_SETTLED, RESUME, BOILER_STARTS, NEW_EPISODE,
-        PUBLISHED, WEST_COOLS, STEP_DETECTED,
+        PUBLISHED, PUBLISHED, WEST_COOLS, STEP_DETECTED,  # (b): West off, its reset, its room cools, its start
     ),
     PAUSE_TESTS,
 )
 async def BP12(r: Any) -> None:
-    """Measures the limit of a central boiler with an activation delay (120 s), in two parts. (a) With West's learned state, after a pause, East calls and West resumes at once while the boiler starts 120 s later: it records that delay, when the next heating episode starts against the boiler's start, and that the dead-time detection is not armed then (West was already heating). (b) From a fresh start (learning reset), West stays off until its room cools while East calls alone, then West starts heating and its start reaches the threshold: no pause, the boiler starts 120 s later, and it records SmartPI's first heating dead-time detection, which includes that wait. It passes on the measurement."""
+    """Measures the limit of a central boiler with an activation delay (120 s), in two parts. (a) With West's learned state, after a pause, East calls and West resumes at once while the boiler starts 120 s later: it records that delay, when the next heating episode starts against the boiler's start, and that the dead-time detection is not armed then (West was already heating). (b) From a fresh start (learning reset), West stays off until its room cools while East calls alone, then West starts heating and its start reaches the threshold: no pause, the boiler starts 120 s later, and it records SmartPI's first heating dead-time detection, which includes that wait. It passes on the measurement, once West's start has armed that detection and it has ended detected."""
     api = Instance(r.ha)
 
     async def switch() -> Any:
@@ -650,15 +666,24 @@ async def BP12(r: Any) -> None:
         r.note(f"(a) the dead-time window of the learning starts {lead:.0f} s before the boiler's switch is seen on")
     r.note(f"(a) West's dead-time detection: {_get(data, 'analysis.deadtime.state')}, last outcome {_get(data, 'analysis.deadtime.heat_last_outcome')}")
 
-    # (b) West's own start reaches the threshold
-    await api.call(SMARTPI, "reset_smartpi_learning", {"entity_id": WEST})
+    # (b) West's own start reaches the threshold. West stops before its learning is reset, so
+    # that no detection is in progress after the reset.
     await targets(r, **{WEST: STOPPED})
+    took, data = await until(lambda: live(r, WEST), lambda d: (command(d) or 0) == 0, MARGIN_S)
+    r.check(took is not None, f"(b) West off: command {command(data)} %")
+    await api.call(SMARTPI, "reset_smartpi_learning", {"entity_id": WEST})
     took, data = await until(
         lambda: live(r, WEST),
-        lambda d: _get(d, "model.deadtime_heat_reliable") is False and (command(d) or 0) == 0,
+        lambda d: _get(d, "model.deadtime_heat_reliable") is False
+        and _get(d, "analysis.deadtime.heat_last_outcome") is None
+        and (command(d) or 0) == 0,
         MARGIN_S,
     )
-    r.check(took is not None, f"(b) West fresh and off: heating dead time reliable {_get(data, 'model.deadtime_heat_reliable')}, command {command(data)} %")
+    r.check(
+        took is not None,
+        f"(b) West fresh and off: heating dead time reliable {_get(data, 'model.deadtime_heat_reliable')}, "
+        f"last outcome {_get(data, 'analysis.deadtime.heat_last_outcome')}, command {command(data)} %",
+    )
     off_at = time.time()
     peak: float | None = None
 
@@ -685,7 +710,8 @@ async def BP12(r: Any) -> None:
     first_on: float | None = None
     boiler_at: float | None = None
     paused_seen = False
-    outcome = None
+    readings: list[dict[str, Any]] = []
+    armed, outcome = False, None
     data = {}
     while time.time() - stepped <= STEP_DETECTED.maximum_s:
         data = await live(r, WEST)
@@ -695,15 +721,17 @@ async def BP12(r: Any) -> None:
         if boiler_at is None and await switch() == "on":
             boiler_at = now
         paused_seen = paused_seen or paused(data) is True
-        outcome = _get(data, "analysis.deadtime.heat_last_outcome")
-        if outcome is not None:
+        readings.append(data)
+        armed, outcome = heat_detection(readings)
+        if outcome is not None or (not armed and now - stepped > MARGIN_S):
             break
         await asyncio.sleep(POLL_S)
     r.note(
         f"(b) West's start seen {first_on and round(first_on - stepped)} s after its setpoint, the boiler's switch on "
         f"{first_on and boiler_at and round(boiler_at - first_on)} s after West's start; paused meanwhile: {paused_seen}"
     )
-    r.check(outcome is not None, f"(b) West's heating dead-time detection: {outcome} after {round(time.time() - stepped)} s")
+    r.check(armed, f"(b) West's start armed a heating dead-time detection (states {sorted({str(_get(d, 'analysis.deadtime.state')) for d in readings})})")
+    r.check(outcome == "detected", f"(b) West's heating dead-time detection: {outcome} after {round(time.time() - stepped)} s")
     if outcome == "detected":
         r.note(
             f"(b) first heating dead time {_get(data, 'model.deadtime_heat_s')} s (true 780 s; without an activation delay "
