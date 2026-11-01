@@ -80,6 +80,14 @@ def _error(value: Any, true: float) -> float | None:
     return value / true - 1.0 if isinstance(value, (int, float)) and true else None
 
 
+def _when(hours: float, samples: Any) -> str:
+    """'at 48 h', or for the last checkpoint 'at the end (95.8 h)': the run's last sample."""
+    if hours < CHECKPOINT_HOURS[-1]:
+        return f"at {hours:g} h"
+    last = max((s.get("hours", 0.0) for s in samples if s), default=None)
+    return "at the end" if last is None else f"at the end ({last:.1f} h)"
+
+
 def _cell(sample: dict[str, Any] | None, key: str, true: float) -> str:
     value = (sample or {}).get(key)
     error = _error(value, true)
@@ -105,11 +113,12 @@ def compare(qas_file: str, author_file: str) -> str:
     ]
     for hours in CHECKPOINT_HOURS:
         at = {name: _at(run["samples"], hours) for name, run in runs.items()}
-        lines.append(f"| heating dead time, s, at {hours} h | " + " | ".join(
+        when = _when(hours, at.values())
+        lines.append(f"| heating dead time, s, {when} | " + " | ".join(
             _cell(s, "deadtime_heat_s", true_dt) + ("" if (s or {}).get("deadtime_heat_reliable") else ", not reliable") for s in at.values()
         ) + " |")
         for key, label in (("a", "a"), ("b", "b")):
-            lines.append(f"| {label} at {hours} h (auxiliary) | " + " | ".join(
+            lines.append(f"| {label} {when} (auxiliary) | " + " | ".join(
                 f"{_cell(s, key, truth[key])}, {(s or {}).get(f'accepted_updates_{key}')} updates" for s in at.values()
             ) + " |")
     lines.append("| West's heating starts, boiler off / on | " + " | ".join(
@@ -131,12 +140,14 @@ def compare(qas_file: str, author_file: str) -> str:
         return "\n".join(lines)
     lines.append(f"Valid: both heating dead times reliable, at least {STARTS_FOR_VALIDITY} heating starts with the boiler off in each run.")
     for hours in CHECKPOINT_HOURS:
-        qas, author = (_error((_at(run["samples"], hours) or {}).get("deadtime_heat_s"), true_dt) for run in runs.values())
+        at = [_at(run["samples"], hours) for run in runs.values()]
+        when = _when(hours, at)
+        qas, author = (_error((s or {}).get("deadtime_heat_s"), true_dt) for s in at)
         if qas is None or author is None:
-            lines.append(f"At {hours} h: a dead time is missing.")
+            lines.append(f"{when.capitalize()}: a dead time is missing.")
             continue
         lines.append(
-            f"At {hours} h: qas's error {qas:+.0%}, {AUTHOR_RELEASE}'s {author:+.0%}; qas's error not larger: "
+            f"{when.capitalize()}: qas's error {qas:+.0%}, {AUTHOR_RELEASE}'s {author:+.0%}; qas's error not larger: "
             f"{'yes' if abs(qas) <= abs(author) else 'no'}; qas within {TOLERANCE:.0%}: {'yes' if abs(qas) <= TOLERANCE else 'no'}."
         )
     return "\n".join(lines)

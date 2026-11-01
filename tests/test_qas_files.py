@@ -121,9 +121,9 @@ def test_the_comparison_of_the_reference_runs(tmp_path: pathlib.Path) -> None:
     true 780 s, a and b as auxiliary readings, and the decision rule's two questions."""
     table = run.compare(_reference_run(tmp_path, "qas", "BR1", (880.0, 858.0)), _reference_run(tmp_path, "author", "BR1", (2860.0, 3315.0)))
     assert "| heating dead time, s, at 48 h | 880 (+13%) | 2860 (+267%) |" in table
-    assert "| a at 96 h (auxiliary) | 0.036 (-10%), 1 updates |" in table
+    assert "| a at the end (96.0 h) (auxiliary) | 0.036 (-10%), 1 updates |" in table
     assert "Valid:" in table
-    assert f"At 96 h: qas's error +10%, {AUTHOR_RELEASE}'s +325%; qas's error not larger: yes; qas within 20%: yes." in table
+    assert f"At the end (96.0 h): qas's error +10%, {AUTHOR_RELEASE}'s +325%; qas's error not larger: yes; qas within 20%: yes." in table
 
 
 def test_a_reference_comparison_without_a_reliable_dead_time_is_not_valid(tmp_path: pathlib.Path) -> None:
@@ -137,7 +137,7 @@ def test_a_reference_comparison_without_a_reliable_dead_time_is_not_valid(tmp_pa
 
 def test_the_limit_run_is_shown_not_judged(tmp_path: pathlib.Path) -> None:
     table = run.compare(_reference_run(tmp_path, "qas", "BR2", (880.0, 880.0), reliable=False), _reference_run(tmp_path, "author", "BR2", (6245.0, 6245.0)))
-    assert "| heating dead time, s, at 96 h | 880 (+13%), not reliable | 6245 (+701%) |" in table
+    assert "| heating dead time, s, at the end (96.0 h) | 880 (+13%), not reliable | 6245 (+701%) |" in table
     assert "BR2 measures a limit of the pause: shown, not judged by the rule." in table
     with pytest.raises(SystemExit):
         run.compare(_reference_run(tmp_path, "qas", "BR1", (880.0, 880.0)), _reference_run(tmp_path, "author", "BR2", (880.0, 880.0)))
