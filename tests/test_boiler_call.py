@@ -119,6 +119,21 @@ def test_pause_drops_the_observations_in_flight() -> None:
     assert smartpi.dt_est.last_power == pytest.approx(0.6)
 
 
+def test_a_resume_while_heating_arms_no_dead_time_detection() -> None:
+    """A room that is already heating when the pause ends starts no dead-time detection: only a
+    start from 0, after the minimum off time, arms one (QAS BP12, part a, against part b)."""
+    smartpi = _smartpi()
+    smartpi.set_boiler_learning_paused(True)
+    smartpi.set_boiler_learning_paused(False)
+
+    smartpi.dt_est.update(now=1000.0, tin=19.0, u_applied=1.0)
+    assert smartpi.dt_est.state != "WAITING_HEAT_RESPONSE"
+
+    smartpi.dt_est.update(now=1060.0, tin=19.0, u_applied=0.0)
+    smartpi.dt_est.update(now=1060.0 + smartpi.dt_est.min_off_time_seconds + 1.0, tin=18.9, u_applied=1.0)
+    assert smartpi.dt_est.state == "WAITING_HEAT_RESPONSE"
+
+
 def test_no_learning_during_the_pause(monkeypatch) -> None:
     """Neither the room model nor the dead time is learned."""
     smartpi = _smartpi()
