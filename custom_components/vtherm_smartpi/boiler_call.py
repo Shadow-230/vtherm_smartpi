@@ -5,7 +5,7 @@ or switches) of its thermostats are active, or when their total power reaches a
 threshold. Below the threshold the
 boiler does not heat: a thermostat that calls gets no heat, and the room keeps
 cooling although SmartPI's command says it heats. SmartPI pauses its learning
-then (documentation/en/technical_doc.md, 3.7).
+then (documentation/en/technical_doc.md, 3.8).
 """
 
 from __future__ import annotations

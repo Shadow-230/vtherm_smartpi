@@ -81,13 +81,29 @@ En phase `HYSTERESIS`, l'apprentissage suit un ordre strict :
 
 Règles effectivement codées :
 
-- `AB_MIN_SAMPLES_B = 8`,
-- `AB_MIN_SAMPLES_A = 6`,
-- `AB_A_SOFT_GATE_MIN_B = 8`.
+- `AB_MIN_SAMPLES_B = 5`,
+- `AB_MIN_SAMPLES_A = 5`,
+- `AB_A_SOFT_GATE_MIN_B = 5`.
 
-SmartPI quitte `HYSTERESIS` lorsque `b` dispose de 8 mesures et `a` de
-6 mesures. Les deux buffers continuent ensuite à se remplir jusqu'à
-`AB_HISTORY_SIZE = 31` pendant la régulation SmartPI normale.
+SmartPI quitte `HYSTERESIS` lorsque `b` dispose de 5 mesures et que `a` est publié.
+`a` est publié à 5 mesures, ou dès `AB_MIN_SAMPLES_A_CONSISTENT = 4` mesures lorsqu'elles
+concordent : leur écart absolu médian est au plus `AB_A_CONSISTENT_MAX_REL_MAD = 0.10`
+de leur médiane. La première publication de `a` attend aussi le modèle de puissance
+délivrée (3.7) : tant que le retard de réponse n'est pas résolu, les mesures sont
+collectées sans publication. Les deux buffers continuent ensuite à se remplir jusqu'à
+`AB_HISTORY_SIZE = 31` pendant la régulation SmartPI normale. Après un redémarrage,
+l'état restauré du retard de réponse fixe la phase dès le premier calcul ; un état
+sauvegardé sans bloc de retard de réponse attend la première mise à jour de l'apprentissage.
+
+Dans la bande d'hystérésis, la sortie conserve son état tout-ou-rien précédent. Une
+sortie modulée laissée par une autre phase n'est pas un état d'hystérésis : elle est
+ramenée à 0 jusqu'au prochain seuil. L'état tout-ou-rien est persisté avec l'heure
+murale du dernier calcul. Au redémarrage, le premier calcul le reprend dans la bande
+lorsque l'arrêt a duré au plus `RESPONSE_LAG_RESTART_MAX_GAP_S = 600 s` (3.7) et que
+le mode HVAC est inchangé, comme l'aurait fait une hystérésis jamais interrompue.
+Hors de la bande, les seuils décident. Sinon, et pour un état sauvegardé sans cet
+état, la sortie repart à 0. Une phase de chauffe en cours peut ainsi reprendre après
+un redémarrage court.
 
 La convergence de `b` utilisée pour l'apprentissage `a` avec détection de dérive repose sur `b_converged_for_a()` :
 
@@ -114,8 +130,11 @@ Le code n'utilise plus de constante `WINDOW_MIN_MINUTES`. L'apprentissage repose
 - bloque la collecte en bootstrap tant que les temps morts requis ne sont pas fiables,
 - applique une pause après reprise (`LEARNING_PAUSE_RESUME_MIN = 20`),
 - se met en pause, avec la détection du temps mort, tant que SmartPI demande de
-  la chaleur sous le seuil de la chaudière centrale de Versatile Thermostat (3.7),
+  la chaleur sous le seuil de la chaudière centrale de Versatile Thermostat (3.8),
 - ancre le début de fenêtre après la fin du temps mort quand c'est nécessaire,
+- retarde le début de fenêtre jusqu'à l'extinction de la réponse transitoire (`skip: response transient (a|b)`) : une fois le retard de réponse publié (3.7), une fenêtre `a` débute au moins `min(3 retard, moitié de l'épisode actif médian)` après l'échelon de puissance ; une fenêtre `b` débute après la coupure de puissance au moins du plus long de `3 retard` (retard publié) et de `AB_SETTLE_K_PASSIVE_DEADTIME = 1.5` temps morts passifs fiables : l'émetteur continue de chauffer après une coupure, et comme la pièce ne commence à se refroidir que lorsque cette chaleur résiduelle passe sous les pertes, le temps mort passif borne sa décroissance même lorsque le retard est inconnu. Pendant le bootstrap et la calibration, seul le terme `3 retard` s'applique,
+- ne soumet pas une fenêtre active plus courte qu'un cycle PWM (`active_window_shorter_than_cycle`) : sa durée est fixée avant ses données, car arrêter dès qu'une fenêtre courte paraît significative favorise les pentes les plus fortes parmi les données bruitées. Pendant le bootstrap, le chauffage fonctionne à pleine puissance entre les seuils d'hystérésis et une phase de chauffe peut être plus courte qu'un cycle : le minimum est alors plafonné à la moitié de la phase de chauffe médiane (`AB_SETTLE_ACTIVE_CAP_FRAC`), mesurée sur les phases précédentes,
+- clôt la fenêtre à sa dernière observation lorsque deux mises à jour ne sont pas contiguës (intervalle plafonné à un cycle) : la fenêtre est soumise sur les données jusqu'à cet instant lorsque sa pente y est robuste, sinon abandonnée (`skip: observation gap`) ; elle ne couvre jamais la période non observée,
 - surveille la stabilité de puissance via le coefficient de variation (`U_CV_MAX`),
   évalué dès que la puissance moyenne de la fenêtre atteint `U_CV_MIN_MEAN = 0.05`
   (en dessous, une puissance qui revient dans une fenêtre OFF n'est pas détectée par ce contrôle),
@@ -130,7 +149,20 @@ En pratique, la décision de soumettre ou d'étendre la fenêtre dépend de la r
 
 - amplitude minimale : `DT_DERIVATIVE_MIN_ABS = 0.05°C`,
 - nombre minimal de changements de niveau : `OLS_MIN_JUMPS = 3`,
-- significativité statistique : `OLS_T_MIN = 2.5`.
+- significativité statistique : `OLS_T_MIN = 2.5`,
+- étendue minimale : une fois la pente significative, la variation ajustée sur la
+  fenêtre (`|pente| × durée`) doit couvrir au moins `OLS_MIN_SPAN_STEPS = 1.5` pas
+  de capteur ; le pas est le plus petit changement observé dans la fenêtre, avec un
+  plancher `OLS_SPAN_MIN_STEP_C = 0.05°C` qui sert de marge de bruit pour les
+  capteurs à résolution fine. Sinon la fenêtre est prolongée
+  (`span_below_resolution`).
+
+La pente étant testée à chaque mise à jour, une fenêtre trop courte au regard de la
+quantification serait soumise dès que sa pente paraît significative : avec un
+capteur de 0,1 °C qui bascule entre deux niveaux et une pièce qui refroidit
+lentement, l'échantillonnage déclenché par les publications domine alors
+l'ajustement et `b` peut être faux de ±50 %. Sur une fenêtre couvrant plusieurs pas,
+la pente est sans biais quel que soit le profil du capteur.
 
 Les pentes sont calculées sur la température intérieure brute mesurée, et non sur les signaux filtrés, car le garde-fou de robustesse compte les sauts de valeur distincts de la mesure. L'historique brut (et l'historique filtré utilisé par la détection du temps mort) garde les échantillons des `TIN_HISTORY_RETENTION_MIN = 300` dernières minutes (`DT_MAX_MIN` + 60), dans la limite de `TIN_HISTORY_MAX_SAMPLES = 1800` échantillons. Un échantillon est ajouté à chaque changement de valeur ou après 60 s : toute la durée est couverte tant que les échantillons arrivent en moyenne au plus toutes les 10 s ; au-delà, le plafond d'échantillons raccourcit la durée couverte (environ 150 minutes avec un échantillon différent toutes les 5 s) et la pente d'une longue fenêtre n'utilise que ses échantillons les plus récents. Les pentes validées alimentent ensuite `ABEstimator.learn()` qui :
 
@@ -154,6 +186,15 @@ $$ a = \frac{dT/dt + b \cdot (T_{int} - T_{ext})}{u} $$
 
 Les historiques sont filtrés par median/MAD. La magnitude publiée de `a` est
 bornée tout en conservant le signe du mode ; `b` reste strictement positif.
+
+Pour une fenêtre active, `u` est la puissance délivrée moyenne de la fenêtre (3.7), et non la commande appliquée.
+
+Chaque mesure de `a` conserve son observation (`dT/dt`, `T_int - T_ext`, `u`). À
+chaque publication d'une nouvelle valeur de `b`, toutes les mesures conservées sont
+recalculées avec ce `b`, puis `a` est agrégé à nouveau s'il a déjà été publié : une
+mesure de `a` faite avant que `b` soit précis suit donc ses corrections. Une mesure
+restaurée sans observation, ou dont le recalcul contredirait le signe du mode,
+garde sa valeur.
 
 ### 3.5 Bilan intégral des fenêtres sans pente robuste
 
@@ -219,11 +260,41 @@ réponse physique de la pièce, pas le sens de la transition de puissance :
 Ainsi, OFF -> ON apprend `heat` en mode HEAT mais `cool` en mode COOL.
 La transition ON -> OFF apprend la réponse passive opposée.
 
-La détection suit la température intérieure filtrée. Une détection en cours n'est pas reprise après un redémarrage, et la durée minimale OFF doit être observée dans la session en cours avant qu'une détection puisse être armée.
+La détection suit la température intérieure filtrée, y compris pendant une calibration forcée : une mesure brute qui oscille d'un pas de capteur détecterait sinon une réponse dès l'échelon de puissance. Une détection en cours n'est pas reprise après un redémarrage, et la durée minimale OFF doit être observée dans la session en cours avant qu'une détection puisse être armée.
+
+Une réponse est détectée dès que la température s'est écartée de `0.05 °C` de son creux (chauffe) ou de son pic (refroidissement) depuis la transition de puissance. Le temps mort court de la transition au dernier instant à moins de `0.01 °C` de ce creux ou de ce pic, suivi pendant l'attente : il ne dépend donc pas de la rétention de l'historique de température. L'attente abandonne après `DEADTIME_ACTIVE_TIMEOUT_S = 14400 s` pour une réponse active (puissance démarrée) et `DEADTIME_PASSIVE_TIMEOUT_S = 43200 s` pour une réponse passive (puissance coupée) : après une coupure, un émetteur qui stocke beaucoup de chaleur (plancher chauffant) continue de réchauffer la pièce, puis plafonne, et la baisse peut arriver plusieurs heures plus tard. Pendant le bootstrap, l'attente passive se termine par une détection ou par une reprise de chauffe, qui exige une baisse que la détection voit d'abord ; la limite ne fait que borner le délai au-delà duquel une baisse n'est plus attribuée à la coupure. Une transition de puissance abandonne une attente en cours. L'issue de la dernière attente de chaque réponse et l'âge de l'attente en cours sont publiés (`analysis.deadtime`).
 
 La fiabilité devient vraie dès qu'au moins une mesure valide a été capturée sur le canal correspondant. Chaque canal garde ses 6 dernières détections ; la valeur publiée est leur médiane, de sorte qu'une détection aberrante isolée ne la déplace pas (avec une ou deux détections, la médiane vaut leur moyenne). Au redémarrage, la valeur publiée est recalculée à partir des détections restaurées.
 
-### 3.7 Pause d'apprentissage sous le seuil de la chaudière centrale
+### 3.7 Retard de réponse et puissance délivrée
+
+À l'échelle d'une fenêtre d'apprentissage, la pièce se comporte comme un intégrateur derrière des retards rapides (actionneur, émetteur, brassage de l'air, boîtier de la sonde) et un retard pur (réponse intégratrice du premier ordre avec temps mort). Après un échelon de puissance, la pente se stabilise progressivement et son asymptote de rampe croise la trajectoire passive extrapolée à $t = T_{ar} = L + \sum \tau_i$, le temps de séjour moyen de la réponse (Åström et Hägglund). Une fenêtre qui débute $k \cdot T_{ar}$ après l'échelon présente un déficit de pente d'au plus $e^{-k}$ pour un retard unique, quelle que soit la part du retard pur. Une fenêtre comprise dans le régime transitoire sous-estime `a`, d'autant plus que les retards sont longs ou que la sonde rapporte en retard.
+
+`ResponseLagEstimator` (`response_lag.py`) mesure $T_{ar}$ sur les épisodes actifs à puissance constante (écart d'au plus `RESPONSE_LAG_U_TOL = 0.05`) :
+
+- l'épisode doit suivre une période passive d'au moins `max(RESPONSE_LAG_MIN_OFF_S = 1800 s, RESPONSE_LAG_MIN_OFF_LAGS = 5 × retard connu)`, afin que la puissance de l'épisode précédent soit retombée ;
+- la référence passive est la pente OLS robuste de la fin de cette période OFF (sur `RESPONSE_LAG_PASSIVE_SPAN_S = 3600 s` au plus), à défaut le `b` publié ;
+- la droite tardive est ajustée sur les franchissements de niveau de l'historique brut (au moins `RESPONSE_LAG_MIN_CROSSINGS = 3`). Pour un saut d'un pas de capteur, le franchissement est daté au milieu des deux échantillons ; un saut de plusieurs pas conserve la valeur brute. Cela supprime les biais en escalier et de seuil de déclenchement des capteurs qui rapportent sur changement ;
+- l'ordonnée à l'origine d'une droite OLS ajustée sur un segment transitoire tombe avant $T_{ar}$ : l'estimateur inverse la forme close de l'ordonnée à l'origine d'une réponse à retard unique sur l'intervalle ajusté (monotone en le retard). Un épisode n'est pas utilisé lorsque l'inversion est trop plate (`RESPONSE_LAG_MIN_INVERSION_SLOPE = 0.05`) ou lorsque l'ordonnée à l'origine atteint `RESPONSE_LAG_RESOLVABLE_FRAC = 0.9` de sa limite pour un retard infini. Une estimation au-delà de `RESPONSE_LAG_MAX_S` (`DT_MAX_MIN` × 60 = 14 400 s) est également écartée (`intercept not resolvable`) ;
+- chaque estimation porte son écart-type, propagé à partir des résidus de l'ajustement et d'une incertitude relative supposée de `b` égale à `RESPONSE_LAG_B_REL_UNC = 0.10`.
+
+Les `RESPONSE_LAG_HISTORY = 7` dernières estimations sont conservées. Le retard est publié lorsqu'au moins `RESPONSE_LAG_MIN_ESTIMATES = 3` estimations donnent un écart-type combiné de leur médiane pondérée par l'inverse des variances au plus égal à `RESPONSE_LAG_MAX_REL_UNC = 0.15` de cette médiane (plancher `RESPONSE_LAG_UNC_FLOOR_S = 30 s`) ; les estimations situées à plus de trois écarts-types de la médiane ne sont pas combinées. Un ensemble incohérent conserve la valeur publiée, afin que des estimations dispersées n'activent et ne désactivent pas le modèle de puissance délivrée. Une discontinuité de plus de 1 s entre deux mises à jour termine l'épisode au dernier instant observé, et la coupure de puissance est datée à la reprise.
+
+Un redémarrage reprend la période passive ou l'épisode actif en cours lors de la sauvegarde. Le contexte est persisté en temps mural (dernier instant observé, puis début de la période passive, ou début, puissance, constance, durée passive préalable et température extérieure de l'épisode) et reconverti en horloge monotone au chargement. Il s'applique à la première observation qui suit, lorsque l'arrêt a duré au plus `RESPONSE_LAG_RESTART_MAX_GAP_S = 600 s` et que le mode HVAC est inchangé. Pendant un arrêt court, l'actionneur conserve son dernier état ; au-delà (hôte arrêté, coupure de courant, mise à jour), la puissance n'est pas connue. Une période passive reprend, et l'arrêt compte comme passif. Un épisode reprend lorsque la première puissance appliquée après le redémarrage est égale à la sienne à `RESPONSE_LAG_U_TOL` près. Sinon, il est compté comme épisode terminé, sans estimation (`episode interrupted by restart`), et une puissance non nulle ouvre un nouvel épisode sans période passive connue. Les franchissements viennent de l'historique brut du détecteur de temps mort, persisté de la même façon ; il ne contient aucun échantillon pendant l'arrêt. Un état sauvegardé sans ce contexte ne reprend rien.
+
+L'inversion suppose une réponse à retard unique (premier ordre). Elle ne restitue le temps de séjour moyen que pour un tel émetteur, ou lorsque l'épisode dure plusieurs fois le retard. Sur un émetteur qui combine un retard pur et une inertie, ou deux inerties successives, l'ordonnée à l'origine d'un épisode court est plus tardive que celle d'un retard unique de même temps de séjour : le retard publié est alors surestimé, d'environ 1,3 fois sur les formes simulées, ou n'est jamais publié lorsque l'épisode reste dans le régime transitoire.
+
+L'ordonnée à l'origine fixe le retard moyen de la réponse, pas sa forme. Le modèle de puissance délivrée la répartit en un retard pur $L = \min(\text{temps mort actif}, T_{ar})$, puis en un retard du premier ordre de $T_{ar} - L$. Le temps mort est détecté après le début de la réponse ; il borne donc le retard pur par le haut : le modèle ne délivre jamais de puissance plus tôt qu'un retard pur de même ordonnée à l'origine. Sans retard publié ni temps mort fiable, la puissance délivrée est égale à la puissance appliquée. Pour une fenêtre active qui débute $t_0$ après l'échelon et dure $W$, la fraction délivrée moyenne vaut, avec $\tau = T_{ar} - L$ :
+
+$$ \eta = \frac{1}{W}\int_{t_0}^{t_0+W} \left(1 - e^{-(t-L)/\tau}\right)\mathbb{1}_{t>L}\,dt $$
+
+Le modèle est résolu dès que le retard est publié, ou après `RESPONSE_LAG_RESOLVE_EPISODES = 7` épisodes actifs sans publication (la puissance appliquée est alors utilisée). Jusque-là, les mesures de `a` sont collectées sans publication. Lorsque le retard publié apparaît ou varie de plus de `RESPONSE_LAG_MODEL_CHANGE_REL = 0.5` avant la première publication de `a`, les mesures collectées sont recalculées avec la nouvelle puissance délivrée. Seules les fenêtres admises par la porte de stabilisation sont recalculées ; les autres sont écartées, puisque leur correction dépend de la forme de la réponse.
+
+L'état est publié dans `analysis.learning.response_lag` (`lag_s`, `estimates`, `episodes`, `episodes_target`, `episode_median_s`, `last_reason`) et persisté avec l'état d'apprentissage. `episodes` compte les épisodes actifs terminés depuis le début de l'apprentissage, y compris après la publication du retard ; `episodes_target` vaut `RESPONSE_LAG_RESOLVE_EPISODES`. Lorsque les deux collectes ont atteint leur seuil et que `a` attend ce modèle, `learning.bootstrap_status` vaut `step2 - waiting response lag: estimates N, episodes K/7`.
+
+Le retard est appris sur des épisodes à puissance constante, que fournit le bootstrap par hystérésis. En régulation PWM, le rapport cyclique change d'un cycle à l'autre : une installation déjà sortie du bootstrap en fournit donc rarement.
+
+### 3.8 Pause d'apprentissage sous le seuil de la chaudière centrale
 
 La chaudière centrale de Versatile Thermostat ne démarre que lorsque le nombre
 d'appareils actifs (têtes de vanne ou interrupteurs) des thermostats qu'elle
@@ -241,8 +312,8 @@ réinitialisation (3.1). Les fenêtres `a`/`b` de ce temps ne voient pas de
 chaleur non plus ; une partie est déjà rejetée par les contrôles des fenêtres
 (3.2), et la pause les abandonne toutes.
 
-L'apprentissage (les fenêtres `a`/`b` et la détection du temps mort) se met
-donc en pause tant que toutes ces conditions sont vraies :
+L'apprentissage (les fenêtres `a`/`b`, la mesure du retard de réponse (3.7) et
+la détection du temps mort) se met donc en pause tant que toutes ces conditions sont vraies :
 
 - Versatile Thermostat compte le thermostat pour sa chaudière centrale
   (`is_used_by_central_boiler`),
@@ -264,6 +335,8 @@ Le handler vérifie cela avant chaque calcul
 l'utilisateur (`set_smartpi_learning`) sans la modifier : les observations en
 cours sont abandonnées, et la chauffe suivante est un nouvel épisode, donc
 SmartPI n'apprend pas pendant le temps mort de la pièce après la pause (3.2).
+Pour le retard de réponse, la pause est une discontinuité : l'épisode se termine
+au dernier instant observé, et le suivant commence après la reprise (3.7).
 L'apprentissage reprend dès le premier calcul où le seuil est atteint ou où
 SmartPI cesse de demander. La régulation ne change pas : SmartPI voit la pièce refroidir et
 continue de demander. La pause vaut aussi pendant une calibration (4.6). Elle
@@ -324,21 +397,25 @@ Limites :
 
 $$ K_p = \frac{1}{|a| \cdot (\lambda + L)} $$
 
-3. calcul de $K_i = K_p / \tau$,
+3. calcul du temps intégral SIMC (Skogestad, 2003)
+   $T_i = \min(\tau, 4(\lambda + L))$ (`GAIN_TI_LAMBDA_FACTOR = 4`), puis
+   $K_i = K_p / T_i$,
 4. bornage des gains ($K_p \in [0.10, 5.0]$, $K_i \in [0.001, 0.050]$) puis application des gels de gouvernance.
 
-Avec une dynamique de pièce typique ($\tau$ de plusieurs heures), $K_p / \tau$
-passe sous `KI_MIN = 0.001` : le $K_i$ appliqué vaut donc généralement le
-plancher `KI_MIN`, et l'atténuation de $K_i$ près de la consigne est bornée par
-ce même plancher.
+Pour une pièce, $\tau$ (de plusieurs heures à plusieurs jours) dépasse largement l'horizon
+en boucle fermée $\lambda + L$ : la pièce se comporte presque comme un intégrateur et
+$T_i = 4(\lambda + L)$. Avec $T_i = \tau$, $K_i$ tomberait sur le plancher `KI_MIN = 0.001`
+et l'intégrale mettrait des jours à corriger une erreur de modèle. L'atténuation de $K_i$
+près de la consigne est bornée par ce même plancher.
 
 Le temps intégral effectif $T_i = K_p / K_i$ des gains appliqués est publié en
-minutes dans `control.ti_min` (`None` quand $K_i \le 0$). Avec $K_i$ sur le
-plancher, $T_i$ suit tout de même l'inertie de la pièce par $K_p$
-($K_p = 1 / (|a| (\lambda + L))$ croît avec $\tau$) : les valeurs de banc sont
-d'environ 146 min pour $\tau \approx 3$ h, 247 min pour $\tau \approx 5$ h et
-390 min pour $\tau \approx 8$ h. Dans une pièce rapide ($\tau \approx 1$ h),
-$K_p / \tau$ est au-dessus du plancher et $K_i$ suit le modèle.
+minutes dans `control.ti_min` (`None` quand $K_i \le 0$).
+
+À chaque changement du $K_i$ appliqué, l'intégrale est multipliée par
+$K_{i,old} / K_{i,new}$ : la puissance intégrale $K_i \cdot I$ reste inchangée (transfert
+sans à-coup). Le rescale s'applique à tout changement, même minime : l'atténuation près
+de la consigne fait varier $K_i$ par petits pas, et un seuil laisserait dériver $K_i \cdot I$
+pendant les maintiens.
 
 `GainScheduler.generation` compte les changements des gains du modèle non
 atténués (IMC/SIMC ou gains de sécurité). Elle n'avance que tant que les gains
@@ -374,7 +451,7 @@ Le `warmup_scale` n'est pas un simple interrupteur. Il est le produit :
 
 Le trim FF2 reste gelé (`ff_warmup`) tant que `warmup_scale` est inférieur à 1.
 
-$k_{ff}$ est nul, et donc $u_{ff1}$ l'est aussi, lorsque le modèle n'est pas prêt (pas assez de mesures de `a` et de `b`), que `tau` n'est pas fiable, ou que le signe de `a` ne correspond pas au mode actif.
+$k_{ff}$ est nul, et donc $u_{ff1}$ l'est aussi, lorsque le modèle n'est pas prêt (`a` non publié avec moins de 5 mesures, ou moins de 5 mesures de `b`), que `tau` n'est pas fiable, ou que le signe de `a` ne correspond pas au mode actif.
 
 $T_{ext}$ est la dernière température extérieure valide reçue par SmartPI. Lorsque la sonde extérieure ne fournit aucune valeur, FF1, le modèle de consigne et la near-band continuent d'utiliser cette dernière valeur, sans limite d'âge. Tant qu'aucune température extérieure n'a été reçue, $u_{ff1}$ et $u_{ff2}$ sont tous deux nuls (`ff_reason` `ff_no_ext_temp`).
 
@@ -483,12 +560,41 @@ Le code actuel applique aussi une garde explicite sur la croissance positive de 
 - après une reprise suivant power shedding,
 - pendant une trajectoire de récupération de perturbation.
 
-Cette garde n'empêche pas la décharge de l'intégrale. Si l'intégrale mémorisée
-s'oppose déjà au rattrapage demandé, la garde autorise
-la résorption de cette mémoire jusqu'à zéro. Elle continue d'interdire toute
-nouvelle accumulation au-delà de zéro dans la direction protégée. Une intégrale
-négative héritée de l'ancienne consigne ne peut donc plus maintenir la pièce
-sous une nouvelle consigne plus élevée.
+Cette garde n'empêche pas la décharge de l'intégrale. Une intégrale qui s'oppose
+déjà au rattrapage demandé porte en général le biais du modèle (erreur du
+feed-forward), toujours valable à la nouvelle consigne : la garde la conserve
+tant que le rattrapage progresse. Quand le rattrapage cale, avec une erreur de
+release encore au-delà de son seuil et une pente signée de rapprochement
+inférieure ou égale à la pente de release pendant `INTEGRAL_GUARD_STALL_CYCLES = 3`
+cycles, la garde autorise la résorption de cette mémoire jusqu'à zéro. Elle
+continue d'interdire toute nouvelle accumulation au-delà de zéro dans la
+direction protégée. Une intégrale négative héritée de l'ancienne consigne ne
+peut donc pas maintenir la pièce sous une nouvelle consigne plus élevée, et un
+changement de consigne n'efface pas le biais qui évite le dépassement à la
+nouvelle consigne.
+
+Une trajectoire de récupération de perturbation freine la branche P parce que
+le modèle prédit que la puissance engagée suffit à refermer l'écart. Quand ce
+modèle est biaisé, la pièce peut se stabiliser sur un palier sous la consigne :
+la trajectoire ne se termine jamais et la garde bloque l'intégrale qui seule
+pourrait refermer l'écart. Un test de palier termine alors la trajectoire :
+
+- l'erreur signée est moyennée par blocs de
+  `INTEGRAL_GUARD_PLATEAU_BLOCK_CYCLES = 3` cycles,
+- un bloc est stationnaire si sa moyenne reste au-dessus de l'erreur de release
+  et ne varie pas de plus que la pente de release appliquée sur un bloc,
+- il faut `INTEGRAL_GUARD_PLATEAU_BLOCKS = 2` blocs stationnaires consécutifs,
+- et aucun progrès net sur `INTEGRAL_GUARD_PLATEAU_PROGRESS_BLOCKS = 4` blocs :
+  la moyenne ne doit pas avoir baissé de plus de
+  `INTEGRAL_GUARD_PLATEAU_PROGRESS_MIN_C = 0.03 °C`. Une queue de récupération
+  lente, vue par une sonde quantifiée, n'est donc pas prise pour un palier.
+
+À la détection, la trajectoire repasse en passthrough et la garde de
+récupération de perturbation est relâchée. Aucune nouvelle trajectoire de
+perturbation ne démarre tant que l'erreur n'est pas redescendue sous le seuil
+de déclenchement moins l'hystérésis de suivi, ou jusqu'à un changement de
+consigne ou une réinitialisation. Une nouvelle perturbation reste donc freinée
+et gardée normalement.
 
 La garde est relâchée seulement quand deux conditions sont réunies :
 
@@ -543,7 +649,7 @@ Le redémarrage repart donc d'un état PI persistant utile, mais sans restaurer 
 
 Les protections complémentaires actuellement présentes sont :
 
-- `SmartPIGuards` (chauffage uniquement) : `guard_cut` force la sortie à 0 lorsque la température mesurée dépasse `setpoint + near_band_above` pendant que le chauffage est actif, jusqu'à ce qu'elle redescende à ce seuil diminué de `NEAR_BAND_HYSTERESIS_C = 0.05°C` ; `guard_kick` relance le cycle lorsque, dans la near-band, la température descend sous `setpoint - near_band_below` alors que la commande est inférieure à 99 %. En refroidissement, aucune des deux gardes n'agit et la near-band n'est pas calculée automatiquement,
+- `SmartPIGuards` (chauffage uniquement, hors bootstrap et calibration) : `guard_cut` force la sortie à 0 lorsque la température mesurée dépasse `setpoint + near_band_above` pendant que le chauffage est actif, jusqu'à ce qu'elle redescende à ce seuil diminué du plus grand de `NEAR_BAND_HYSTERESIS_C = 0.05°C` et de `GUARD_CUT_RESET_STEPS = 1.5` pas de capteur observés (sans quoi une mesure qui oscille entre deux paliers autour du seuil relancerait la coupure, et le cycle, à chaque mesure). Pendant une coupure, la sortie reste à 0 et l'intégrale est figée (`I:OVERRIDE(guard_cut)`), mais le filtre de température, le détecteur de temps mort, la température publiée et l'apprentissage continuent de suivre la pièce. La pièce refroidit alors sans chauffage, par exemple pendant toute la descente qui suit une baisse de consigne : c'est une fenêtre passive pour `b` et pour la ligne de base du retard de réponse. La gouvernance y voit une commande nulle hors de toute bande, et les fenêtres `a` sont bloquées (`skip: guard cut`). L'apprentissage reste contigu à la fin de la coupure ; `guard_kick` relance le cycle lorsque, dans la near-band, la température descend sous `setpoint - near_band_below` alors que la commande est inférieure à 99 %. En refroidissement, aucune des deux gardes n'agit et la near-band n'est pas calculée automatiquement. Pendant le bootstrap, le chauffage fonctionne entre ses propres seuils d'hystérésis et une garde en cours est relâchée,
 - anti-windup à chaque tick sur la limite haute applicable (voir ci-dessous),
 - garde intégrale signée pendant les reprises, rattrapages et changements de consigne,
 - `I:HOLD` explicite pendant la phase post-reprise liée à `deadtime_heat` pour `window_resume` et `power_shedding_resume` en chauffage,
@@ -554,7 +660,7 @@ Les protections complémentaires actuellement présentes sont :
 
 L'anti-windup agit à chaque calcul, dans l'espace de demande linéaire, sur la limite haute applicable : `1`, ou l'image linéaire de `max_on_percent` lorsqu'elle est plus basse. Il comporte deux parties :
 
-- intégration conditionnelle : l'intégrale cesse de croître lorsque la demande non contrainte dépasse la limite haute applicable ;
+- intégration conditionnelle : l'intégrale cesse de croître lorsque la demande non contrainte dépasse la limite haute applicable. À moins de `NEAR_SETPOINT_UNWIND_STEPS = 1.5` pas de capteur observés de la consigne, une sortie saturée par rapport à l'erreur laisse tout de même l'intégrale revenir vers zéro, sans le franchir (`I:UNWIND(SAT_HI|SAT_LO)`), à condition que la sortie sans le terme proportionnel (`u_ff + Ki·I`) reste dans ses limites : avec un capteur quantifié, une mesure à un pas de la consigne sature la sortie par le seul terme proportionnel, et une intégrale bloquée combinée au gel de deadband maintiendrait un écart permanent. Une sortie tenue à sa limite par `u_ff + Ki·I` (par exemple à `max_on_percent`) conserve l'intégrale, qui porte alors le biais du modèle ;
 - rétro-calculation : à chaque tick dont le mode intégral est `I:RUN`, `I:SKIP`, `I:GUARD` ou `I:CLAMP`, l'excès de la sortie PI (`u_ff + u_pi`, bornée à `[0, 1]`) au-delà de l'image linéaire de `max_on_percent` corrige l'intégrale de `beta * excès / Ki`, avec `beta = dt / max(Kp/Ki, dt)` (constante de temps de poursuite égale à `Ti = Kp/Ki`). La correction ne déplace l'intégrale que vers zéro et s'arrête à zéro : un excès porté par le seul terme proportionnel n'entraîne jamais l'intégrale dans l'autre sens. L'intégrale reste bornée à `±2/Ki`. Seule l'intégrale change : `u_pi` conserve la décomposition qui a produit la commande.
 
 Ne sont pas traités comme une saturation : la quantification de Versatile Thermostat et la rétention de vanne (`dpercent`, période), les durées minimales on/off et le limiteur de pente. Le comportement est symétrique en HEAT et COOL, n'utilise pas les accusés de commande de Versatile Thermostat et est identique avec les anciennes versions de Versatile Thermostat. Le diagnostic `aw_du` est la correction (excès, `<= 0`) appliquée au dernier tick.
@@ -597,7 +703,7 @@ Le cycle forcé est géré par `CalibrationManager` :
 
 Les phases alimentent l'estimateur de temps mort, sauf tant que l'apprentissage
 est en pause (réglage de l'utilisateur, ou sous le seuil de la chaudière
-centrale, 3.7) : les phases se déroulent alors normalement, sans mesurer.
+centrale, 3.8) : les phases se déroulent alors normalement, sans mesurer.
 
 Avant et pendant chaque phase, le manager vérifie, avec le jumeau thermique, que le seuil de la phase peut être atteint. La température mesurée passe en premier : dès qu'elle a atteint le seuil de la phase, la phase avance et le jumeau n'est pas consulté. Une phase passive converge vers `T_steady_passive` ; une phase active pilotée à la puissance autorisée `u_max` (`max_on_percent` dans l'espace linéaire) converge vers `T_steady_passive + u_max·(T_steady_max − T_steady_passive)`, l'équilibre 1R1C étant linéaire en puissance (`T_steady_max` lorsque `u_max` vaut 1 ou que l'équilibre passif n'est pas valide) ; le seuil est atteignable lorsque cet équilibre se situe au-delà de lui d'une marge `CALIBRATION_REACHABILITY_MARGIN_C = 0.5°C` (HEAT : `COOL_DOWN` et `COOL_DOWN_FINAL` passifs, `HEAT_UP` actif ; COOL : `COOL_DOWN` et `COOL_DOWN_FINAL` actifs, `HEAT_UP` passif). La vérification ne s'applique que lorsque le jumeau est utilisable (`status` ok, `model_reliable`, passé sa phase de chauffe, équilibre valide, et `cooling_model_available` en COOL). Lorsque le seuil n'est pas atteignable, le cycle se termine immédiatement avec le résultat `Unreachable`, distinct de `Cancelled` (HVAC OFF, timeout de `CALIBRATION_TIMEOUT_MIN = 600` minutes, reset) : `last_calibration_time` n'est pas défini, `AutoCalibTrigger` ne consomme aucun retry et publie `smartpi_autocalib_unreachable`, et la tentative suivante attend `AUTOCALIB_COOLDOWN_H` heures (`autocalib.next_check_ts`). Le résultat n'est pas un diagnostic publié : `calibration.state` ne porte que la phase.
 
@@ -627,6 +733,7 @@ Avant et pendant chaque phase, le manager vérifie, avec le jumeau thermique, qu
 | `ab_drift.py`          | détection et recentrage de dérive persistante sur `a/b`, avec une séquence de candidats par canal |
 | `learning_window.py`   | gestion des fenêtres d'apprentissage et de leurs gardes  |
 | `ab_window_balance.py` | bilan intégral des fenêtres sans pente robuste et pools `a/b` |
+| `response_lag.py`      | `ResponseLagEstimator` : retard de réponse, portes de stabilisation et modèle de puissance délivrée |
 | `learning_outcomes.py` | compteurs bornés des issues de fenêtres d'apprentissage  |
 | `gains.py`             | calcul et gel des gains                                  |
 | `controller.py`        | PI discret, anti-windup, maintien, hystérésis            |
@@ -739,15 +846,18 @@ Le payload actuel de `SmartPI.save_state()` contient notamment :
     "ff_v2_trim": {...},
     "ff_trim_delta": ...,
     "tint_filter_state": {...},
+    "hysteresis_output": {...},  # bootstrap uniquement
 }
 ```
 
 La boucle de régulation planifie au plus une écriture différée de ce payload par fenêtre de cinq minutes ; Home Assistant vide une écriture en attente à l'arrêt. Les services et la suppression de l'entité écrivent immédiatement un snapshot.
 
-Les timestamps d'événements passés (historiques de température, début de calibration) sont persistés en temps mural et reconvertis en horloge monotonic au chargement, afin de conserver leur position dans le passé après un redémarrage ; en particulier, le délai d'expiration de la calibration continue de s'écouler après un redémarrage.
+Les timestamps d'événements passés (historiques de température, début de calibration, période passive et épisode du retard de réponse) sont persistés en temps mural et reconvertis en horloge monotonic au chargement, afin de conserver leur position dans le passé après un redémarrage ; en particulier, le délai d'expiration de la calibration continue de s'écouler après un redémarrage.
 
 Les pools de bilan intégral et les compteurs d'issues de fenêtres ne sont pas
-persistés : ils repartent vides à chaque démarrage.
+persistés : ils repartent vides à chaque démarrage. Les observations des mesures de
+`a` sont persistées avec l'état de l'estimateur ; un état qui n'en contient pas se
+charge avec des mesures non recalculables.
 
 Seul le trim appris reste persistant. Les fenêtres de propriété, propositions
 en attente et transferts d'intégrale sont transitoires ; après redémarrage,
@@ -813,7 +923,7 @@ publics sont exposés sous `analysis.twin`.
 `analysis.deadtime.heat_episode_start` et `cool_episode_start` donnent le début
 de l'épisode de chauffe ou de refroidissement en cours, le moment à partir duquel
 compte la fenêtre de temps mort (3.2), en heure ISO UTC ; `null` hors épisode. La
-pause d'apprentissage sous le seuil de la chaudière centrale (3.7) termine
+pause d'apprentissage sous le seuil de la chaudière centrale (3.8) termine
 l'épisode, de sorte que la chauffe suivante en commence un nouveau.
 
 `feedforward.fftrim.command_ownership` indique si le scheduler émet des reçus
@@ -833,9 +943,11 @@ une acceptation ou un rejet causal sans modifier la décision d’apprentissage.
 | Constante                      | Valeur |
 | ------------------------------ | ------ |
 | `AB_HISTORY_SIZE`              | `31`   |
-| `AB_MIN_SAMPLES_B`             | `8`    |
-| `AB_MIN_SAMPLES_A`             | `6`    |
-| `AB_A_SOFT_GATE_MIN_B`         | `8`    |
+| `AB_MIN_SAMPLES_B`             | `5`    |
+| `AB_MIN_SAMPLES_A`             | `5`    |
+| `AB_MIN_SAMPLES_A_CONSISTENT`  | `4`    |
+| `AB_A_CONSISTENT_MAX_REL_MAD`  | `0.10` |
+| `AB_A_SOFT_GATE_MIN_B`         | `5`    |
 | `AB_CONFIDENCE_MIN_SAMPLES_A`  | `11`   |
 | `AB_CONFIDENCE_MIN_SAMPLES_B`  | `11`   |
 | `AB_B_CONVERGENCE_MIN_SAMPLES` | `11`   |
@@ -844,6 +956,8 @@ une acceptation ou un rejet causal sans modifier la décision d’apprentissage.
 | `AB_B_CONVERGENCE_RANGE_RATIO` | `0.10` |
 | `DT_DERIVATIVE_MIN_ABS`        | `0.05` |
 | `OLS_MIN_JUMPS`                | `3`    |
+| `OLS_MIN_SPAN_STEPS`           | `1.5`  |
+| `OLS_SPAN_MIN_STEP_C`          | `0.05` |
 | `OLS_T_MIN`                    | `2.5`  |
 | `DT_MAX_MIN`                   | `240`  |
 | `U_OFF_MAX`                    | `0.05` |
@@ -853,6 +967,25 @@ une acceptation ou un rejet causal sans modifier la décision d’apprentissage.
 | `AB_BALANCE_MIN_RESOLUTION_C`  | `0.05` |
 | `AB_BALANCE_DEFAULT_RESOLUTION_C` | `0.1` |
 | `AB_BALANCE_POOL_MAX_SEGMENTS` | `12`   |
+| `RESPONSE_LAG_HISTORY`         | `7`    |
+| `RESPONSE_LAG_MIN_ESTIMATES`   | `3`    |
+| `RESPONSE_LAG_RESOLVE_EPISODES` | `7`   |
+| `RESPONSE_LAG_MAX_REL_UNC`     | `0.15` |
+| `RESPONSE_LAG_UNC_FLOOR_S`     | `30`   |
+| `RESPONSE_LAG_MIN_OFF_S`       | `1800` |
+| `RESPONSE_LAG_MIN_OFF_LAGS`    | `5`    |
+| `RESPONSE_LAG_MIN_CROSSINGS`   | `3`    |
+| `RESPONSE_LAG_MODEL_CHANGE_REL` | `0.5` |
+| `RESPONSE_LAG_U_TOL`           | `0.05` |
+| `RESPONSE_LAG_RESTART_MAX_GAP_S` | `600` |
+| `RESPONSE_LAG_PASSIVE_SPAN_S`  | `3600` |
+| `RESPONSE_LAG_MIN_INVERSION_SLOPE` | `0.05` |
+| `RESPONSE_LAG_RESOLVABLE_FRAC` | `0.9`  |
+| `RESPONSE_LAG_B_REL_UNC`       | `0.10` |
+| `RESPONSE_LAG_MAX_S`           | `DT_MAX_MIN` × 60 (`14400`) |
+| `AB_SETTLE_K_ACTIVE`           | `3`    |
+| `AB_SETTLE_K_PASSIVE`          | `3`    |
+| `AB_SETTLE_ACTIVE_CAP_FRAC`    | `0.5`  |
 
 ### 6.2 Régulation
 
@@ -860,6 +993,14 @@ une acceptation ou un rejet causal sans modifier la décision d’apprentissage.
 | ----------------------------- | ------- |
 | `KP_SAFE`                     | `0.55`  |
 | `KI_SAFE`                     | `0.010` |
+| `GAIN_TI_LAMBDA_FACTOR`       | `4.0`   |
+| `NEAR_SETPOINT_UNWIND_STEPS`  | `1.5`   |
+| `INTEGRAL_GUARD_STALL_CYCLES` | `3`     |
+| `INTEGRAL_GUARD_PLATEAU_BLOCK_CYCLES` | `3` |
+| `INTEGRAL_GUARD_PLATEAU_BLOCKS` | `2` |
+| `INTEGRAL_GUARD_PLATEAU_PROGRESS_BLOCKS` | `4` |
+| `INTEGRAL_GUARD_PLATEAU_PROGRESS_MIN_C` | `0.03` |
+| `GUARD_CUT_RESET_STEPS`       | `1.5`   |
 | `MAX_STEP_PER_MINUTE`         | `0.25`  |
 | `SETPOINT_BOOST_RATE`         | `0.50`  |
 | `SMARTPI_RECALC_INTERVAL_SEC` | `60`    |
@@ -933,8 +1074,8 @@ La matrice pilote uniquement la mise à jour des gains et l'apprentissage thermi
 1. **Astrom K.J. et Hagglund T.**, travaux sur la régulation PID et l'usage de modèles FOPDT.
 2. **Sundaresan K.R. et Krishnaswamy P.R.**, estimation des paramètres de délai et de constante de temps.
 3. Régression **OLS** avec test t de Student pour la validation de pente.
-4. **Hagglund T. et Astrom K.J.**, Supervision of adaptive control algorithms, *Automatica* 36(8), 2000, 1171–1180 : pause d'apprentissage sous le seuil de la chaudière centrale (3.7).
-5. **Astrom K.J. et Hagglund T.**, *PID Controllers: Theory, Design, and Tuning*, 2e éd., Instrument Society of America, 1995 : pause d'apprentissage sous le seuil de la chaudière centrale (3.7).
-6. **Skogestad S.**, Simple analytic rules for model reduction and PID controller tuning, *Journal of Process Control* 13, 2003, 291–309 : pause d'apprentissage sous le seuil de la chaudière centrale (3.7).
+4. **Hagglund T. et Astrom K.J.**, Supervision of adaptive control algorithms, *Automatica* 36(8), 2000, 1171–1180 : pause d'apprentissage sous le seuil de la chaudière centrale (3.8).
+5. **Astrom K.J. et Hagglund T.**, *PID Controllers: Theory, Design, and Tuning*, 2e éd., Instrument Society of America, 1995 : pause d'apprentissage sous le seuil de la chaudière centrale (3.8).
+6. **Skogestad S.**, Simple analytic rules for model reduction and PID controller tuning, *Journal of Process Control* 13, 2003, 291–309 : pause d'apprentissage sous le seuil de la chaudière centrale (3.8).
 
 Ce document sert de référence alignée sur l'implémentation SmartPI actuelle.

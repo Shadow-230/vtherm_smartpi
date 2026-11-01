@@ -131,6 +131,10 @@ GAIN_LAMBDA_DEADTIME_FACTOR = 3.0
 GAIN_LAMBDA_VALVE_DEADTIME_FACTOR = 4.0
 GAIN_LAMBDA_CYCLE_FACTOR = 2.0
 GAIN_LAMBDA_MIN_MIN = 5.0
+GAIN_TI_LAMBDA_FACTOR = 4.0      # SIMC: Ti = min(tau, 4 (lambda + L))
+# A saturated output may unwind the integral toward zero within this many
+# observed sensor steps of the setpoint (quantization trap).
+NEAR_SETPOINT_UNWIND_STEPS = 1.5
 
 
 # Anti-windup / integrator behavior
@@ -176,6 +180,9 @@ DEADBAND_HYSTERESIS = 0.025
 # - above setpoint: scale it down with a factor
 NEAR_BAND_ABOVE_FACTOR = 0.40
 NEAR_BAND_HYSTERESIS_C = 0.05
+# The guard cut resets at least this many observed sensor steps below its
+# threshold, so that a reading flickering between two levels cannot re-trigger it.
+GUARD_CUT_RESET_STEPS = 1.5
 
 class TrajectoryPhase(str, Enum):
     """Trajectory state for setpoint shaping."""
@@ -196,6 +203,11 @@ INTEGRAL_GUARD_RELEASE_ERROR_RATIO = 2.0 # Release positive-I guard only once th
 INTEGRAL_GUARD_RELEASE_SLOPE_RATIO = 0.35 # Release positive-I guard when the signed recovery slope has collapsed enough
 INTEGRAL_GUARD_RELEASE_SLOPE_ABS_H = 0.12 # Absolute signed-slope floor (°C/h) below which stabilization may be accepted
 INTEGRAL_GUARD_RELEASE_PERSISTENCE = 3    # Consecutive evaluations required before re-enabling positive integral growth
+INTEGRAL_GUARD_STALL_CYCLES = 3.0  # Stalled recovery (cycles) before opposing integral memory may unwind
+INTEGRAL_GUARD_PLATEAU_BLOCK_CYCLES = 3.0  # Block length (cycles) of the mean-error test that detects a stuck recovery
+INTEGRAL_GUARD_PLATEAU_BLOCKS = 2  # Consecutive stationary blocks before a disturbance recovery counts as stuck
+INTEGRAL_GUARD_PLATEAU_PROGRESS_BLOCKS = 4  # Look-back (blocks) of the net-progress test of a plateau
+INTEGRAL_GUARD_PLATEAU_PROGRESS_MIN_C = 0.03  # Net fall of the mean error over the look-back that still counts as a recovering tail
 # Error filter time constant
 ERROR_FILTER_TAU = 25.0 # Minutes (matches alpha ~0.35 at 10min)
 
@@ -207,8 +219,14 @@ B_STABILITY_MAD_RATIO_MAX = 0.60   # MAD(b) / median(b)
 # --- SmartPI Robust Learning Constants ---
 # Median+MAD Strategy Constants
 AB_HISTORY_SIZE = 31      # Keep last 31 (ODD) values
-AB_MIN_SAMPLES_B = 8      # Min samples for b publication (OFF phase)
-AB_MIN_SAMPLES_A = 6      # Min samples for a publication (ON phase)
+# The bootstrap publishes the plain median of its measurements: an odd count
+# tolerates as many outliers as the next even one, (N - 1) // 2.
+AB_MIN_SAMPLES_B = 5      # Min samples for b publication (OFF phase)
+AB_MIN_SAMPLES_A = 5      # Min samples for a publication (ON phase)
+# The first a publication may take place from this count when the collected
+# measurements agree (median absolute deviation within the fraction below).
+AB_MIN_SAMPLES_A_CONSISTENT = 4
+AB_A_CONSISTENT_MAX_REL_MAD = 0.10
 AB_MAD_SIGMA_MULT = 3.0   # Outlier rejection threshold (sigma)
 
 AB_MAD_K = 1.4826         # Sigma scaling factor for MAD
@@ -216,13 +234,15 @@ AB_VAL_TOLERANCE = 1e-12  # Small epsilon
 DT_DERIVATIVE_MIN_ABS = 0.05    # Min absolute dT (°C) amplitude guard
 OLS_MIN_JUMPS = 3               # Min temperature level changes for OLS validity
 OLS_T_MIN = 2.5                 # Min t-statistic for slope significance
+OLS_MIN_SPAN_STEPS = 1.5        # Min fitted change over the window, in sensor steps
+OLS_SPAN_MIN_STEP_C = 0.05      # Floor on the sensor step for the span guard (noise margin)
 
 # Sequential gate a->b
 AB_B_CONVERGENCE_MIN_SAMPLES: int = 11
 AB_B_CONVERGENCE_MAD_RATIO: float = 0.30
 AB_B_CONVERGENCE_RANGE_RATIO: float = 0.10
 AB_B_CONVERGENCE_MIN_BHIST: int = 5
-AB_A_SOFT_GATE_MIN_B: int = 8
+AB_A_SOFT_GATE_MIN_B: int = 5
 
 # --- ABEstimator weighted-median aggregation parameters ---
 AB_WMED_PLATEAU_N: int = 11          # Most-recent N points assigned weight 1.0 (plateau)
@@ -267,6 +287,55 @@ AB_BALANCE_POOL_MAX_AGE_S = 86400.0    # Segments older than this are dropped
 AB_BALANCE_POOL_MAX_SEGMENTS = 12      # Oldest segments are dropped beyond this count
 AB_BALANCE_MIN_SEGMENT_MIN = 15.0      # Shorter segments are dominated by noise and actuator lag
 
+# Response lag (ramp asymptote intercept after a power step).
+# Over a learning window the room behaves as an integrator behind fast lags
+# (actuator, emitter, air mixing, sensor housing) and a pure delay: after a
+# power step the slope settles and its asymptote is delayed by the lag. The
+# lag is estimated on constant-power active episodes and sets the settling
+# gates and the delivered power model of the a learning.
+RESPONSE_LAG_HISTORY = 7               # Estimates kept (published value: their median)
+RESPONSE_LAG_MIN_ESTIMATES = 3         # Estimates required before the lag is published
+# Active episodes after which an unpublished lag is given up for the a
+# bootstrap (the applied power is then used for the a measurements).
+RESPONSE_LAG_RESOLVE_EPISODES = 7
+# Publication: combined standard deviation of the inverse-variance weighted
+# estimates at most this fraction of their weighted median (floor for short lags).
+RESPONSE_LAG_MAX_REL_UNC = 0.15
+RESPONSE_LAG_UNC_FLOOR_S = 30.0
+RESPONSE_LAG_B_REL_UNC = 0.10          # Assumed relative uncertainty of a published b
+# Slope of the intercept inversion below which an episode cannot resolve the lag.
+RESPONSE_LAG_MIN_INVERSION_SLOPE = 0.05
+RESPONSE_LAG_MIN_OFF_S = 1800.0        # Passive time before an episode for a settled baseline
+RESPONSE_LAG_MIN_OFF_LAGS = 5.0        # Same, in known lags (residual power below 1 %)
+RESPONSE_LAG_PASSIVE_SPAN_S = 3600.0   # Max OFF tail used to measure the passive slope
+RESPONSE_LAG_MIN_CROSSINGS = 3        # Level crossings required for the late line
+# Relative change of the published lag that restarts the a collection during
+# the bootstrap (measurements of different power models are not comparable).
+RESPONSE_LAG_MODEL_CHANGE_REL = 0.5
+RESPONSE_LAG_U_TOL = 0.05              # Power deviation ending a constant-power episode
+# Longest stop of the regulation (restart) across which the passive period or
+# the active episode in progress is resumed. A restart of Home Assistant or of
+# the thermostat takes a few minutes and keeps the last actuator state; over a
+# longer stop (host down, power outage, update) the heater power is unknown.
+RESPONSE_LAG_RESTART_MAX_GAP_S = 600.0
+RESPONSE_LAG_MAX_S = DT_MAX_MIN * 60.0  # Upper bound of an estimate
+# An intercept at or beyond this fraction of its asymptotic limit (infinite
+# lag) cannot be resolved from the episode.
+RESPONSE_LAG_RESOLVABLE_FRAC = 0.9
+# Settling gates, in published lags: the slope deficit after k lags is at most
+# exp(-k) for a single lag, whatever the pure delay share.
+AB_SETTLE_K_ACTIVE = 3.0               # Delivered power model corrects the remainder
+AB_SETTLE_K_PASSIVE = 3.0              # b is not corrected (learned before a)
+AB_SETTLE_ACTIVE_CAP_FRAC = 0.5        # Active gate cap, fraction of the median episode
+# Passive gate floor, in passive dead times. After a cut, a first-order
+# emitter keeps delivering u0 * exp(-t / tau) and the room only starts to
+# cool once this falls below the loss power u_ss: the passive dead time,
+# learned after full-power phases, is at least tau * ln(1 / u_ss) plus the
+# detection delay. The gate lasts the longer of this floor and the settling
+# time of the published lag, since either one may fall short of the emitter
+# decay.
+AB_SETTLE_K_PASSIVE_DEADTIME = 1.5
+
 # Indoor temperature histories of the dead time estimator (learning slopes and
 # dead time inflection lookback). Samples are kept by age so that a learning
 # window or a dead time detection (both bounded by 240 min) is covered; the
@@ -274,6 +343,14 @@ AB_BALANCE_MIN_SEGMENT_MIN = 15.0      # Shorter segments are dominated by noise
 # arrive on average more often than every 10 s (a sample is added on each
 # value change or after 60 s).
 TIN_HISTORY_RETENTION_MIN = DT_MAX_MIN + 60
+# Dead time detection: an active response (power on) is attributed to the
+# power step within this delay. A passive response (power off) may follow a
+# long release of the heat stored in the emitter (floor heating): in the
+# bootstrap its wait only ends by a detection or by a power restart, which
+# needs a drop the detection sees first, so the delay only bounds how late a
+# drop is still attributed to the power cut.
+DEADTIME_ACTIVE_TIMEOUT_S = 14400.0
+DEADTIME_PASSIVE_TIMEOUT_S = 43200.0
 TIN_HISTORY_MAX_SAMPLES = 1800
 
 

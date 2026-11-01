@@ -80,13 +80,30 @@ In phase `HYSTERESIS`, learning follows a strict order:
 
 Rules effectively coded:
 
-- `AB_MIN_SAMPLES_B = 8`,
-- `AB_MIN_SAMPLES_A = 6`,
-- `AB_A_SOFT_GATE_MIN_B = 8`.
+- `AB_MIN_SAMPLES_B = 5`,
+- `AB_MIN_SAMPLES_A = 5`,
+- `AB_A_SOFT_GATE_MIN_B = 5`.
 
-SmartPI leaves `HYSTERESIS` once `b` has 8 measurements and `a` has
-6 measurements. Both buffers continue filling up to `AB_HISTORY_SIZE = 31`
-during normal SmartPI regulation.
+SmartPI leaves `HYSTERESIS` once `b` has 5 measurements and `a` is published.
+`a` is published at 5 measurements, or from `AB_MIN_SAMPLES_A_CONSISTENT = 4`
+measurements when they agree: their median absolute deviation is at most
+`AB_A_CONSISTENT_MAX_REL_MAD = 0.10` of their median. The first publication of
+`a` also waits for the delivered power model (3.7): while the response lag is not
+resolved, measurements are collected without publication. Both buffers continue
+filling up to `AB_HISTORY_SIZE = 31` during normal SmartPI regulation. After a
+restart, the restored response lag state sets the phase from the first
+calculation; a state saved without a response lag block waits for the first
+learning update.
+
+Inside the hysteresis band, the output keeps its previous on/off state. A
+modulated output left by another phase is not a hysteresis state: it is set to 0
+until the next threshold. The on/off state is persisted with the wall-clock time
+of the last calculation. After a restart, the first calculation resumes it inside
+the band when the stop lasted at most `RESPONSE_LAG_RESTART_MAX_GAP_S = 600 s`
+(3.7) and the HVAC mode is unchanged, as an uninterrupted hysteresis would have.
+Outside the band, the thresholds decide. Otherwise, and for a state saved without
+it, the output starts at 0. A heating phase in progress can thus resume after a
+short restart.
 
 The `b` convergence used for drift-aware `a` learning relies on `b_converged_for_a()`:
 
@@ -111,8 +128,28 @@ The code no longer uses a `WINDOW_MIN_MINUTES` constant. Learning now relies on 
 - blocks bootstrap collection until the required dead times are reliable,
 - applies a post-resume pause (`LEARNING_PAUSE_RESUME_MIN = 20`),
 - pauses, with the dead-time detection, while SmartPI calls for heat below
-  Versatile Thermostat's central boiler threshold (3.7),
+  Versatile Thermostat's central boiler threshold (3.8),
 - anchors the window start after the dead-time end when needed,
+- delays the window start until the response transient has decayed
+  (`skip: response transient (a|b)`): once the response lag is published (3.7),
+  an `a` window starts at least `min(3 lag, half the median active episode)` after
+  the power step. A `b` window starts after the power cut at least the longer of
+  `3 lag` (published lag) and `AB_SETTLE_K_PASSIVE_DEADTIME = 1.5` reliable
+  passive dead times: the emitter keeps heating after a cut, and since the room
+  only starts to cool once this residual heat falls below the losses, the passive
+  dead time bounds its decay even when the lag is unknown. In the bootstrap and
+  the calibration only the `3 lag` term applies,
+- does not submit an active window shorter than one PWM cycle
+  (`active_window_shorter_than_cycle`): its duration is set before its data, since
+  stopping as soon as a short window looks significant favours the steepest noisy
+  slopes. In the bootstrap the heater runs at full power between the hysteresis
+  thresholds and a heating phase may be shorter than one cycle: the minimum is
+  then capped at half the median heating phase (`AB_SETTLE_ACTIVE_CAP_FRAC`),
+  measured on the previous phases,
+- closes the window at its last observation when two updates are not contiguous
+  (interval capped at one cycle): the window is submitted on
+  the data up to that instant when its slope is robust there, otherwise abandoned
+  (`skip: observation gap`); it never spans the unobserved period,
 - monitors power stability through the coefficient of variation (`U_CV_MAX`),
   evaluated once the window mean power reaches `U_CV_MIN_MEAN = 0.05` (below
   it, power returning in an OFF window is not detected by this check),
@@ -127,7 +164,18 @@ In practice, the decision to submit or extend the window depends on slope robust
 
 - minimum amplitude: `DT_DERIVATIVE_MIN_ABS = 0.05°C`,
 - minimum number of level changes: `OLS_MIN_JUMPS = 3`,
-- statistical significance: `OLS_T_MIN = 2.5`.
+- statistical significance: `OLS_T_MIN = 2.5`,
+- minimum span: once the slope is significant, the adjusted variation over the
+  window (`|slope| × duration`) must cover at least `OLS_MIN_SPAN_STEPS = 1.5` sensor
+  steps; the step is the smallest change observed in the window, with a floor
+  `OLS_SPAN_MIN_STEP_C = 0.05°C` that acts as a noise margin for fine-resolution
+  sensors. Otherwise the window is extended (`span_below_resolution`).
+
+Since the slope is tested at each update, a window that is too short relative to
+quantization would be submitted as soon as its slope looks significant: with a
+0.1 °C sensor switching between two levels and a slowly cooling room, the sampling
+triggered by publications then dominates the fit and `b` can be off by ±50 %. On a
+window covering several steps, the slope is unbiased whatever the sensor profile.
 
 Slopes are computed on the raw measured indoor temperature, not on the filtered signals, because the robustness guard counts distinct value jumps of the measurement. The raw history (and the filtered history used by the dead-time detection) keeps the samples of the last `TIN_HISTORY_RETENTION_MIN = 300` minutes (`DT_MAX_MIN` + 60) and at most `TIN_HISTORY_MAX_SAMPLES = 1800` samples. A sample is added on each value change or after 60 s, so the full duration is covered while samples arrive on average at most every 10 s; beyond that rate the sample cap shortens the covered duration (about 150 minutes at one changing sample every 5 s) and the slope of a long window uses only its most recent samples. Validated slopes are then fed into `ABEstimator.learn()`, which:
 
@@ -151,6 +199,16 @@ $$ a = \frac{dT/dt + b \cdot (T_{int} - T_{ext})}{u} $$
 
 Histories are filtered through median/MAD. The published magnitude of `a` is
 bounded while preserving the mode sign; `b` remains strictly positive.
+
+For an active window, `u` is the mean delivered power of the window (3.7), not
+the applied command.
+
+Each `a` measurement keeps its observation (`dT/dt`, `T_int - T_ext`, `u`). Each
+time a new value of `b` is published, all retained measurements are recomputed
+with that `b`, then `a` is aggregated again if it has already been published: an
+`a` measurement made before `b` was accurate therefore follows its corrections. A
+measurement restored without an observation, or whose recomputation would
+contradict the mode sign, keeps its value.
 
 ### 3.5 Integral balance of windows without a robust slope
 
@@ -191,11 +249,115 @@ physical room response, not the power-transition direction:
 Therefore OFF -> ON learns `heat` in HEAT mode but `cool` in COOL mode. The
 ON -> OFF transition learns the opposite passive response.
 
-Detection tracks the filtered indoor temperature. A detection in progress is not resumed after a restart, and the minimum OFF duration must be observed again in the new session before a detection can be armed.
+Detection tracks the filtered indoor temperature, including during a forced calibration: a raw measurement that oscillates by one sensor step would otherwise detect a response as soon as the power steps. A detection in progress is not resumed after a restart, and the minimum OFF duration must be observed again in the new session before a detection can be armed.
+
+A response is detected once the temperature has moved by `0.05 °C` from its trough (heat) or peak (cool) since the power transition. The dead time runs from the transition to the last instant within `0.01 °C` of that trough or peak, tracked during the wait, so it does not depend on the retention of the temperature history. The wait gives up after `DEADTIME_ACTIVE_TIMEOUT_S = 14400 s` for an active response (power started) and `DEADTIME_PASSIVE_TIMEOUT_S = 43200 s` for a passive response (power cut): after a cut, an emitter with a large stored heat (floor heating) keeps warming the room, then plateaus, and the drop can come several hours later. In the bootstrap the passive wait ends by a detection or a power restart, which needs a drop the detection sees first; the limit only bounds how late a drop is still attributed to the cut. A power transition aborts a pending wait. The outcome of the last wait per response and the age of the wait in progress are published (`analysis.deadtime`).
 
 Reliability becomes true as soon as at least one valid measurement has been captured on the corresponding channel. Each channel keeps its last 6 detections; the published value is their median, so a single aberrant detection does not move it (with one or two detections the median equals their mean). On restart, the published value is recomputed from the restored detections.
 
-### 3.7 Learning pause below the central boiler threshold
+### 3.7 Response lag and delivered power
+
+At the scale of a learning window, the room behaves as an integrator behind
+fast lags (actuator, emitter, air mixing, sensor housing) and a pure delay
+(integrating first-order plus dead time response). After a power step, the
+slope settles progressively and its ramp asymptote crosses the extrapolated
+passive trajectory at $t = T_{ar} = L + \sum \tau_i$, the mean residence time of
+the response (Åström and Hägglund). A window that starts $k \cdot T_{ar}$ after the
+step has a slope deficit of at most $e^{-k}$ for a single lag, whatever the pure
+delay share. A window within the transient underestimates `a`, all the more as
+the lags are long or the sensor reports late.
+
+`ResponseLagEstimator` (`response_lag.py`) measures $T_{ar}$ on active episodes
+at constant power (deviation at most `RESPONSE_LAG_U_TOL = 0.05`):
+
+- the episode must follow a passive period of at least
+  `max(RESPONSE_LAG_MIN_OFF_S = 1800 s, RESPONSE_LAG_MIN_OFF_LAGS = 5 × known lag)`,
+  so that the power of the previous episode has decayed;
+- the passive baseline is the robust OLS slope of the end of that OFF period (at
+  most `RESPONSE_LAG_PASSIVE_SPAN_S = 3600 s`), otherwise the published `b`;
+- the late line is fitted on the level crossings of the raw history (at least
+  `RESPONSE_LAG_MIN_CROSSINGS = 3`). For a jump of one sensor step, the crossing is
+  dated at the midpoint between the two samples; a jump of several steps keeps the
+  raw value. This removes the staircase and trigger-threshold biases of sensors
+  that report on change;
+- the intercept of an OLS line fitted on a transient segment falls before
+  $T_{ar}$: the estimator inverts the closed-form intercept of a single-lag
+  response over the fitted interval (monotonic in the lag). An episode is not
+  used when the inversion is too flat (`RESPONSE_LAG_MIN_INVERSION_SLOPE = 0.05`)
+  or when the intercept reaches `RESPONSE_LAG_RESOLVABLE_FRAC = 0.9` of its
+  limit for an infinite lag. An estimate above `RESPONSE_LAG_MAX_S`
+  (`DT_MAX_MIN` × 60 = 14,400 s) is also discarded (`intercept not resolvable`);
+- each estimate carries its standard deviation, propagated from the fit
+  residuals and from an assumed relative uncertainty of `b` of
+  `RESPONSE_LAG_B_REL_UNC = 0.10`.
+
+The last `RESPONSE_LAG_HISTORY = 7` estimates are kept. The lag is published
+when at least `RESPONSE_LAG_MIN_ESTIMATES = 3` estimates give a combined standard
+deviation of their inverse-variance weighted median at most
+`RESPONSE_LAG_MAX_REL_UNC = 0.15` of that median (floor
+`RESPONSE_LAG_UNC_FLOOR_S = 30 s`); estimates more than three standard deviations
+away from the median are not combined. An inconsistent set keeps the published
+value, so dispersed estimates do not switch the delivered power model on and off. A discontinuity of more than 1 s between two updates ends the
+episode at the last observed instant, and the power cut is dated at the resume.
+
+A restart resumes the passive period or the active episode in progress at the
+save. The context is persisted as wall-clock times (last observed instant, then
+start of the passive period, or start, power, constancy, preceding passive time
+and outdoor temperature of the episode) and converted back to the monotonic
+clock on load. It applies to the first following observation, when the stop
+lasted at most `RESPONSE_LAG_RESTART_MAX_GAP_S = 600 s` and the HVAC mode is
+unchanged. During a short stop the actuator keeps its last state; beyond it (host
+down, power outage, update) the power is unknown. A passive period resumes, and
+the stop counts as passive. An episode resumes when the first applied power after
+the restart equals its power within `RESPONSE_LAG_U_TOL`. Otherwise it is counted
+as an ended episode without an estimate (`episode interrupted by restart`), and a
+nonzero power opens a new episode without a known passive period. The crossings
+come from the raw history of the dead time detector, persisted the same way; it
+holds no sample during the stop. A state saved without this context resumes
+nothing.
+
+The inversion assumes a single-lag (first-order) response. It recovers the mean
+residence time only for such an emitter, or when the episode lasts several times
+the lag. On an emitter that combines a pure delay and an inertia, or two
+successive inertias, the intercept of a short episode falls later than that of a
+single lag with the same residence time: the published lag is then overestimated,
+by about 1.3 times on the simulated shapes, or is never published when the episode
+stays in the transient regime.
+
+The intercept fixes the mean delay of the response, not its shape. The
+delivered power model splits it into a pure delay
+$L = \min(\text{active dead time}, T_{ar})$, then a first-order lag of
+$T_{ar} - L$. The dead time is detected after the response has started, so it
+bounds the pure delay from above: the model never delivers power earlier than a
+pure delay with the same intercept. Without a published lag or a reliable dead
+time, the delivered power equals the applied power. For an active window starting
+$t_0$ after the step and lasting $W$, the mean delivered fraction is, with
+$\tau = T_{ar} - L$:
+
+$$ \eta = \frac{1}{W}\int_{t_0}^{t_0+W} \left(1 - e^{-(t-L)/\tau}\right)\mathbb{1}_{t>L}\,dt $$
+
+The model is resolved once the lag is published, or after
+`RESPONSE_LAG_RESOLVE_EPISODES = 7` active episodes without a publication
+(the applied power is then used). Until then, `a` measurements are collected
+without publication. When the published lag appears or changes by more than
+`RESPONSE_LAG_MODEL_CHANGE_REL = 0.5` before the first publication of `a`, the
+collected measurements are recomputed with the new delivered power. Only the
+windows that the settling gate admits are recomputed; the others are dropped,
+since their correction depends on the shape of the response.
+
+The state is published in `analysis.learning.response_lag` (`lag_s`, `estimates`,
+`episodes`, `episodes_target`, `episode_median_s`, `last_reason`) and persisted
+with the learning state. `episodes` counts the active episodes ended since the
+start of the learning, also after the lag is published; `episodes_target` is
+`RESPONSE_LAG_RESOLVE_EPISODES`. When both collections have reached their count
+and `a` waits for this model, `learning.bootstrap_status` reads
+`step2 - waiting response lag: estimates N, episodes K/7`.
+
+The lag is learned on constant-power episodes, which the hysteresis bootstrap
+provides. In PWM regulation the duty cycle changes from cycle to cycle, so an
+installation already out of the bootstrap rarely provides one.
+
+### 3.8 Learning pause below the central boiler threshold
 
 Versatile Thermostat's central boiler starts only when the number of active
 devices (valve heads or switches) of the thermostats it counts, or their total
@@ -211,7 +373,8 @@ default values, after the installation or a reset (3.1). The `a`/`b` windows
 of that time see no heat either; part of them is already rejected by the
 window checks (3.2), and the pause drops them all.
 
-Learning (the `a`/`b` windows and the dead-time detection) therefore pauses
+Learning (the `a`/`b` windows, the response-lag measurement (3.7) and the
+dead-time detection) therefore pauses
 while all of these hold:
 
 - Versatile Thermostat counts the thermostat for its central boiler
@@ -232,7 +395,9 @@ The handler checks this before each calculation
 `SmartPI.set_boiler_learning_paused()`). The pause works like the user's pause
 (`set_smartpi_learning`) without changing it: the observations in flight are
 dropped, and the next heating is a new episode, so SmartPI does not learn
-during the room's dead time after the pause (3.2). Learning resumes at the first
+during the room's dead time after the pause (3.2). For the response lag the
+pause is a discontinuity: the episode ends at the last observed instant, and the
+next one starts after the resume (3.7). Learning resumes at the first
 calculation where the threshold is reached or SmartPI stops calling. Regulation is unchanged:
 SmartPI sees the room cool and keeps calling. The pause also holds during a
 calibration (4.6). It is shown in the diagnostics as `learning.boiler_paused`,
@@ -290,20 +455,24 @@ Limits:
 
 $$ K_p = \frac{1}{|a| \cdot (\lambda + L)} $$
 
-3. compute $K_i = K_p / \tau$,
+3. compute the SIMC integral time (Skogestad, 2003)
+   $T_i = \min(\tau, 4(\lambda + L))$ (`GAIN_TI_LAMBDA_FACTOR = 4`), then
+   $K_i = K_p / T_i$,
 4. clamp the gains ($K_p \in [0.10, 5.0]$, $K_i \in [0.001, 0.050]$) and apply governance freezes.
 
-With typical room dynamics ($\tau$ of several hours) $K_p / \tau$ falls below
-`KI_MIN = 0.001`, so the applied $K_i$ is usually the floor `KI_MIN`; the
-near-band taper of $K_i$ is clamped to the same floor.
+For a room, $\tau$ (several hours to several days) far exceeds the closed-loop
+horizon $\lambda + L$: the room is close to an integrator and $T_i = 4(\lambda + L)$.
+With $T_i = \tau$, $K_i$ would fall on the floor `KI_MIN = 0.001` and the integral
+would take days to correct a model error. The near-band taper of $K_i$ is
+clamped to the same floor.
 
 The effective integral time $T_i = K_p / K_i$ of the applied gains is published
-in minutes as `control.ti_min` (`None` when $K_i \le 0$). With $K_i$ on the
-floor, $T_i$ still follows the room inertia through $K_p$
-($K_p = 1 / (|a| (\lambda + L))$ grows with $\tau$): bench values are about
-146 min for $\tau \approx 3$ h, 247 min for $\tau \approx 5$ h and 390 min for
-$\tau \approx 8$ h. In a fast room ($\tau \approx 1$ h), $K_p / \tau$ is above the
-floor and $K_i$ follows the model.
+in minutes as `control.ti_min` (`None` when $K_i \le 0$).
+
+On every change of the applied $K_i$, the integral is rescaled by
+$K_{i,old} / K_{i,new}$, so the integral power $K_i \cdot I$ is unchanged (bumpless
+transfer). The rescale applies to any change, however small: the near-band taper
+moves $K_i$ by small steps, and a threshold would let $K_i \cdot I$ drift during holds.
 
 `GainScheduler.generation` counts the changes of the untapered model gains
 (IMC/SIMC or safe gains). It advances only while the gains are not frozen and
@@ -339,7 +508,8 @@ power.
 The FF2 trim stays frozen (`ff_warmup`) while `warmup_scale` is below 1.
 
 $k_{ff}$ is zero, and therefore $u_{ff1}$ is zero, whenever the model is not
-ready (not enough `a` and `b` measurements), `tau` is not reliable, or the sign
+ready (`a` not published with fewer than 5 measurements, or fewer than 5 `b`
+measurements), `tau` is not reliable, or the sign
 of `a` does not match the active mode.
 
 $T_{ext}$ is the last valid outdoor temperature received by SmartPI. When the
@@ -453,12 +623,39 @@ The current code also applies an explicit guard on positive integral growth duri
 - after resuming from power shedding,
 - during a disturbance-recovery trajectory.
 
-This guard does not block integral discharge. If the stored integral already
-points against the requested recovery, the guard
-allows that opposing memory to unwind as far as zero. It still blocks any new
-accumulation beyond zero in the protected direction. This prevents a negative
-integral inherited from the previous setpoint from holding the room below a
-new, higher setpoint.
+This guard does not block integral discharge. An integral that already points
+against the requested recovery usually carries the model bias (feed-forward
+error), which still holds at the new setpoint: the guard keeps it while the
+recovery progresses. Once the recovery stalls, with the release error still
+beyond its threshold and the signed recovery slope at or below the release
+slope for `INTEGRAL_GUARD_STALL_CYCLES = 3` cycles, the guard allows that
+opposing memory to unwind as far as zero. It still blocks any new accumulation
+beyond zero in the protected direction. A negative integral inherited from the
+previous setpoint therefore cannot hold the room below a new, higher setpoint,
+and a setpoint step does not erase the bias that keeps the room from
+overshooting at the new setpoint.
+
+A disturbance-recovery trajectory brakes the P branch because the model
+predicts that the committed power is enough to close the gap. When this model
+is biased, the room can settle on a plateau below the setpoint: the trajectory
+never ends, and the guard blocks the integral that alone could close the gap. A
+plateau test then ends the trajectory:
+
+- the signed error is averaged over blocks of
+  `INTEGRAL_GUARD_PLATEAU_BLOCK_CYCLES = 3` cycles,
+- a block is stationary if its average stays above the release error and does
+  not vary by more than the release slope applied over one block,
+- `INTEGRAL_GUARD_PLATEAU_BLOCKS = 2` consecutive stationary blocks are required,
+- and no net progress over `INTEGRAL_GUARD_PLATEAU_PROGRESS_BLOCKS = 4` blocks:
+  the average must not have dropped by more than
+  `INTEGRAL_GUARD_PLATEAU_PROGRESS_MIN_C = 0.03 °C`. A slow recovery tail, seen
+  through a quantized probe, is therefore not mistaken for a plateau.
+
+On detection, the trajectory switches back to passthrough and the
+disturbance-recovery guard is released. No new disturbance trajectory starts
+until the error has dropped back below the trigger threshold minus the tracking
+hysteresis, or until a setpoint change or a reset. A new disturbance therefore
+remains braked and guarded normally.
 
 The guard is released only when two conditions are met:
 
@@ -513,7 +710,7 @@ The restart therefore keeps only useful persistent PI memory, without restoring 
 
 Additional protections currently present are:
 
-- `SmartPIGuards` (heating mode only): `guard_cut` forces the output to 0 when the measured temperature exceeds `setpoint + near_band_above` while the heater is active, until it falls back to that threshold minus `NEAR_BAND_HYSTERESIS_C = 0.05°C`; `guard_kick` restarts the cycle when, inside the near-band, the temperature falls below `setpoint - near_band_below` while the command is below 99 %. In cooling mode neither guard acts and the near-band is not auto-sized,
+- `SmartPIGuards` (heating mode only, outside the bootstrap and the calibration): `guard_cut` forces the output to 0 when the measured temperature exceeds `setpoint + near_band_above` while the heater is active, until it falls back to that threshold minus the larger of `NEAR_BAND_HYSTERESIS_C = 0.05°C` and `GUARD_CUT_RESET_STEPS = 1.5` observed sensor steps (a reading flickering between two levels around the threshold would otherwise re-trigger the cut, and restart the cycle, at every measurement). During a cut the output stays at 0 and the integral is frozen (`I:OVERRIDE(guard_cut)`), but the temperature filter, the dead time detector, the published temperature and the learning keep following the room. The room then cools without heating, for example during the whole fall after a setpoint decrease: this is a passive window for `b` and for the response lag baseline. The governance sees a zero command outside any band, and `a` windows are blocked (`skip: guard cut`). The learning stays contiguous at the end of the cut; `guard_kick` restarts the cycle when, inside the near-band, the temperature falls below `setpoint - near_band_below` while the command is below 99 %. In cooling mode neither guard acts and the near-band is not auto-sized. In the bootstrap the heating runs between its own hysteresis thresholds and a running guard is released,
 - per-tick anti-windup on the applicable upper limit (see below),
 - signed integral guard during resumes, catch-up phases, and setpoint changes,
 - explicit `I:HOLD` during the post-resume `deadtime_heat` phase for `window_resume` and `power_shedding_resume` in heating mode,
@@ -524,7 +721,7 @@ Additional protections currently present are:
 
 The anti-windup acts at every calculation, in the linear demand space, on the applicable upper limit: `1`, or the linear image of `max_on_percent` when it is lower. It has two parts:
 
-- conditional integration: the integral stops growing when the unconstrained request exceeds the applicable upper limit;
+- conditional integration: the integral stops growing when the unconstrained request exceeds the applicable upper limit. Within `NEAR_SETPOINT_UNWIND_STEPS = 1.5` observed sensor steps of the setpoint, an output saturated against the error still lets the integral unwind toward zero, without crossing it (`I:UNWIND(SAT_HI|SAT_LO)`), provided the output without the proportional term (`u_ff + Ki·I`) stays within its limits: with a quantized sensor, a reading one step away from the setpoint saturates the output through the proportional term alone, and a blocked integral combined with the deadband freeze would hold a steady offset. An output held at its limit by `u_ff + Ki·I` (for example at `max_on_percent`) keeps the integral, which then carries the model bias;
 - back-calculation: on every tick where the integral mode is `I:RUN`, `I:SKIP`, `I:GUARD` or `I:CLAMP`, the excess of the PI output (`u_ff + u_pi`, clamped to `[0, 1]`) above the linear image of `max_on_percent` corrects the integral by `beta * excess / Ki`, with `beta = dt / max(Kp/Ki, dt)` (tracking time constant equal to `Ti = Kp/Ki`). The correction only moves the integral toward zero and stops at zero, so an excess carried by the proportional term alone never winds the integral in the opposite direction. The integral stays clamped to `±2/Ki`. Only the integral changes: `u_pi` keeps the decomposition that produced the command.
 
 The following are not treated as saturation: Versatile Thermostat quantization and valve retention (`dpercent`, period), minimum on/off times, and the rate limiter. The behavior is symmetric in HEAT and COOL, does not use Versatile Thermostat command receipts, and is identical with older Versatile Thermostat versions. The `aw_du` diagnostic is the correction (excess, `<= 0`) applied at the last tick.
@@ -559,7 +756,7 @@ The forced cycle is managed by `CalibrationManager`:
 - `COOL_DOWN_FINAL` back to `sp`.
 
 The phases feed the dead-time estimator, except while learning is paused (the
-user's setting, or below the central boiler threshold, 3.7): the phases then
+user's setting, or below the central boiler threshold, 3.8): the phases then
 run as usual, without measuring.
 
 Before and during each phase the manager checks, with the thermal twin, that the threshold of the phase can be reached. The measured temperature comes first: once it has reached the threshold of the phase, the phase moves on and the twin is not consulted. A passive phase converges to `T_steady_passive`; an active phase driven at the allowed power `u_max` (`max_on_percent` in linear space) converges to `T_steady_passive + u_max·(T_steady_max − T_steady_passive)`, the 1R1C equilibrium being linear in power (`T_steady_max` when `u_max` is 1 or the passive equilibrium is not valid); the threshold is reachable when that equilibrium lies beyond it by `CALIBRATION_REACHABILITY_MARGIN_C = 0.5°C` (HEAT: passive `COOL_DOWN` and `COOL_DOWN_FINAL`, active `HEAT_UP`; COOL: active `COOL_DOWN` and `COOL_DOWN_FINAL`, passive `HEAT_UP`). The check only applies while the twin is usable (`status` ok, `model_reliable`, past its warm-up, valid equilibrium, and `cooling_model_available` in COOL). When the threshold is not reachable the cycle ends at once with the result `Unreachable`, distinct from `Cancelled` (HVAC OFF, timeout of `CALIBRATION_TIMEOUT_MIN = 600` minutes, reset): `last_calibration_time` is not set, `AutoCalibTrigger` consumes no retry and publishes `smartpi_autocalib_unreachable`, and the next attempt waits `AUTOCALIB_COOLDOWN_H` hours (`autocalib.next_check_ts`). The result is not a published diagnostic: `calibration.state` carries the phase only.
@@ -590,6 +787,7 @@ Before and during each phase the manager checks, with the thermal twin, that the
 | `ab_drift.py`          | persistent drift detection and recentering for `a/b`, with one candidate sequence per channel |
 | `learning_window.py`   | learning-window management and guardrails                   |
 | `ab_window_balance.py` | integral balance of windows without a robust slope and `a/b` pools |
+| `response_lag.py`      | `ResponseLagEstimator`: response lag, settling gates and delivered power model |
 | `learning_outcomes.py` | bounded counters of learning-window outcomes                |
 | `gains.py`             | gain calculation and freezing                               |
 | `controller.py`        | discrete PI, anti-windup, hold, hysteresis                  |
@@ -697,14 +895,18 @@ The current payload from `SmartPI.save_state()` notably contains:
     "ff_v2_trim": {...},
     "ff_trim_delta": ...,
     "tint_filter_state": {...},
+    "hysteresis_output": {...},  # bootstrap only
 }
 ```
 
 The control loop schedules at most one delayed write of this payload per five-minute window; Home Assistant flushes a pending write at shutdown. Services and entity removal write a snapshot immediately.
 
-Past event timestamps (temperature histories, calibration start) are persisted as wall-clock times and converted back to the monotonic clock on load, so they keep their position in the past across a restart; in particular, the calibration timeout keeps running after a restart.
+Past event timestamps (temperature histories, calibration start, passive period and episode of the response lag) are persisted as wall-clock times and converted back to the monotonic clock on load, so they keep their position in the past across a restart; in particular, the calibration timeout keeps running after a restart.
 
-The integral-balance pools and the window-outcome counters are not persisted: they start empty at each startup.
+The integral-balance pools and the window-outcome counters are not persisted:
+they start empty at each startup. The observations of the `a` measurements are
+persisted with the estimator state; a state that does not contain them loads with
+measurements that cannot be recomputed.
 
 Only the learned trim remains persistent. Ownership windows, pending
 proposals, and integral transfers are transient; after restart the observer is
@@ -767,7 +969,7 @@ usable, its public diagnostic fields are exposed under `analysis.twin`.
 `analysis.deadtime.heat_episode_start` and `cool_episode_start` give the start
 of the current heating or cooling episode, the moment the dead-time window
 (3.2) counts from, as an ISO time in UTC; `null` outside an episode. The
-learning pause below the central boiler threshold (3.7) ends the episode, so
+learning pause below the central boiler threshold (3.8) ends the episode, so
 the next heating after it starts a new one.
 
 `feedforward.fftrim.command_ownership` exposes whether the scheduler emits
@@ -787,9 +989,11 @@ acceptance or rejection without changing the learning decision.
 | Constant                       | Value  |
 | ------------------------------ | ------ |
 | `AB_HISTORY_SIZE`              | `31`   |
-| `AB_MIN_SAMPLES_B`             | `8`    |
-| `AB_MIN_SAMPLES_A`             | `6`    |
-| `AB_A_SOFT_GATE_MIN_B`         | `8`    |
+| `AB_MIN_SAMPLES_B`             | `5`    |
+| `AB_MIN_SAMPLES_A`             | `5`    |
+| `AB_MIN_SAMPLES_A_CONSISTENT`  | `4`    |
+| `AB_A_CONSISTENT_MAX_REL_MAD`  | `0.10` |
+| `AB_A_SOFT_GATE_MIN_B`         | `5`    |
 | `AB_CONFIDENCE_MIN_SAMPLES_A`  | `11`   |
 | `AB_CONFIDENCE_MIN_SAMPLES_B`  | `11`   |
 | `AB_B_CONVERGENCE_MIN_SAMPLES` | `11`   |
@@ -798,6 +1002,8 @@ acceptance or rejection without changing the learning decision.
 | `AB_B_CONVERGENCE_RANGE_RATIO` | `0.10` |
 | `DT_DERIVATIVE_MIN_ABS`        | `0.05` |
 | `OLS_MIN_JUMPS`                | `3`    |
+| `OLS_MIN_SPAN_STEPS`           | `1.5`  |
+| `OLS_SPAN_MIN_STEP_C`          | `0.05` |
 | `OLS_T_MIN`                    | `2.5`  |
 | `DT_MAX_MIN`                   | `240`  |
 | `U_OFF_MAX`                    | `0.05` |
@@ -807,6 +1013,25 @@ acceptance or rejection without changing the learning decision.
 | `AB_BALANCE_MIN_RESOLUTION_C`  | `0.05` |
 | `AB_BALANCE_DEFAULT_RESOLUTION_C` | `0.1` |
 | `AB_BALANCE_POOL_MAX_SEGMENTS` | `12`   |
+| `RESPONSE_LAG_HISTORY`         | `7`    |
+| `RESPONSE_LAG_MIN_ESTIMATES`   | `3`    |
+| `RESPONSE_LAG_RESOLVE_EPISODES` | `7`   |
+| `RESPONSE_LAG_MAX_REL_UNC`     | `0.15` |
+| `RESPONSE_LAG_UNC_FLOOR_S`     | `30`   |
+| `RESPONSE_LAG_MIN_OFF_S`       | `1800` |
+| `RESPONSE_LAG_MIN_OFF_LAGS`    | `5`    |
+| `RESPONSE_LAG_MIN_CROSSINGS`   | `3`    |
+| `RESPONSE_LAG_MODEL_CHANGE_REL` | `0.5` |
+| `RESPONSE_LAG_U_TOL`           | `0.05` |
+| `RESPONSE_LAG_RESTART_MAX_GAP_S` | `600` |
+| `RESPONSE_LAG_PASSIVE_SPAN_S`  | `3600` |
+| `RESPONSE_LAG_MIN_INVERSION_SLOPE` | `0.05` |
+| `RESPONSE_LAG_RESOLVABLE_FRAC` | `0.9`  |
+| `RESPONSE_LAG_B_REL_UNC`       | `0.10` |
+| `RESPONSE_LAG_MAX_S`           | `DT_MAX_MIN` × 60 (`14400`) |
+| `AB_SETTLE_K_ACTIVE`           | `3`    |
+| `AB_SETTLE_K_PASSIVE`          | `3`    |
+| `AB_SETTLE_ACTIVE_CAP_FRAC`    | `0.5`  |
 
 ### 6.2 Regulation
 
@@ -814,6 +1039,14 @@ acceptance or rejection without changing the learning decision.
 | ----------------------------- | ------- |
 | `KP_SAFE`                     | `0.55`  |
 | `KI_SAFE`                     | `0.010` |
+| `GAIN_TI_LAMBDA_FACTOR`       | `4.0`   |
+| `NEAR_SETPOINT_UNWIND_STEPS`  | `1.5`   |
+| `INTEGRAL_GUARD_STALL_CYCLES` | `3`     |
+| `INTEGRAL_GUARD_PLATEAU_BLOCK_CYCLES` | `3` |
+| `INTEGRAL_GUARD_PLATEAU_BLOCKS` | `2` |
+| `INTEGRAL_GUARD_PLATEAU_PROGRESS_BLOCKS` | `4` |
+| `INTEGRAL_GUARD_PLATEAU_PROGRESS_MIN_C` | `0.03` |
+| `GUARD_CUT_RESET_STEPS`       | `1.5`   |
 | `MAX_STEP_PER_MINUTE`         | `0.25`  |
 | `SETPOINT_BOOST_RATE`         | `0.50`  |
 | `SMARTPI_RECALC_INTERVAL_SEC` | `60`    |
@@ -887,6 +1120,6 @@ The matrix drives the gain updates and thermal learning only. A regime transitio
 1. **Astrom K.J. and Hagglund T.**, work on PID regulation and FOPDT model usage.
 2. **Sundaresan K.R. and Krishnaswamy P.R.**, estimation of delay and time-constant parameters.
 3. **OLS** regression with Student t-test for slope validation.
-4. **Hagglund T. and Astrom K.J.**, Supervision of adaptive control algorithms, *Automatica* 36(8), 2000, 1171–1180: learning pause below the central boiler threshold (3.7).
-5. **Astrom K.J. and Hagglund T.**, *PID Controllers: Theory, Design, and Tuning*, 2nd ed., Instrument Society of America, 1995: learning pause below the central boiler threshold (3.7).
-6. **Skogestad S.**, Simple analytic rules for model reduction and PID controller tuning, *Journal of Process Control* 13, 2003, 291–309: learning pause below the central boiler threshold (3.7).
+4. **Hagglund T. and Astrom K.J.**, Supervision of adaptive control algorithms, *Automatica* 36(8), 2000, 1171–1180: learning pause below the central boiler threshold (3.8).
+5. **Astrom K.J. and Hagglund T.**, *PID Controllers: Theory, Design, and Tuning*, 2nd ed., Instrument Society of America, 1995: learning pause below the central boiler threshold (3.8).
+6. **Skogestad S.**, Simple analytic rules for model reduction and PID controller tuning, *Journal of Process Control* 13, 2003, 291–309: learning pause below the central boiler threshold (3.8).

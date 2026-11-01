@@ -78,6 +78,9 @@ from .smartpi.const import (
     CALIBRATION_TIMEOUT_MIN,
     ERROR_FILTER_TAU,
     TRAJECTORY_ENABLE_ERROR_THRESHOLD,
+    NEAR_SETPOINT_UNWIND_STEPS,
+    INTEGRAL_GUARD_STALL_CYCLES,
+    RESPONSE_LAG_RESTART_MAX_GAP_S,
     clamp,
 )
 from .smartpi.autocalib import AutoCalibTrigger, AutoCalibEvent
@@ -128,7 +131,9 @@ from .smartpi.valve_curve import ValveCurveParams, build_valve_curve
 from .smartpi.const import ENABLE_ADAPTIVE_TINT_FILTER
 from .smartpi.timestamp_utils import (
     elapsed_wall_minutes,
+    monotonic_to_wall_ts,
     normalize_wall_timestamp,
+    wall_to_monotonic_ts,
 )
 from .const import HVAC_OFF_REASON_WINDOW_DETECTION
 
@@ -252,6 +257,8 @@ class SmartPI:
 
         # Track last time calculate() was executed for dt-based integration
         self._last_calculate_time: Optional[float] = None
+        # Last learning tick while the guard cut holds the output at zero
+        self._guard_cut_learning_ts: Optional[float] = None
         # Wall-clock time of the last valid active regulation tick. OFF saves
         # preserve this value so prolonged inactivity remains measurable.
         self._last_active_wall_ts: float | None = None
@@ -324,6 +331,10 @@ class SmartPI:
 
         # Last complete FFResult (used by diagnostics and on_cycle_completed)
         self._last_ff_result: FFResult | None = None
+
+        # Bootstrap on/off output saved before a restart (monotonic time),
+        # applied by the first calculation.
+        self._hysteresis_restore: dict | None = None
 
         # --- Safety-First Governance (Delegated to self.gov) ---
         if saved_state:
@@ -404,6 +415,8 @@ class SmartPI:
 
         # Reset new component managers (Phase 2.5 refactoring)
         self.learn_win.reset_all()
+        self.est.a_model_ready = self.learn_win.response_lag.resolved
+        self._hysteresis_restore = None
         self.deadband_mgr.reset()
         self.calibration_mgr.reset()
         self.gain_scheduler.reset()
@@ -441,7 +454,12 @@ class SmartPI:
     def phase(self) -> SmartPIPhase:
         if self.calibration_mgr.state != SmartPICalibrationPhase.IDLE:
             return SmartPIPhase.CALIBRATION
-        if len(self.est.a_meas_hist) < AB_MIN_SAMPLES_A or len(self.est.b_meas_hist) < AB_MIN_SAMPLES_B:
+        if (
+            (len(self.est.a_meas_hist) < AB_MIN_SAMPLES_A and self.est.learn_ok_count_a == 0)
+            or len(self.est.b_meas_hist) < AB_MIN_SAMPLES_B
+            # The first a publication waits for the delivered power model.
+            or (not self.est.a_model_ready and self.est.learn_ok_count_a == 0)
+        ):
             return SmartPIPhase.HYSTERESIS
         return SmartPIPhase.STABLE
 
@@ -552,8 +570,9 @@ class SmartPI:
         slope_h: float | None,
         in_core_deadband: bool,
         trajectory_active: bool,
-    ) -> tuple[bool, bool, str]:
-        """Return which integral direction must stay blocked."""
+        dt_min: float = 0.0,
+    ) -> tuple[bool, bool, str, bool]:
+        """Return which integral direction must stay blocked and whether opposing memory may unwind."""
         release_error = error_p if trajectory_active else error_i
         decision = self.integral_guard.decide(
             raw_error=error_i,
@@ -561,9 +580,16 @@ class SmartPI:
             deadband_c=self.deadband_c,
             in_core_deadband=in_core_deadband,
             signed_recovery_slope_h=signed_recovery_slope_h(slope_h, hvac_mode),
+            dt_min=dt_min,
+            stall_min=INTEGRAL_GUARD_STALL_CYCLES * self._cycle_min,
         )
         self._last_integral_guard_mode = decision.mode_suffix
-        return decision.block_positive, decision.block_negative, decision.mode_suffix
+        return (
+            decision.block_positive,
+            decision.block_negative,
+            decision.mode_suffix,
+            decision.allow_unwind,
+        )
 
     def update_learning(
         self,
@@ -575,6 +601,7 @@ class SmartPI:
         hvac_mode: VThermHvacMode | None = None,
         target_temp: float | None = None,
         raw_temp: float | None = None,
+        a_learning_block_reason: str | None = None,
     ) -> None:
         """
         Feed learning data from the heartbeat tick.
@@ -590,14 +617,15 @@ class SmartPI:
             hvac_mode: Current HVAC mode.
             target_temp: Current target temperature.
             raw_temp: Raw measured indoor temperature (defaults to current_temp).
+            a_learning_block_reason: Reason blocking ON/A learning, if any
+                (a setpoint change blocks it with its own reason).
         """
         now = time.monotonic()
 
         if not self._learning_active:
             return
 
-        a_learning_block_reason = None
-        if setpoint_changed:
+        if a_learning_block_reason is None and setpoint_changed:
             a_learning_block_reason = "skip: setpoint transition"
 
         # Delegate to LearningWindowManager
@@ -624,6 +652,52 @@ class SmartPI:
             a_learning_allowed=a_learning_block_reason is None,
             a_learning_block_reason=a_learning_block_reason,
             raw_temp=raw_temp,
+            min_active_window_min=self._cycle_min,
+        )
+
+    def _update_learning_during_guard_cut(
+        self,
+        *,
+        now: float,
+        current_temp: float,
+        raw_temp: float,
+        ext_temp: float | None,
+        target_temp: float | None,
+        hvac_mode: VThermHvacMode | None,
+    ) -> None:
+        """Feed the learning while the guard cut holds the output at zero.
+
+        The room cools without heating during the cut (for instance during the
+        whole fall after a setpoint decrease): it is a passive window for b and
+        for the response lag baseline. The governance sees the forced zero
+        command outside any band, and ON/A windows stay blocked.
+        """
+        last = self._guard_cut_learning_ts
+        if last is None:
+            last = self._last_calculate_time
+        self._guard_cut_learning_ts = now
+        if last is None:
+            return
+        # A gap between two ticks never counts for more than one cycle
+        dt_min = min(max(now - last, 0.0) / 60.0, self._cycle_min)
+        if dt_min <= 0.0:
+            return
+        self.deadband_mgr.in_deadband = False
+        self.deadband_mgr.in_near_band = False
+        self.gov.update_regime(
+            self.gov.determine_regime(
+                self.phase, ext_temp, False, False, True, 0.0, False, False
+            )
+        )
+        self.update_learning(
+            dt_min=dt_min,
+            current_temp=current_temp,
+            ext_temp=ext_temp,
+            u_active=self._committed_on_percent,
+            hvac_mode=hvac_mode,
+            target_temp=target_temp,
+            raw_temp=raw_temp,
+            a_learning_block_reason="skip: guard cut",
         )
 
     def stage_command(self, hvac_mode: VThermHvacMode) -> int:
@@ -1077,6 +1151,7 @@ class SmartPI:
         target_temp: float,
         current_temp: float,
         hvac_mode: VThermHvacMode,
+        filtered_temp: float | None = None,
     ) -> None:
         """Execute the forced calibration state machine.
 
@@ -1090,6 +1165,7 @@ class SmartPI:
             max_on_percent=self._linear_max_on(),
             twin_diag=self._last_twin_diag,
             learning_active=self._learning_active,
+            filtered_temp=filtered_temp,
         )
 
         # Apply result
@@ -1133,7 +1209,60 @@ class SmartPI:
             "ff_trim_delta": self.fftrim_coord.last_ff_trim_delta,
             "tint_filter_state": self.tint_filter.save_state(),
         }
+        hysteresis = self._hysteresis_output_context()
+        if hysteresis is not None:
+            state["hysteresis_output"] = {
+                "on": hysteresis["on"],
+                "wall_ts": monotonic_to_wall_ts(hysteresis["ts"]),
+                "hvac_mode": hysteresis["hvac_mode"],
+            }
         return state
+
+    def _hysteresis_output_context(self) -> dict | None:
+        """Return the bootstrap on/off output to resume after a restart."""
+        if self._hysteresis_restore is not None:
+            # Not yet applied: no calculation since the previous restart.
+            return self._hysteresis_restore
+        if (
+            self.phase != SmartPIPhase.HYSTERESIS
+            or self._last_calculate_time is None
+            or self._last_hvac_mode not in (VThermHvacMode_HEAT, VThermHvacMode_COOL)
+            or self._committed_on_percent not in (0.0, 1.0)
+        ):
+            return None
+        return {
+            "on": self._committed_on_percent == 1.0,
+            "ts": self._last_calculate_time,
+            "hvac_mode": str(self._last_hvac_mode),
+        }
+
+    @staticmethod
+    def _load_hysteresis_output(value: object) -> dict | None:
+        """Validate a saved bootstrap on/off output and convert its time."""
+        if not isinstance(value, dict) or not isinstance(value.get("on"), bool):
+            return None
+        mode = value.get("hvac_mode")
+        if mode not in (str(VThermHvacMode_HEAT), str(VThermHvacMode_COOL)):
+            return None
+        ts = wall_to_monotonic_ts(value.get("wall_ts"))
+        if ts is None:
+            return None
+        return {"on": value["on"], "ts": ts, "hvac_mode": mode}
+
+    def _take_hysteresis_restore(self, now: float, hvac_mode: VThermHvacMode | None) -> float | None:
+        """Consume the saved bootstrap output; return it when it applies.
+
+        It applies after a stop of at most RESPONSE_LAG_RESTART_MAX_GAP_S in
+        the same hvac mode: over such a stop the actuator keeps its last state,
+        as an uninterrupted hysteresis would have.
+        """
+        restore = self._hysteresis_restore
+        self._hysteresis_restore = None
+        if restore is None or hvac_mode is None or str(hvac_mode) != restore["hvac_mode"]:
+            return None
+        if not 0.0 <= now - restore["ts"] <= RESPONSE_LAG_RESTART_MAX_GAP_S:
+            return None
+        return 1.0 if restore["on"] else 0.0
 
     def load_state(self, state: dict) -> None:
         """Restore algorithm state from the current nested persistence format."""
@@ -1155,7 +1284,13 @@ class SmartPI:
         self.gov.load_state(state.get("gov_state", {}))
         self.ctl.load_state(state.get("ctl_state", {}))
         self.sp_mgr.load_state(state.get("sp_mgr_state", {}))
-        self.learn_win.load_state(state.get("lw_state", {}))
+        lw_state = state.get("lw_state", {})
+        self.learn_win.load_state(lw_state)
+        if isinstance(lw_state, dict) and "response_lag" in lw_state:
+            # The flag is otherwise refreshed by the first learning update: a
+            # restored unresolved model must keep the bootstrap from the first
+            # calculation. States without the block keep the default.
+            self.est.a_model_ready = self.learn_win.response_lag.resolved
         self._learning_start_date = self.learn_win.learning_start_date
         self.deadband_mgr.load_state(state.get("db_state", {}))
         self.calibration_mgr.load_state(state.get("cal_state", {}))
@@ -1173,6 +1308,7 @@ class SmartPI:
         self.resume_hold.clear()
         self._last_integral_guard_mode = "reboot_reset"
         self.twin.load_state(state.get("twin_state", {}))
+        self._hysteresis_restore = self._load_hysteresis_output(state.get("hysteresis_output"))
 
         # Load main algorithm scalars
         self._deadtime_skip_count_a = int(state.get("deadtime_skip_count_a", 0))
@@ -1605,8 +1741,10 @@ class SmartPI:
         )
         new_ki = self.gain_scheduler.ki
 
-        # Bumpless Gain Scheduling: Rescale integral to preserve identical energy output
-        if old_ki > 0.0 and new_ki > 0.0 and abs(old_ki - new_ki) > 1e-6:
+        # Bumpless Gain Scheduling: Rescale integral to preserve identical energy output.
+        # Any change is rescaled: with Ki above its floor the near-band taper moves
+        # it by small steps, and a threshold would let Ki * I drift during holds.
+        if old_ki > 0.0 and new_ki > 0.0 and old_ki != new_ki:
             self.ctl.integral = self.ctl.integral * (old_ki / new_ki)
             _LOGGER.debug(
                 "%s - Ki changed from %.5f to %.5f, rescaled integral to %.4f for bumpless gain transfer",
@@ -1769,12 +1907,38 @@ class SmartPI:
                     self._name,
                 )
 
+        # The saved bootstrap output only applies to the first calculation.
+        hysteresis_restore = self._take_hysteresis_restore(now, hvac_mode)
+
         # --- 1. Validation & Handle OFF ---
         if self._validate_and_handle_off(target_temp, current_temp, hvac_mode, power_shedding, off_reason):
             return
 
+        self.guards.sensor_step_c = self.learn_win.balance.resolution_c
+
         # Guard Cut: force 0% if active
         if self.guards.guard_cut_active:
+            # The output is forced but the room is still observed: the dead time
+            # detection, the learning and the published temperature follow the cut.
+            if current_temp is not None:
+                t_int_lp, t_int_clean = self.tint_filter.update(current_temp, now)
+                if self.phase != SmartPIPhase.HYSTERESIS and not self.calibration_mgr.is_calibrating:
+                    self.dt_est.update(
+                        now=now,
+                        tin=t_int_lp,
+                        tin_raw=current_temp,
+                        u_applied=self._committed_on_percent,
+                        hvac_mode=hvac_mode,
+                    )
+                self._last_current_temp = current_temp
+                self._update_learning_during_guard_cut(
+                    now=now,
+                    current_temp=t_int_clean,
+                    raw_temp=current_temp,
+                    ext_temp=ext_current_temp,
+                    target_temp=target_temp,
+                    hvac_mode=hvac_mode,
+                )
             self.fftrim_coord.invalidate_context(
                 "guard_cut",
                 now_monotonic=now,
@@ -1784,6 +1948,8 @@ class SmartPI:
             self._set_linear_output(0.0)
             self._last_calculate_time = None
             return
+        # The learning stays contiguous across the end of a guard cut.
+        guard_cut_learning_ts, self._guard_cut_learning_ts = self._guard_cut_learning_ts, None
 
         self._refresh_active_timestamp_and_expire_controller_memory()
 
@@ -1870,9 +2036,12 @@ class SmartPI:
             )
 
         # Heartbeat learning update
-        if dt_min > 0:
+        learning_dt_min = dt_min
+        if learning_dt_min <= 0 and guard_cut_learning_ts is not None:
+            learning_dt_min = min(max(now - guard_cut_learning_ts, 0.0) / 60.0, self._cycle_min)
+        if learning_dt_min > 0:
             self.update_learning(
-                dt_min=dt_min,
+                dt_min=learning_dt_min,
                 current_temp=t_int_clean,
                 ext_temp=ext_current_temp,
                 u_active=self._committed_on_percent,
@@ -1901,7 +2070,9 @@ class SmartPI:
                 hvac_mode=hvac_mode,
             )
             self.ctl.clear_integral_hold()
-            self._calculate_forced_calibration(target_temp, current_temp, hvac_mode)
+            self._calculate_forced_calibration(
+                target_temp, current_temp, hvac_mode, filtered_temp=t_int_lp
+            )
             self._output_initialized = True
             self.ctl.last_i_mode = "calibration"
             self._last_target_temp = target_temp
@@ -1921,6 +2092,14 @@ class SmartPI:
                 hvac_mode=hvac_mode,
             )
             out = self.ctl.calculate_hysteresis(target_temp_filt, current_temp, hvac_mode, self._hyst_off, self._hyst_on)
+            if out is None and hysteresis_restore is not None:
+                # Inside the band after a short restart: resume the saved
+                # on/off state instead of starting from OFF.
+                out = hysteresis_restore
+            if out is None and self._on_percent not in (0.0, 1.0):
+                # The band keeps an on/off output. A modulated output left by
+                # an earlier phase is not a hysteresis state: start from OFF.
+                out = 0.0
             if out is not None:
                 self._set_linear_output(out)
 
@@ -1965,6 +2144,13 @@ class SmartPI:
             in_deadtime_window=lambda: self.in_deadtime_window,
         )
         if (
+            self.sp_mgr.consume_disturbance_plateau_end()
+            and self.integral_guard.source == IntegralGuardSource.DISTURBANCE_RECOVERY
+        ):
+            # The disturbance trajectory ended on a plateau: only the
+            # integral can still close the residual error.
+            self.integral_guard.clear("disturbance_plateau")
+        if (
             self.sp_mgr.trajectory_active
             and self.sp_mgr.trajectory_source == "disturbance"
         ):
@@ -1977,6 +2163,7 @@ class SmartPI:
             block_positive_integral,
             block_negative_integral,
             positive_integral_guard_mode,
+            allow_guard_unwind,
         ) = self._update_integral_guard(
             error_i=error_i,
             error_p=e_p,
@@ -1984,6 +2171,7 @@ class SmartPI:
             slope_h=slope,
             in_core_deadband=in_core_deadband,
             trajectory_active=trajectory_i_active,
+            dt_min=dt_min,
         )
         if in_deadband_now and not cycle_boundary:
             self._disable_ff3_for_next_cycle_in_deadband()
@@ -2055,9 +2243,11 @@ class SmartPI:
             block_positive_integral=block_positive_integral,
             block_negative_integral=block_negative_integral,
             positive_integral_guard_mode=positive_integral_guard_mode,
+            allow_guard_unwind=allow_guard_unwind,
             deadband_allow_p=self._deadband_allow_p,
             integrator_hold_source=integrator_hold_source,
             u_max=u_max,
+            unwind_band_c=NEAR_SETPOINT_UNWIND_STEPS * self.learn_win.balance.resolution_c,
         )
 
         # Anti-windup on the limit known at this tick (max_on_percent).

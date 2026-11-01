@@ -189,19 +189,23 @@ After changing a value, let SmartPI run for several cycles before judging the re
 
 ### Versatile Thermostat valve settings
 
-In valve mode, Versatile Thermostat processes the opening requested by SmartPI before it reaches the valve. SmartPI cannot see this processing, so these settings must stay transparent for SmartPI to learn and regulate on the opening it really commands:
+In valve mode, Versatile Thermostat can filter, delay or remap the opening requested by SmartPI before it reaches the valve. SmartPI uses the retained opening reported by Versatile Thermostat for learning. This is a command value, not a measurement of the physical valve position. Filtering still limits command resolution, and an opening remap can conflict with the SmartPI valve linearization.
 
 | Versatile Thermostat setting                                                                                              | Effect on SmartPI commands                                                                                                          | Recommended value                           |
 | ------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------- |
-| **Regulation threshold** (`auto_regulation_dtemp`)                                                                          | Keeps the previous opening when the requested one differs by less than the threshold, and forces to `0%` any opening below it.        | `0`                                         |
-| **Regulation minimum period** (`auto_regulation_periode_min`)                                                               | Holds back a change of the valve command until the period has elapsed since the previous change, except when a cycle restarts.        | `0`                                         |
-| **Opening threshold degree**, **Min opening degrees**, **Max opening degrees**, **Max closing degree**                     | Remap the opening sent to the valve. This conflicts with the SmartPI valve linearization, which inverts its curve on the opening.     | `0`, `0`, `100`, `100` (no remap) when linearization is enabled |
+| **Regulation threshold** (`auto_regulation_dtemp`)                                                                          | Filters small changes in the requested opening and forces to `0%` any opening below the threshold.                                   | `0` if the device allows it; at least `3%` for the Sonoff TRVZB, as recommended by VT |
+| **Regulation minimum period** (`auto_regulation_periode_min`)                                                               | Holds back a change of the valve command until the period has elapsed since the previous change, except when a cycle restarts.        | `0` if the device allows it; otherwise keep its required period |
+| **Opening threshold degree**, **Min opening degrees**, **Max opening degrees**, **Max closing degree**                     | Remap the opening sent to the valve. This conflicts with the SmartPI valve linearization, which inverts its curve on the opening.     | `0`, `0`, `100`, `100` (no remap) when linearization is enabled and the device allows these values |
+
+For the Sonoff TRVZB, the [Versatile Thermostat documentation](https://github.com/jmcollin78/versatile_thermostat/blob/10.6.2/documentation/en/over-climate.md#self-regulation) recommends a regulation threshold of at least `3%` to avoid a possible loss of valve calibration. Keep this threshold even if SmartPI raises a filtering warning. A non-zero threshold does not, by itself, demonstrate that learning has failed.
+
+With direct valve control in `over_climate` mode, VT also raises the opening threshold to at least the regulation threshold. If this required setting causes an opening remap, keep it and disable the SmartPI valve linearization.
 
 The integer rounding of the valve position (`1%` steps) always applies. A regulation threshold below `1` therefore has no additional effect.
 
-SmartPI checks these settings when the thermostat starts and raises a warning in Home Assistant **Settings > Repairs** for each setting that is not transparent: the regulation threshold is `1` or more, the regulation minimum period is above `0`, or an opening remap is active while the valve linearization is enabled. The warning disappears at the next start once the setting is corrected. The checked values and the issue codes (`dpercent_filter`, `period_filter`, `opening_remap`) are also published under `live.valve` in the [diagnostics](diagnostics.md).
+SmartPI checks these settings when the thermostat starts and raises a warning in Home Assistant **Settings > Repairs** when the regulation threshold is `1` or more, the regulation minimum period is above `0`, or an opening remap is active while the valve linearization is enabled. A filtering or delay warning can remain when the device requires these settings; it does not, by itself, establish a learning failure. The warnings are checked again at the next thermostat start. The checked values and the issue codes (`dpercent_filter`, `period_filter`, `opening_remap`) are also published under `live.valve` in the [diagnostics](diagnostics.md).
 
-To clear the warnings, set the regulation threshold and the regulation minimum period to `0` in the **Underlyings** menu of the Versatile Thermostat settings. If the radiator only starts heating above a given opening, set that opening as **Minimum valve opening** in the SmartPI valve curve rather than in the Versatile Thermostat opening settings. If you need another opening remap, disable the SmartPI valve linearization instead.
+The regulation threshold and regulation minimum period are configured in the **Underlyings** menu of the Versatile Thermostat settings. Set them to `0` only if the device allows it. If the radiator only starts heating above a given opening and your device allows the default VT opening settings, set that opening as **Minimum valve opening** in the SmartPI valve curve. If you need to keep a VT opening remap, disable the SmartPI valve linearization.
 
 ## Operating phases
 
@@ -233,7 +237,7 @@ Once the dead times are considered reliable, SmartPI starts collecting **cooling
 
 From these observations, it calculates `b`, the heat-loss coefficient. This parameter represents how quickly the room cools down depending on the difference between indoor and outdoor temperature.
 
-SmartPI needs at least 8 valid cooling observations before `b` is considered usable.
+SmartPI needs at least 5 valid cooling observations before `b` is considered usable.
 
 #### Step 3 — Learning heating gain (`a`)
 
@@ -241,7 +245,18 @@ Once `b` has enough observations to be considered reliable, SmartPI starts colle
 
 From these observations, it calculates `a`, the heating gain. This parameter represents how effectively your heating system raises the indoor temperature.
 
-SmartPI needs at least 6 valid heating observations for `a`.
+After a heating start, the room warms up progressively: the emitter, the air and
+the sensor take some time before the temperature rises at its full rate. SmartPI
+measures this *response lag* on the first heating phases and ignores the start
+of each phase until the response has settled, then accounts for the heat
+actually delivered. `a` is only published once this lag is known (or after 7
+heating phases where it could not be measured, for example with a sensor that
+reports too rarely).
+
+SmartPI needs 5 valid heating observations for `a`, or 4 when they agree closely.
+
+Bootstrap therefore takes longer in slow rooms or with slow sensors: SmartPI
+favours an accurate `a` over a fast exit.
 
 #### Leaving bootstrap
 
@@ -298,7 +313,10 @@ Start simple:
 - keep the default hysteresis thresholds if your sensor is accurate and reports often (see below otherwise),
 - keep `FF3` enabled unless you have a specific reason to disable it,
 - keep the setpoint filter enabled by default,
-- adjust the deadband first if the temperature oscillates too much around the target.
+- adjust the deadband first if the temperature oscillates too much around the target,
+- enable the Versatile Thermostat window detection (window sensor or automatic detection).
+
+When Versatile Thermostat detects an open window, SmartPI freezes its integral term during the opening and holds it after the window closes, while the heating takes effect again. An opening that Versatile Thermostat does not detect is seen as an ordinary heat loss: the integral term compensates it, then the room can overshoot the setpoint slightly after the window closes.
 
 Do not try to tune several parameters at once during the first learning period. It is better to let SmartPI complete a clean first learning cycle, then adjust only what is really needed.
 
@@ -315,6 +333,27 @@ During bootstrap, SmartPI runs bang-bang heating between setpoint − *on hyster
 Widening them further does not speed up learning and degrades the accuracy of `a`. These thresholds only apply during bootstrap: once SmartPI is in normal regulation, they no longer have any effect. During bootstrap, the temperature varies between the two thresholds.
 
 The more slowly the room loses heat (good insulation, mild weather), the longer the cooling phases and the longer bootstrap takes.
+
+### PWM cycle by installation
+
+The PWM cycle duration is the Versatile Thermostat cycle setting. It is the period over which SmartPI spreads its heating power: at 30 %, the heater is on for 3 minutes of a 10-minute cycle. A longer cycle switches the heater less often, but lets the temperature swing during each cycle and slows the regulation, because SmartPI sizes its response to at least two cycles. A shorter cycle than needed gives no comfort gain and only wears the relay.
+
+| Installation | Sensor 0.1 °C reporting on change | Precise sensor (0.01 °C) reporting every 5 min | Sensor 0.2 °C |
+| --- | --- | --- | --- |
+| Convector or radiant panel in a light room | 5 min | 5 min | 5 min |
+| Fast electric emitter in a heavy or well insulated room | 15 min | 30 min | 30 min |
+| Water or oil radiator | 10 min | 30 min | 30 min |
+| High-inertia water radiator | 15 min | 30 min | 60 min |
+| Electric floor heating | 20 min | 15 min | not recommended: the initial learning rarely completes |
+
+Why these values:
+
+- in a light room the temperature reacts within minutes: from 10 minutes, the swing within each cycle exceeds the deadband and the error doubles,
+- with a 0.1 °C sensor that reports often, a longer cycle mainly delays the initial learning,
+- a precise or slow sensor tolerates long cycles with the same comfort, with far fewer switchings (48 per day at 30 minutes against 288 at 5 minutes),
+- with floor heating, cycles longer than 15 to 20 minutes degrade the initial learning: the heating gain is learned less accurately, and with a sensor reporting every 5 minutes the learning may not complete.
+
+These values come from simulations of each installation type. A cycle within one step of the table is fine; keep the shortest one when in doubt about how fast the room reacts.
 
 ## Configuration
 
@@ -420,7 +459,7 @@ Use this service to pause or resume thermal learning for one SmartPI thermostat.
 
 While learning is paused, regulation continues with the model already learned, but SmartPI does not collect A/B or dead-time observations, also during a calibration. Pausing does not erase the learned parameters or dead-time history. SmartPI starts fresh observation windows when the setting changes, and the setting is preserved across Home Assistant restarts.
 
-SmartPI also pauses learning by itself while it calls for heat and the central boiler threshold set in Versatile Thermostat is not reached, for a thermostat that Versatile Thermostat counts for its central boiler: the boiler does not heat then. This pause works in the same way, does not change the `learning_enabled` setting, and ends when the threshold is reached or SmartPI stops calling. It is shown as `live.learning.boiler_paused` in the diagnostic sensor attributes. See [technical documentation, 3.7](technical_doc.md#37-learning-pause-below-the-central-boiler-threshold).
+SmartPI also pauses learning by itself while it calls for heat and the central boiler threshold set in Versatile Thermostat is not reached, for a thermostat that Versatile Thermostat counts for its central boiler: the boiler does not heat then. This pause works in the same way, does not change the `learning_enabled` setting, and ends when the threshold is reached or SmartPI stops calling. It is shown as `live.learning.boiler_paused` in the diagnostic sensor attributes. See [technical documentation, 3.8](technical_doc.md#38-learning-pause-below-the-central-boiler-threshold).
 
 The current setting is available as `specific_states.smartpi_learning_enabled` on the climate entity and as `live.learning.enabled` in the diagnostic sensor attributes.
 

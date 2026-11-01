@@ -189,19 +189,23 @@ Après un changement, laissez SmartPI fonctionner plusieurs cycles avant de juge
 
 ### Réglages de vanne dans Versatile Thermostat
 
-En mode vanne, Versatile Thermostat traite l'ouverture demandée par SmartPI avant qu'elle n'atteigne la vanne. SmartPI ne voit pas ce traitement : ces réglages doivent donc rester transparents pour que SmartPI apprenne et régule sur l'ouverture qu'il commande réellement.
+En mode vanne, Versatile Thermostat peut filtrer, retarder ou transformer l'ouverture demandée par SmartPI avant qu'elle n'atteigne la vanne. SmartPI utilise pour l'apprentissage l'ouverture retenue que lui transmet Versatile Thermostat. Il s'agit d'une valeur de commande, pas d'une mesure de la position physique de la vanne. Le filtrage limite néanmoins la résolution des commandes, et une transformation de l'ouverture peut entrer en conflit avec la linéarisation de vanne SmartPI.
 
 | Réglage Versatile Thermostat                                                                                              | Effet sur les commandes SmartPI                                                                                                     | Valeur recommandée                          |
 | ------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------- |
-| **Seuil de régulation** (`auto_regulation_dtemp`)                                                                          | Conserve l'ouverture précédente lorsque l'ouverture demandée en diffère de moins que le seuil, et force à `0%` toute ouverture inférieure au seuil. | `0`                                         |
-| **Période minimale de régulation** (`auto_regulation_periode_min`)                                                         | Retient un changement de commande de la vanne jusqu'à l'expiration de la période depuis le changement précédent, sauf lors du redémarrage d'un cycle. | `0`                                         |
-| **Seuil d'ouverture**, **Ouvertures minimales**, **Ouvertures maximales**, **Fermetures maximale**                        | Modifient l'ouverture envoyée à la vanne. Cela entre en conflit avec la linéarisation de vanne de SmartPI, qui inverse sa courbe sur l'ouverture. | `0`, `0`, `100`, `100` (aucune modification) lorsque la linéarisation est activée |
+| **Seuil de régulation** (`auto_regulation_dtemp`)                                                                          | Filtre les petites variations de l'ouverture demandée et force à `0%` toute ouverture inférieure au seuil. | `0` si le matériel le permet ; au moins `3%` pour la Sonoff TRVZB, selon la recommandation VT |
+| **Période minimale de régulation** (`auto_regulation_periode_min`)                                                         | Retient un changement de commande de la vanne jusqu'à l'expiration de la période depuis le changement précédent, sauf lors du redémarrage d'un cycle. | `0` si le matériel le permet ; sinon conserver la période qu'il impose |
+| **Seuil d'ouverture**, **Ouvertures minimales**, **Ouvertures maximales**, **Fermetures maximale**                        | Modifient l'ouverture envoyée à la vanne. Cela entre en conflit avec la linéarisation de vanne de SmartPI, qui inverse sa courbe sur l'ouverture. | `0`, `0`, `100`, `100` (aucune transformation) lorsque la linéarisation est activée et que le matériel permet ces valeurs |
+
+Pour la Sonoff TRVZB, la [documentation Versatile Thermostat](https://github.com/jmcollin78/versatile_thermostat/blob/10.6.2/documentation/en/over-climate.md#self-regulation) recommande un seuil de régulation d'au moins `3%` pour éviter une possible perte de calibration de la vanne. Conservez ce seuil même si SmartPI affiche un avertissement de filtrage. Un seuil non nul ne démontre pas, à lui seul, un échec de l'apprentissage.
+
+En contrôle direct de vanne `over_climate`, VT relève aussi le seuil d'ouverture pour qu'il soit au moins égal au seuil de régulation. Si ce réglage imposé entraîne une transformation de l'ouverture, conservez-le et désactivez la linéarisation de vanne SmartPI.
 
 L'arrondi entier de la position de la vanne (pas de `1%`) s'applique toujours. Un seuil de régulation inférieur à `1` n'a donc aucun effet supplémentaire.
 
-SmartPI vérifie ces réglages au démarrage du thermostat et affiche, dans Home Assistant **Paramètres > Réparations**, un avertissement pour chaque réglage non transparent : le seuil de régulation vaut `1` ou plus, la période minimale de régulation est supérieure à `0`, ou une modification de l'ouverture est active alors que la linéarisation de vanne est activée. L'avertissement disparaît au démarrage suivant, une fois le réglage mis en conformité. Les valeurs contrôlées et les codes de problème (`dpercent_filter`, `period_filter`, `opening_remap`) sont aussi publiés sous `live.valve` dans les [diagnostics](./diagnostics.md).
+SmartPI vérifie ces réglages au démarrage du thermostat et affiche, dans Home Assistant **Paramètres > Réparations**, un avertissement lorsque le seuil de régulation vaut `1` ou plus, la période minimale de régulation est supérieure à `0`, ou une transformation de l'ouverture est active alors que la linéarisation de vanne est activée. Un avertissement de filtrage ou de retard peut rester affiché lorsque le matériel impose ces réglages ; il ne prouve pas, à lui seul, un échec de l'apprentissage. Les avertissements sont réévalués au démarrage suivant du thermostat. Les valeurs contrôlées et les codes de problème (`dpercent_filter`, `period_filter`, `opening_remap`) sont aussi publiés sous `live.valve` dans les [diagnostics](./diagnostics.md).
 
-Pour lever les avertissements, réglez le seuil de régulation et la période minimale de régulation à `0` dans le menu **Sous-jacents** des réglages de Versatile Thermostat. Si le radiateur ne commence à chauffer qu'au-delà d'une certaine ouverture, réglez cette ouverture dans **Ouverture minimale de vanne** de la courbe de vanne SmartPI plutôt que dans les réglages d'ouverture de Versatile Thermostat. Si vous avez besoin d'autres réglages d'ouverture, désactivez plutôt la linéarisation de vanne de SmartPI.
+Le seuil de régulation et la période minimale de régulation se configurent dans le menu **Sous-jacents** des réglages de Versatile Thermostat. Réglez-les à `0` uniquement si le matériel le permet. Si le radiateur ne commence à chauffer qu'au-delà d'une certaine ouverture et que votre matériel permet les réglages d'ouverture VT par défaut, réglez cette ouverture dans **Ouverture minimale de vanne** de la courbe de vanne SmartPI. Si vous devez conserver une transformation d'ouverture VT, désactivez la linéarisation de vanne SmartPI.
 
 ## Phases de fonctionnement
 
@@ -233,7 +237,7 @@ Une fois les temps morts considérés comme fiables, SmartPI commence à collect
 
 À partir de ces observations, il calcule `b`, le coefficient de déperdition thermique. Ce paramètre représente la vitesse à laquelle la pièce se refroidit en fonction de la différence entre température intérieure et extérieure.
 
-SmartPI a besoin d'au moins 8 observations de refroidissement valides avant que `b` soit considéré comme utilisable.
+SmartPI a besoin d'au moins 5 observations de refroidissement valides avant que `b` soit considéré comme utilisable.
 
 #### Étape 3 — Apprentissage du gain de chauffe (`a`)
 
@@ -241,7 +245,11 @@ Une fois que `b` dispose de suffisamment d'observations pour être considéré c
 
 À partir de ces observations, il calcule `a`, le gain de chauffe. Ce paramètre représente l'efficacité avec laquelle votre système de chauffage fait monter la température intérieure.
 
-SmartPI a besoin d'au moins 6 observations de chauffe valides pour `a`.
+Après un démarrage de chauffe, la pièce se réchauffe progressivement : l'émetteur, l'air et la sonde mettent un certain temps avant que la température monte à plein régime. SmartPI mesure ce *retard de réponse* sur les premières phases de chauffe et ignore le début de chaque phase tant que la réponse ne s'est pas stabilisée, puis tient compte de la chaleur réellement délivrée. `a` n'est publié qu'une fois ce retard connu (ou après 7 phases de chauffe où il n'a pas pu être mesuré, par exemple avec une sonde qui rapporte trop rarement).
+
+SmartPI a besoin de 5 observations de chauffe valides pour `a`, ou de 4 lorsqu'elles concordent nettement.
+
+Le bootstrap prend donc plus de temps dans les pièces lentes ou avec des sondes lentes : SmartPI privilégie un `a` précis plutôt qu'une sortie rapide du bootstrap.
 
 #### Sortie du bootstrap
 
@@ -298,7 +306,10 @@ Pour démarrer simplement :
 - gardez les seuils d'hystérésis par défaut si votre sonde est précise et publie souvent (voir ci-dessous sinon),
 - laissez `FF3` activé sauf raison précise de le désactiver,
 - laissez le filtre de consigne activé par défaut,
-- ajustez d'abord la deadband si la température oscille trop autour de la cible.
+- ajustez d'abord la deadband si la température oscille trop autour de la cible,
+- activez la détection d'ouverture de Versatile Thermostat (capteur de fenêtre ou détection automatique).
+
+Quand Versatile Thermostat détecte une fenêtre ouverte, SmartPI fige son terme intégral pendant l'ouverture et le maintient après la fermeture, le temps que le chauffage fasse de nouveau effet. Une ouverture que Versatile Thermostat ne détecte pas est vue comme une perte de chaleur ordinaire : le terme intégral la compense, puis la pièce peut légèrement dépasser la consigne après la fermeture.
 
 Évitez de modifier plusieurs paramètres à la fois pendant la première phase d'apprentissage. Il vaut mieux laisser SmartPI terminer un cycle d'apprentissage propre, puis ne changer que ce qui est réellement nécessaire.
 
@@ -315,6 +326,27 @@ Pendant le bootstrap, SmartPI chauffe en tout-ou-rien entre consigne − *hysté
 Élargir davantage n'accélère pas l'apprentissage et dégrade la précision de `a`. Ces seuils ne s'appliquent que pendant le bootstrap : une fois SmartPI en régulation normale, ils n'ont plus d'effet. Pendant le bootstrap, la température varie entre les deux seuils.
 
 Plus la pièce perd lentement sa chaleur (bonne isolation, temps doux), plus les phases de refroidissement sont longues et plus le bootstrap prend du temps.
+
+### Cycle PWM selon l'installation
+
+La durée du cycle PWM est le réglage de cycle de Versatile Thermostat. C'est la période sur laquelle SmartPI répartit sa puissance de chauffe : à 30 %, le chauffage est allumé 3 minutes sur un cycle de 10 minutes. Un cycle plus long commute moins souvent, mais laisse la température onduler pendant chaque cycle et ralentit la régulation, car SmartPI dimensionne sa réponse sur au moins deux cycles. Un cycle plus court que nécessaire n'apporte aucun confort et use seulement le relais.
+
+| Installation | Sonde 0,1 °C publiant à chaque changement | Sonde précise (0,01 °C) publiant toutes les 5 min | Sonde 0,2 °C |
+| --- | --- | --- | --- |
+| Convecteur ou panneau rayonnant dans une pièce légère | 5 min | 5 min | 5 min |
+| Émetteur électrique rapide dans une pièce lourde ou bien isolée | 15 min | 30 min | 30 min |
+| Radiateur à eau ou à huile | 10 min | 30 min | 30 min |
+| Radiateur à eau à forte inertie | 15 min | 30 min | 60 min |
+| Plancher chauffant électrique | 20 min | 15 min | déconseillé : l'apprentissage initial aboutit rarement |
+
+Pourquoi ces valeurs :
+
+- dans une pièce légère, la température réagit en quelques minutes : dès 10 minutes, l'ondulation sur chaque cycle dépasse la deadband et l'erreur double,
+- avec une sonde 0,1 °C qui publie souvent, un cycle plus long retarde surtout l'apprentissage initial,
+- une sonde précise ou lente tolère des cycles longs avec le même confort, et beaucoup moins de commutations (48 par jour à 30 minutes contre 288 à 5 minutes),
+- avec un plancher chauffant, au-delà de 15 à 20 minutes, l'apprentissage initial se dégrade : le gain de chauffe est appris moins précisément et, avec une sonde publiant toutes les 5 minutes, l'apprentissage peut ne pas aboutir.
+
+Ces valeurs viennent de simulations de chaque type d'installation. Un cycle à un cran près du tableau convient ; en cas de doute sur la rapidité de la pièce, garder le plus court.
 
 ## Configuration
 
@@ -422,7 +454,7 @@ Utilisez ce service pour mettre en pause ou reprendre l'apprentissage thermique 
 
 Pendant la pause, la régulation continue avec le modèle déjà appris, mais SmartPI ne collecte plus d'observations A/B ni de temps mort, y compris pendant une calibration. La pause n'efface ni les paramètres appris ni l'historique des temps morts. SmartPI repart avec des fenêtres d'observation vierges à chaque changement de ce réglage, qui est conservé après un redémarrage de Home Assistant.
 
-SmartPI met aussi son apprentissage en pause de lui-même tant qu'il demande de la chaleur et que le seuil de la chaudière centrale réglé dans Versatile Thermostat n'est pas atteint, pour un thermostat que Versatile Thermostat compte pour sa chaudière centrale : la chaudière ne chauffe pas alors. Cette pause fonctionne de la même façon, ne modifie pas le réglage `learning_enabled`, et se termine lorsque le seuil est atteint ou que SmartPI cesse de demander. Elle apparaît sous `live.learning.boiler_paused` dans les attributs du capteur de diagnostic. Voir [documentation technique, 3.7](technical_doc.md#37-pause-dapprentissage-sous-le-seuil-de-la-chaudière-centrale).
+SmartPI met aussi son apprentissage en pause de lui-même tant qu'il demande de la chaleur et que le seuil de la chaudière centrale réglé dans Versatile Thermostat n'est pas atteint, pour un thermostat que Versatile Thermostat compte pour sa chaudière centrale : la chaudière ne chauffe pas alors. Cette pause fonctionne de la même façon, ne modifie pas le réglage `learning_enabled`, et se termine lorsque le seuil est atteint ou que SmartPI cesse de demander. Elle apparaît sous `live.learning.boiler_paused` dans les attributs du capteur de diagnostic. Voir [documentation technique, 3.8](technical_doc.md#38-pause-dapprentissage-sous-le-seuil-de-la-chaudière-centrale).
 
 Le réglage courant est disponible dans `specific_states.smartpi_learning_enabled` sur l'entité climate et dans `live.learning.enabled` dans les attributs du capteur de diagnostic.
 

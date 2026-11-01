@@ -21,18 +21,93 @@ All notable changes to this project will be documented in this file.
   count the wait for the boiler as the room's dead time.
   The boiler pause is now shown as `learning.boiler_paused` in the
   diagnostics.
-- Learning: SmartPI pauses its learning (room model and dead time) while it
-  calls for heat below Versatile Thermostat's central boiler threshold, for a
-  thermostat that Versatile Thermostat counts for its central boiler: the
-  boiler does not heat then, and the room cools although the command says it
-  heats. Without the pause, SmartPI would count the wait for the boiler as the
-  room's dead time, from which it computes its gain, and would regulate much
-  more slowly; this matters most while it learns from its default values. With
-  the pause, the first learning after the installation or a reset takes longer,
-  as SmartPI learns only while the boiler heats. The pause works like the user's `set_smartpi_learning` pause, without
-  changing that setting; learning resumes when the threshold is reached or
+- Learning: SmartPI pauses its learning (room model, response lag and dead
+  time) while it calls for heat below Versatile Thermostat's central boiler
+  threshold, for a thermostat that Versatile Thermostat counts for its central
+  boiler: the boiler does not heat then, and the room cools although the
+  command says it heats. Without the pause, SmartPI would count the wait for
+  the boiler as the room's dead time, from which it computes its gain, and
+  would regulate much more slowly; this matters most while it learns from its
+  default values. With the pause, the first learning after the installation or
+  a reset takes longer, as SmartPI learns only while the boiler heats. The
+  pause works like the user's `set_smartpi_learning` pause, without changing
+  that setting; learning resumes when the threshold is reached or
   SmartPI stops calling, and the next heating is a new start. Regulation is
-  unchanged. No new setting. See `documentation/en/technical_doc.md`, 3.7.
+  unchanged. No new setting. See `documentation/en/technical_doc.md`, 3.8.
+
+## [0.6.0]
+
+- Calibration: with a sensor flickering between two values, the heating deadtime is no longer measured as zero. The calibration now detects the room
+  response on the filtered temperature, as the regulation does.
+- Learning: `b` is learned again while the heating stays off after a setpoint
+  decrease. When the heating was running at the time of the decrease, the
+  overheat guard held it off for the whole fall to the new setpoint, often the
+  whole night, and SmartPI learned nothing during that time.
+- Versatile Thermostat: a thermostat no longer stops with "Unknown
+  proportional function: smartpi" after its options are saved or its entry is
+  reloaded. SmartPI registers itself again each time Versatile Thermostat
+  rebuilds its API, instead of only at Home Assistant start.
+- Initial learning: after a restart, SmartPI no longer switches briefly to a
+  partial power while it waits for the response delay.
+- Initial learning: a short restart (up to 10 minutes) keeps the heating on or
+  off as it was, and no longer loses the heating phase in progress.
+- Initial learning: `b` is published after 5 cooling phases instead of 8, and
+  `a` after 5 heating measurements instead of 6, or 4 when they agree closely.
+  Both are the median of their measurements, and an odd count resists as many
+  wrong measurements as the next even one.
+- Initial learning: the heating runs between the two hysteresis thresholds as
+  configured. The near-setpoint guards (cut above the setpoint, restart below
+  it) no longer act during this phase: the cut stopped the heating well before
+  the configured stop threshold and interrupted the learning.
+- Initial learning: with a slow emitter such as floor heating, the delay
+  before the room cools after the heating stops is measured even when the
+  temperature keeps rising and plateaus for several hours (up to 12 h instead
+  of 4 h). Such installations could stay in the initial learning forever.
+- Learning: the heat-loss coefficient (`b`) learned during regulation is no
+  longer underestimated after the heating stops. An emitter keeps giving off
+  heat for a while after a stop; SmartPI now waits for the longer of 1.5 times
+  the measured cooling delay and three response delays before measuring the
+  cooling, even when the response delay is unknown. With floor heating, fewer
+  `b` measurements are taken in regulation.
+- Learning: more accurate heating gain (`a`), especially with slow emitters
+  (radiators, floor heating) and slow or coarse sensors. SmartPI measures
+  how long the installation takes to respond after the heating starts, ignores
+  the start of each heating phase until the room has really started warming,
+  and accounts for the heat actually delivered. In return, the initial learning
+  can take a few hours longer in slow rooms.
+- Learning: the heat-loss coefficient (`b`) is no longer distorted by a sensor
+  flickering between two values.
+- Learning: `a` is corrected automatically when `b` is refined.
+- Learning: a heating measurement lasts at least one PWM cycle, or half a
+  heating phase during the initial learning, so that a short measurement made
+  steeper by sensor noise is no longer kept.
+- Regulation: after a heat loss (window, cold evening), the room no longer
+  stays stuck below the setpoint for hours when the model is off; once the
+  recovery stops progressing, the integral can close the remaining gap.
+- Regulation: the integral term corrects lasting errors (sun, weather,
+  model error) in a few hours instead of several days.
+- Regulation: less overshoot after a setpoint change: the correction already
+  learned by the integral term is no longer discarded at each setpoint change.
+- Regulation: with a noisy sensor, the overheat guard no longer switches the
+  heating off and on at every reading near its threshold. It now releases
+  1.5 sensor steps below its threshold, and the room is still observed while it
+  holds the heating off. Before, a reading flickering between two values could
+  restart the PWM cycle about once a minute and keep the regulation frozen most
+  of the time.
+- Regulation: with a sensor of 0.1 °C or coarser, the temperature no longer
+  stays stuck one step away from the setpoint.
+- Diagnostics: `bootstrap_status` shows when the learning waits for the
+  response delay; `response_lag` shows the heating phases counted.
+- Diagnostics: `analysis.deadtime` shows the outcome of the last delay
+  measurement (detected, timed out, aborted) and the age of the one in
+  progress.
+- Diagnostics: `analysis.learning.response_lag` shows the measured response
+  delay of the installation.
+- Documentation: recommended PWM cycle duration by installation type and
+  temperature sensor.
+
+## [0.5.1]
+
 - Learning: a learning window closed without a robust slope (coarse sensor of
   0.2 °C, or a sensor publishing only a few times per hour) is no longer lost.
   The integral heat balance between its first and last raw temperature steps
