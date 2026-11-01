@@ -76,16 +76,26 @@ RESUME = Wait(RECALC_S, WITHIN_S)  # the next calculation
 # the next one, and a change that stops the call resumes at once.
 PAUSE_ON_SETPOINT = Wait(RECALC_S, WITHIN_S)
 RESUME_ON_SETPOINT = Wait(0.0, WITHIN_S)
-RESTART = Wait(90.0, 600.0)  # Home Assistant restarts
+RESTART = Wait(20.0, 600.0)  # Home Assistant restarts: about 20 s on the bench (check of a2b0297)
 AFTER_RESTART = Wait(30.0, 300.0)  # SmartPI's diagnostics back after a restart
 WINDOW_DELAY_S = 30.0  # VTherm's default delay before it acts on an opened or closed window
 WINDOW_OPENS = Wait(WINDOW_DELAY_S, WINDOW_DELAY_S + MARGIN_S)  # VTherm turns West off: resume at once
 WINDOW_CLOSES = Wait(WINDOW_DELAY_S + RECALC_S, WINDOW_DELAY_S + WITHIN_S)  # West heats again: pause one calculation later
 BOILER_DELAY_S = 120.0  # pack.ROLES["boiler-delay"]
 BOILER_STARTS = Wait(BOILER_DELAY_S, BOILER_DELAY_S + MARGIN_S)
-OBSERVE_AFTER_RESUME = Wait(900.0, 900.0)  # BP12: longer than the learned dead time (780 s)
+# BP12: the boiler off for longer than its activation delay, so that no activation started
+# before the scenario (a device counted for a moment) is still pending.
+BOILER_SETTLED = Wait(BOILER_DELAY_S, 2 * BOILER_DELAY_S + WITHIN_S)
+# BP12, part (b): West off until its room cools, at least SmartPI's minimum off time before a
+# dead-time detection (deadtime_estimator.py, min_off_time_seconds). Then its own heating start:
+# the boiler's delay, the room's dead time as SmartPI detected it without a delay (median 883 s in
+# the check of a2b0297), and about two minutes of rise that complete the detection.
+DEADTIME_MIN_OFF_S = 600.0
+WEST_COOLS = Wait(DEADTIME_MIN_OFF_S, 3600.0)
+STEP_DETECTED = Wait(BOILER_DELAY_S + 883.0 + 120.0, 3600.0)
 HOLD = Wait(3 * RECALC_S, 3 * RECALC_S)  # pause_holds: three readings, a calculation apart
 PUBLISHED = Wait(0.0, MARGIN_S)  # a service's change, published at once
+EAST_STOPS = Wait(0.0, MARGIN_S)  # west_alone: East's valve closes at East's own calculation
 DIAGNOSTICS = Wait(0.0, 3 * 300.0)  # BP0: each thermostat's diagnostics, there after the restart
 SENSORS = Wait(40.0, 180.0)  # Home Assistant reloads VTherm's entry about 30 s after a registry change
 NO_PAUSE = Wait(WITHIN_S, WITHIN_S)  # BP4 watches the whole wait for a pause
@@ -220,8 +230,23 @@ async def base(r: Any) -> None:
 
 
 async def west_alone(r: Any) -> dict[str, Any]:
-    """West calls alone (North calls too, not counted): West pauses. Its diagnostics then."""
-    await targets(r, **{WEST: CALLING, EAST: STOPPED, NORTH: CALLING})
+    """West calls alone (North calls too, not counted): West pauses. Its diagnostics then.
+
+    East stops first, and West's setpoint is set once East's valve is closed: the calculation
+    West's setpoint change makes then reads the threshold without East, and the pause comes at
+    West's next calculation."""
+    await targets(r, **{EAST: STOPPED, NORTH: CALLING})
+
+    async def east_valve() -> float | None:
+        state = await r.ha.state(room("East").device)
+        try:
+            return float(state["state"]) if state else None
+        except ValueError:
+            return None
+
+    took, valve = await until(east_valve, lambda v: v == 0.0, EAST_STOPS.maximum_s, 2.0)
+    r.check(took is not None, f"East stopped: its valve at {valve} after {took and round(took)} s")
+    await targets(r, **{WEST: CALLING})
     took, data = await until(lambda: live(r, WEST), lambda d: paused(d) is True, WITHIN_S)
     r.check(took is not None, f"West alone: learning paused after {took and round(took)} s (boiler_paused {paused(data)})")
     return data
@@ -236,6 +261,22 @@ async def pause_holds(r: Any) -> None:
         data = await live(r, WEST)
         r.check(paused(data) is True and (command(data) or 0) > 0, f"West: boiler_paused {paused(data)}, command {command(data)} %")
         await asyncio.sleep(RECALC_S)
+
+
+async def boiler_off_for(r: Any, hold_s: float, within_s: float) -> float | None:
+    """Seconds until VTherm's boiler has been off for ``hold_s`` in a row, or None after ``within_s``."""
+    start = time.time()
+    off_since: float | None = None
+    while time.time() - start <= within_s:
+        now = time.time()
+        if await boiler(r) == "off":
+            off_since = now if off_since is None else off_since
+            if now - off_since >= hold_s:
+                return now - start
+        else:
+            off_since = None
+        await asyncio.sleep(POLL_S)
+    return None
 
 
 async def east_calls(r: Any) -> None:
@@ -299,21 +340,21 @@ async def BP0(r: Any) -> None:
         r.note(line)
 
 
-@scenario("BP1", ("boiler-count",), total(PAUSE_ON_SETPOINT, HOLD), END_TO_END, minimum=True)
+@scenario("BP1", ("boiler-count",), total(EAST_STOPS, PAUSE_ON_SETPOINT, HOLD), END_TO_END, minimum=True)
 async def BP1(r: Any) -> None:
     """West calls alone below VTherm's threshold of 2 devices: it pauses its learning, VTherm's boiler stays off, East (not calling) and North (calling, not counted) do not pause, and West's command goes on."""
     await west_alone(r)
     await pause_holds(r)
 
 
-@scenario("BP2", ("boiler-count",), total(PAUSE_ON_SETPOINT, RESUME), END_TO_END, minimum=True)
+@scenario("BP2", ("boiler-count",), total(EAST_STOPS, PAUSE_ON_SETPOINT, RESUME), END_TO_END, minimum=True)
 async def BP2(r: Any) -> None:
     """After West paused alone, East calls too: the threshold is reached, VTherm's boiler starts and West resumes its learning."""
     await west_alone(r)
     await east_calls(r)
 
 
-@scenario("BP3", ("boiler-count",), total(PAUSE_ON_SETPOINT, RESUME_ON_SETPOINT), PAUSE_TESTS, minimum=True)
+@scenario("BP3", ("boiler-count",), total(EAST_STOPS, PAUSE_ON_SETPOINT, RESUME_ON_SETPOINT), PAUSE_TESTS, minimum=True)
 async def BP3(r: Any) -> None:
     """After West paused alone, it stops calling: it resumes its learning though the threshold is still not reached."""
     await west_alone(r)
@@ -351,7 +392,7 @@ async def BP4(r: Any) -> None:
         r.check(took is not None, f"VTherm's sensors back: {[s and s['state'] for s in found]}")
 
 
-@scenario("BP5", ("boiler-count",), total(PUBLISHED, PAUSE_ON_SETPOINT, RESUME, PUBLISHED), PAUSE_TESTS)
+@scenario("BP5", ("boiler-count",), total(PUBLISHED, EAST_STOPS, PAUSE_ON_SETPOINT, RESUME, PUBLISHED), PAUSE_TESTS)
 async def BP5(r: Any) -> None:
     """With the user's learning paused (set_smartpi_learning off), West's boiler pause starts and ends while learning.enabled stays off; the user's setting is put back."""
     api = Instance(r.ha)
@@ -373,7 +414,10 @@ async def BP5(r: Any) -> None:
 
 
 @scenario(
-    "BP6", ("boiler-power",), total(PAUSE_ON_SETPOINT, HOLD, RESUME, PAUSE_ON_SETPOINT, RESUME_ON_SETPOINT), PAUSE_TESTS
+    "BP6",
+    ("boiler-power",),
+    total(EAST_STOPS, PAUSE_ON_SETPOINT, HOLD, RESUME, EAST_STOPS, PAUSE, RESUME_ON_SETPOINT),
+    PAUSE_TESTS,
 )
 async def BP6(r: Any) -> None:
     """With VTherm's power threshold (2500 W, devices of 2000 W): West calling alone pauses while the boiler stays off, East calling too resumes it, and West alone again resumes when it stops calling."""
@@ -473,11 +517,14 @@ async def number(r: Any, unique_id: str) -> tuple[str, float]:
 @scenario(
     "BP9",
     ("boiler-count", "boiler-power"),
-    total(PAUSE_ON_SETPOINT, RESTART, AFTER_RESTART, PAUSE),
+    total(PUBLISHED, EAST_STOPS, PAUSE_ON_SETPOINT, RESTART, AFTER_RESTART, PAUSE),
     PAUSE_TESTS,
 )
 async def BP9(r: Any) -> None:
-    """Home Assistant restarts while West is paused: once SmartPI runs again, the pause returns within two calculations; nothing is learned in between (accepted updates unchanged, dead-time detection idle, no heating episode from before the restart); a, b and the dead times are kept."""
+    """With West's learned state loaded, Home Assistant restarts while West is paused: once SmartPI runs again, the pause returns within two calculations; nothing is learned in between (accepted updates unchanged, dead-time detection idle, no heating episode from before the restart); a, b and the dead times are kept."""
+    await Instance(r.ha).call(HELPER_DOMAIN, "load_learned_state", {"entity_id": WEST, "state": "west"})
+    took, data = await until(lambda: live(r, WEST), lambda d: _get(d, "control.phase") == "Stable", MARGIN_S)
+    r.check(took is not None, f"West learned: phase {_get(data, 'control.phase')}, heating dead time {_get(data, 'model.deadtime_heat_s')} s")
     before = learned(await west_alone(r))
     restarted_at = datetime.now(UTC)
     took = await Instance(r.ha).restart()
@@ -505,7 +552,7 @@ async def BP9(r: Any) -> None:
     )
 
 
-@scenario("BP10", ("boiler-count", "boiler-power"), total(PAUSE_ON_SETPOINT, RESUME, PAUSE), PAUSE_TESTS)
+@scenario("BP10", ("boiler-count", "boiler-power"), total(EAST_STOPS, PAUSE_ON_SETPOINT, RESUME, PAUSE), PAUSE_TESTS)
 async def BP10(r: Any) -> None:
     """VTherm's threshold changed while West is paused: lowered to 1 device (or 500 W), West resumes at its next calculation and the boiler starts, though only West calls; back to the role's value, West pauses again after two calculations and the boiler stops."""
     await west_alone(r)
@@ -529,7 +576,7 @@ async def BP10(r: Any) -> None:
 @scenario(
     "BP11",
     ("boiler-count",),
-    total(PAUSE_ON_SETPOINT, RESUME_ON_SETPOINT, PAUSE_ON_SETPOINT, WINDOW_OPENS, WINDOW_CLOSES),
+    total(EAST_STOPS, PAUSE_ON_SETPOINT, RESUME_ON_SETPOINT, PAUSE_ON_SETPOINT, WINDOW_OPENS, WINDOW_CLOSES),
     PAUSE_TESTS,
 )
 async def BP11(r: Any) -> None:
@@ -558,28 +605,37 @@ async def BP11(r: Any) -> None:
 @scenario(
     "BP12",
     ("boiler-delay",),
-    total(PUBLISHED, PAUSE_ON_SETPOINT, RESUME, BOILER_STARTS, NEW_EPISODE, OBSERVE_AFTER_RESUME),
+    total(
+        PUBLISHED, EAST_STOPS, PAUSE_ON_SETPOINT, BOILER_SETTLED, RESUME, BOILER_STARTS, NEW_EPISODE,
+        PUBLISHED, WEST_COOLS, STEP_DETECTED,
+    ),
     PAUSE_TESTS,
 )
 async def BP12(r: Any) -> None:
-    """Measures the limit of a central boiler with an activation delay (120 s): with West's learned state, after a pause, East calls and West resumes at once while the boiler starts 120 s later; it records that delay, when the next heating episode (the dead-time window) starts against the boiler's start, and the heating dead time for 15 minutes after. It passes on the measurement."""
+    """Measures the limit of a central boiler with an activation delay (120 s), in two parts. (a) With West's learned state, after a pause, East calls and West resumes at once while the boiler starts 120 s later: it records that delay, when the next heating episode starts against the boiler's start, and that the dead-time detection is not armed then (West was already heating). (b) From a fresh start (learning reset), West stays off until its room cools while East calls alone, then West starts heating and its start reaches the threshold: no pause, the boiler starts 120 s later, and it records SmartPI's first heating dead-time detection, which includes that wait. It passes on the measurement."""
     api = Instance(r.ha)
-    await api.call(HELPER_DOMAIN, "load_learned_state", {"entity_id": WEST, "state": "west"})
-    took, data = await until(lambda: live(r, WEST), lambda d: _get(d, "control.phase") == "Stable", MARGIN_S)
-    r.check(took is not None, f"West learned: phase {_get(data, 'control.phase')}, heating dead time {_get(data, 'model.deadtime_heat_s')} s")
-    before = _get(data, "model.deadtime_heat_s")
-    await west_alone(r)
-    await targets(r, **{EAST: CALLING})
-    took, _ = await until(lambda: live(r, WEST), lambda d: paused(d) is False, RESUME.maximum_s, 5.0)
-    resumed = datetime.now(UTC)
-    r.check(took is not None, f"East calls: West resumed at {resumed.isoformat()}")
 
     async def switch() -> Any:
         return (await r.ha.state(BOILER_SWITCH) or {}).get("state")
 
+    # (a) West already heating when the threshold is reached
+    await api.call(HELPER_DOMAIN, "load_learned_state", {"entity_id": WEST, "state": "west"})
+    took, data = await until(lambda: live(r, WEST), lambda d: _get(d, "control.phase") == "Stable", MARGIN_S)
+    r.check(took is not None, f"(a) West learned: phase {_get(data, 'control.phase')}, heating dead time {_get(data, 'model.deadtime_heat_s')} s")
+    await west_alone(r)
+    took = await boiler_off_for(r, BOILER_DELAY_S + POLL_S, BOILER_SETTLED.maximum_s)
+    r.check(took is not None, f"(a) VTherm's boiler off for {BOILER_DELAY_S + POLL_S:.0f} s in a row after {took and round(took)} s")
+    await targets(r, **{EAST: CALLING})
+    took, data = await until(lambda: live(r, WEST), lambda d: paused(d) is False, RESUME.maximum_s, 5.0)
+    resumed = datetime.now(UTC)
+    r.check(took is not None, f"(a) East calls: West resumed at {resumed.isoformat()}")
+    r.note(
+        f"(a) dead-time detection at the resume: {_get(data, 'analysis.deadtime.state')}, "
+        f"West's command {command(data)} % (a detection is armed only by a start from 0 after {DEADTIME_MIN_OFF_S:.0f} s off)"
+    )
     took, _ = await until(switch, lambda state: state == "on", BOILER_STARTS.maximum_s, 5.0)
     boiler_on = datetime.now(UTC)
-    r.check(took is not None, f"the boiler's switch on {took and round(took)} s after the resume was seen")
+    r.check(took is not None, f"(a) the boiler's switch on {took and round(took)} s after the resume was seen")
     window_from = resumed - timedelta(seconds=10.0)
 
     def episode_after_resume(d: dict[str, Any]) -> bool:
@@ -588,19 +644,71 @@ async def BP12(r: Any) -> None:
 
     took, data = await until(lambda: live(r, WEST), episode_after_resume, NEW_EPISODE.maximum_s, 5.0)
     episode = _get(data, "analysis.deadtime.heat_episode_start")
-    r.check(took is not None, f"the next heating episode starts at {episode}")
+    r.check(took is not None, f"(a) the next heating episode starts at {episode}")
     if episode is not None:
         lead = (boiler_on - datetime.fromisoformat(episode)).total_seconds()
-        r.note(f"the dead-time window starts {lead:.0f} s before the boiler's switch is seen on")
-    readings = []
-    for _ in range(round(OBSERVE_AFTER_RESUME.typical_s / RECALC_S)):
-        await asyncio.sleep(RECALC_S)
+        r.note(f"(a) the dead-time window of the learning starts {lead:.0f} s before the boiler's switch is seen on")
+    r.note(f"(a) West's dead-time detection: {_get(data, 'analysis.deadtime.state')}, last outcome {_get(data, 'analysis.deadtime.heat_last_outcome')}")
+
+    # (b) West's own start reaches the threshold
+    await api.call(SMARTPI, "reset_smartpi_learning", {"entity_id": WEST})
+    await targets(r, **{WEST: STOPPED})
+    took, data = await until(
+        lambda: live(r, WEST),
+        lambda d: _get(d, "model.deadtime_heat_reliable") is False and (command(d) or 0) == 0,
+        MARGIN_S,
+    )
+    r.check(took is not None, f"(b) West fresh and off: heating dead time reliable {_get(data, 'model.deadtime_heat_reliable')}, command {command(data)} %")
+    off_at = time.time()
+    peak: float | None = None
+
+    async def cooled() -> bool:
+        nonlocal peak
         data = await live(r, WEST)
-        readings.append((_get(data, "model.deadtime_heat_s"), _get(data, "analysis.deadtime.state"), _get(data, "control.in_deadtime_window")))
-    after = readings[-1][0] if readings else None
-    r.note(f"heating dead time: {before} s before, {after} s after; detection states {sorted({str(x[1]) for x in readings})}")
-    r.note(f"window open in {sum(1 for x in readings if x[2])} of {len(readings)} readings, a calculation apart")
-    r.check(len(readings) == round(OBSERVE_AFTER_RESUME.typical_s / RECALC_S), f"measured for {len(readings)} calculations")
+        indoor = _get(data, "temperature.indoor")
+        if isinstance(indoor, (int, float)):
+            peak = indoor if peak is None else max(peak, indoor)
+        return (
+            time.time() - off_at >= DEADTIME_MIN_OFF_S
+            and isinstance(indoor, (int, float))
+            and peak - indoor >= 0.1
+            and (command(data) or 0) == 0
+            and await boiler(r) == "off"
+        )
+
+    took, ok = await until(cooled, bool, WEST_COOLS.maximum_s)
+    r.check(took is not None, f"(b) West off for {took and round(took)} s, its room one sensor step below its peak {peak}, the boiler off")
+    if took is None:
+        return
+    await targets(r, **{WEST: CALLING})
+    stepped = time.time()
+    first_on: float | None = None
+    boiler_at: float | None = None
+    paused_seen = False
+    outcome = None
+    data = {}
+    while time.time() - stepped <= STEP_DETECTED.maximum_s:
+        data = await live(r, WEST)
+        now = time.time()
+        if first_on is None and (command(data) or 0) > 0:
+            first_on = now
+        if boiler_at is None and await switch() == "on":
+            boiler_at = now
+        paused_seen = paused_seen or paused(data) is True
+        outcome = _get(data, "analysis.deadtime.heat_last_outcome")
+        if outcome is not None:
+            break
+        await asyncio.sleep(POLL_S)
+    r.note(
+        f"(b) West's start seen {first_on and round(first_on - stepped)} s after its setpoint, the boiler's switch on "
+        f"{first_on and boiler_at and round(boiler_at - first_on)} s after West's start; paused meanwhile: {paused_seen}"
+    )
+    r.check(outcome is not None, f"(b) West's heating dead-time detection: {outcome} after {round(time.time() - stepped)} s")
+    if outcome == "detected":
+        r.note(
+            f"(b) first heating dead time {_get(data, 'model.deadtime_heat_s')} s (true 780 s; without an activation delay "
+            f"BR1's detections were 640-1087 s, median 883 s, in the check of a2b0297)"
+        )
 
 
 # --- the reference runs -----------------------------------------------------------------------
@@ -788,7 +896,7 @@ async def _reference_run(r: Any, sid: str, east: Callable[[float], float]) -> No
 
 @scenario("BR1", ("boiler-count", "boiler-power"), total(PUBLISHED, REFERENCE), PAUSE_TESTS, author_release=True)
 async def BR1(r: Any) -> None:
-    """Reference run, the same on this version and on the author's release: from a fresh start (learning reset), for 96 hours West's setpoint switches between 19 and 21 degC and East's call (so the boiler) on and off, each by its own pseudo-random sequence (steps of 30 and 40 minutes); every 10 minutes West's dead time, a and b are kept (BR1-<version>-instance<N>.json in the results), and run.py --compare judges both versions' heating dead time at 48 and 96 hours against the room's true value."""
+    """Reference run, the same on this version and on the author's release: from a fresh start (learning reset), for 96 hours West's setpoint switches between 19 and 21 degC and East's call (so the boiler) on and off, each by its own pseudo-random sequence (steps of 30 and 40 minutes); every 10 minutes West's dead time, a and b are kept (BR1-<version>-instance<N>.json in the results), and run.py --compare judges both versions' heating dead time at 48 hours and at the end against the room's true value."""
     await _reference_run(r, "BR1", east_by_sequence)
 
 

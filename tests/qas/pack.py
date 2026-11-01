@@ -30,8 +30,9 @@ AUTHOR_COMMIT = "de15302"
 OUTDOOR_SENSOR = f"sensor.{ROOMS_DOMAIN}_outdoor_temperature"
 BOILER_SWITCH = f"switch.{ROOMS_DOMAIN}_boiler"
 # A simulated sensor writes only when its reading changes: VTherm's safety delay (60 min by
-# default) would take a steady room for a dead sensor.
-SAFETY_DELAY_MIN = 1440
+# default) would take a steady room for a dead sensor. 100 hours: longer than the longest run
+# (the 96-hour reference runs), in which North's steady room wrote nothing for 24 hours.
+SAFETY_DELAY_MIN = 100 * 60
 DEVICE_POWER_W = 2000.0
 WEST_WINDOW = "input_boolean.west_window"
 
