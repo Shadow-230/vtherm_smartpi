@@ -37,6 +37,9 @@ is the testing session's choice.
        HA_INSTANCE=N python stage/vtherm_smartpi/tests/qas/run.py --role ROLE M
        HA_INSTANCE=N python stage/vtherm_smartpi/tests/qas/run.py --role ROLE BP4 BP5
 
+`run.py --list` gives every scenario with its roles, its learning at the start, whether it runs
+detached, and its typical and maximum time on each of its roles: the plan of the runs.
+
 The scripts find the bench's `lib/` in `TESTBED_ROOT` or the current directory. After a change to
 `pack.py`, run `python tests/qas/configuration.py` and `python tests/qas/learned_state.py`; CI
 checks both files are up to date.
@@ -52,6 +55,7 @@ checks both files are up to date.
 | `learned_state.py` | writes `states/west.json` and `states/east.json` from the rooms' own values |
 | `instance.py` | one instance through Home Assistant's API, and the config flows driven step by step |
 | `prepare.py` | prepares an instance as a role |
+| `steps.py` | what the scenarios share: the start state, the steps and their checks, the timing, the trace (section 4) |
 | `scenarios.py`, `run.py` | the scenarios, and the runner on the bench's harness |
 
 **The test rooms** (`smartpi_test_rooms`). Each room is one thermal mass:
@@ -93,17 +97,63 @@ VTherm's defaults (a cycle of 5 minutes, for example):
 
 SmartPI runs with its "SmartPI defaults" entry only.
 
+**What the roles test.** The device count, the power and the activation delay each decide in
+their own way when the boiler heats, so the pause's steps (BP1–BP3, BP5–BP11, BP18, BP20) run on
+`boiler-count`, `boiler-power` and `boiler-delay`, each with what that role makes of a step: with
+the delay, West resumes when the threshold is reached and the boiler starts 120 s later. The
+power levels of `boiler-levels` let the power alone decide: West's 300 W alone stays below 600 W,
+East's 900 W alone or both reach it (BP13). With the power, VTherm counts each device's power
+times SmartPI's command for the next cycle, so a partial command counts as its share of the
+device (BP14–BP16); with the device count, any open valve counts as a whole device.
+
 ## 4. The catalogue
 
-Times are in real time, the sum of each scenario's waits (`scenarios.py`, `Wait`); every wait ends
-as soon as its condition holds:
-- **typical**: what SmartPI's timing gives (it calculates every 60 s): two calculations for a
-  pause, one for a resume, plus the steps' own holds. A change of the setpoint or of the HVAC
-  mode makes a calculation at once: after it, a pause comes one calculation later, and a resume
-  it causes comes at once. Judge a run against it;
-- **maximum**: the sum of the waits' limits, reached only if SmartPI is late. Plan detached runs
-  and reminders from it;
+**The start state.** Before and after each scenario the runner puts the instance back in one
+state (`steps.Bench.base`): every thermostat heating (HVAC mode heat); West and East not calling
+(setpoint 7 °C, command 0 %, valves closed); the window closed; the role's threshold and the
+user's learning setting as prepared; VTherm's boiler off for longer than the role's activation
+delay plus 30 s; no thermostat paused. Then the scenario's start: West's and East's learning
+**fresh** (`reset_smartpi_learning`) or **learned** (the helper's `load_learned_state`), and
+North at the scenario's setpoint (23 °C, calling, unless it says otherwise). A scenario that
+does not reach the start state does not run, and says so.
+
+**The steps** (`steps.py`). Each step changes one thing: West or East calling or not, West off and
+on, its window, the threshold, a restart. It waits for what the role makes of it, all at once,
+each against its own time, and then checks the same things every time: West's and East's
+pause, North never paused, VTherm's boiler and the boiler's switch, West's and East's command,
+and VTherm's count and power against the valves and the commands. A thermostat that starts
+calling with the threshold reached is watched for a pause it must not take.
+
+**The trace.** While a scenario runs (all but BR1 and BR2, which keep their own file), every 5 s
+one reading of the instance keeps what changed: VTherm's count, power and boiler, the boiler's
+switch, the window, and each thermostat's mode, setpoint, valve, pause, command, learning
+counters, window outcomes and dead-time detection. It is written to
+`traces/<date>-<ID>-<role>-<version>-instance<N>-<time>.json` next to the results, and a short
+timeline of the boiler, the switch, the count, the power, the pauses and the commands goes into
+the results, so that a report needs no history of Home Assistant. Every pause in the trace is
+checked: no learning counter and no heating dead time changes while paused, no dead-time
+detection is armed, and an episode published after the resume starts after it.
+
+**The times** are in real time, the sum of each scenario's waits (`steps.py`, `Wait`), for each of
+its roles; every wait ends as soon as its condition holds. SmartPI calculates every 60 s:
+- a change of a thermostat's own setpoint or mode makes a calculation at once: from not calling,
+  its pause comes at its next calculation (not at the one its setpoint makes); a resume it causes
+  comes at once;
+- a change from outside (East, the threshold, the boiler) reaches it at its next calculation: a
+  pause two calculations later, a resume one;
+- a closed window: VTherm's delay of 30 s, then two calculations (150 s on the bench, 11 of 11).
+
+In the columns:
+- **typical**: what SmartPI's timing gives, plus the steps' own holds; one value, or the shortest
+  to the longest over the scenario's roles. Judge a run against it;
+- **maximum**: the sum of the waits' limits, reached only if SmartPI is late, with up to 9 minutes
+  for the start state when the boiler was just on. Plan detached runs and reminders from it;
 - **time depends on**: what changes a scenario's time beyond SmartPI's timing.
+
+**Passes on**: its checks, or a measurement. A scenario that passes on a measurement first checks
+that the measurement took place (BP12, BP21: the detection West's start armed ended detected;
+BP14–BP16: the whole time was read, and what the scenario needs happened in it; BP19: West
+modulated and its command reached 0; BR2: the 96 hours ran).
 
 M: in the minimum set, run after any change. Detached: a maximum over the bench's two-hour limit
 for a background command. On the author's release: runs there too (section 5).
@@ -212,8 +262,15 @@ In both runs the version with the pause stayed in SmartPI's first phase for the 
 version and on the author's release: six instances for 96 hours, started together from freshly
 prepared instances. On the author's release: deploy the author's checkout as the plugin, the pack from `qas` as usual
 (`--components stage/vtherm_smartpi/tests/qas/custom_components`), prepare the instance as its
-role, and run with `--author-release`: only BP0, BR1 and BR2 run there, and BP0 does not look for
-`learning.boiler_paused`, which the author's release does not publish.
+role, and run with `--author-release`: only BP0, BP14, BR1 and BR2 run there, and they do not
+look for `learning.boiler_paused`, which the author's release does not publish.
+
+**BP14 on both versions.** BP14 measures 3 hours of West's own regulation at a power threshold
+of 600 W, where the boiler stops whenever West's command falls below 30 %. Run on
+`boiler-power` on this version and on the author's release, its numbers (boiler switches and
+pauses per hour, the shortest times on and off, the room's swing and overshoot, what West
+learned) are compared in the report; they are for the owner's decision on a hysteresis or a
+shortest pause at a power threshold.
 
 **Sources.**
 - Hägglund T., Åström K.J., Supervision of adaptive control algorithms, *Automatica* 36(8), 2000,
@@ -233,14 +290,22 @@ role, and run with `--author-release`: only BP0, BR1 and BR2 run there, and BP0 
   its own. Every result records the commit it tested.
 - SmartPI's defaults entry shows the diagnostics of a thermostat created after it once it is set
   up again: the preparation ends with a restart.
+- Every scenario resets West's and East's learning, or loads their learned state, at its start:
+  what a scenario learned is never carried into the next one.
 - BP4 disables VTherm's active-device and power sensors for a while; Home Assistant reloads
   VTherm's central entry when they are disabled and again when they are enabled.
-- BP7, BP9 and BP12 load West's learned state; West keeps it after the scenario.
-- BP9 restarts Home Assistant.
-- BR1 and BR2 reset West's learning; West keeps what it learned in the run.
+- BP7 sets West's setpoint 1 °C above its room, so that the calibration heats at once.
+- BP9 and BP20 restart Home Assistant; the trace misses its readings meanwhile.
 - BP12 measures a limit (a central boiler that starts after a delay), in two parts: (a) West
   already heating when East reaches the threshold, where SmartPI's dead-time detection is not
   armed and only the learning's wait after the episode start comes early; (b) West's own start
   reaching the threshold, from a fresh start (it resets West's learning), where the first
-  detection includes the boiler's delay. It passes on the measurement; whether the limit is
-  acceptable is decided on its numbers.
+  detection includes the boiler's delay. BP21 is (b) on `boiler-count`, the boiler starting at
+  West's start, the reference for (b) under the same conditions. Both pass on the measurement;
+  whether the limit is acceptable is decided on their numbers.
+- BP14–BP16 and BP19 set a setpoint just above (or, in BP19's steps down, just below) the room's
+  temperature at that moment: how far the command modulates depends on the room, so these pass
+  on their measurement.
+- With the device count, a thermostat near its setpoint keeps a partial command and its valve
+  open: it keeps the threshold reached (BP16).
+- BR1 and BR2 reset West's learning; West keeps what it learned in the run.
