@@ -1,0 +1,11 @@
+# Cycle: the learning pause below the central boiler threshold
+
+SmartPI pauses its learning while it calls for heat below Versatile Thermostat's central boiler
+threshold (`documentation/en/technical_doc.md` of the tested commit). The fork's `qas` carries the
+author's release plus this feature; each check below names both. Reports follow
+[`../REPORT.md`](../REPORT.md).
+
+| Version (`qas`) | Author's release | Tested (UTC) | Scope | Versatile Thermostat | Home Assistant | Report | Result |
+|---|---|---|---|---|---|---|---|
+| [PR #43](https://github.com/Shadow-230/vtherm_smartpi/pull/43), [c8bcc5d](https://github.com/Shadow-230/vtherm_smartpi/commit/c8bcc5d19a8ca50f6e79f01d842d2568a821d15c); BP12 on [PR #44](https://github.com/Shadow-230/vtherm_smartpi/pull/44), [2ca31af](https://github.com/Shadow-230/vtherm_smartpi/commit/2ca31af1470ba62d44d957bfeaab320c981c3631) (pack only) | 0.6.0 (`de15302`) | 2026-11-01 – 2026-11-02 | local, catalogue, repetitions of BP9–BP12; no reference runs | 10.6.2 (5faa10a) | 2026.9.3 | **[check](qas-pr043-c8bcc5d/2026-11-02-check.md)** | Every run passed (catalogue 18/18, repetitions 52/52, BP12 11/11), no SmartPI error. BP12 (b) on c8bcc5d passed without measuring (stale outcome), fixed in 2ca31af. BP12 (b): first heating dead time with a 120-s boiler delay, median 1011 s against 883 s without (a shift of about the delay); (a) the learning window opens 71–110 s before the boiler. The pause confirms on two calculations whatever their spacing. Open: owner's decisions §10, pack gaps §9 |
+| [PR #41](https://github.com/Shadow-230/vtherm_smartpi/pull/41), [a2b0297](https://github.com/Shadow-230/vtherm_smartpi/commit/a2b029773bc2d44f7ada68170155301ee0cf56f4) | 0.5.2 (`c75d803`) | 2026-10-28 – 2026-11-01 | local, catalogue, repetitions of BP9–BP12, reference runs BR1/BR2 (96 h) | 10.6.2 (5faa10a) | 2026.9.3 | **[check](qas-pr041-a2b0297/2026-11-01-check.md)** | Every run passed (phase A 16/16, repetitions 63/63, BR1/BR2 6/6), no SmartPI error. BR1 valid: West's heating dead time qas +10/+18 % (2 devices) and +7/+21 % (2500 W) against 0.5.2 +203/+114 % and +198/+124 % at 48/96 h; BR2 qas −3/+10 %, 0.5.2 +817/+903 %. The pause removed every dead-time detection from a boiler-off episode; qas's remaining error is the author's estimator, the same on 0.5.2. Open: owner's decisions §9, pack gaps §10 |
