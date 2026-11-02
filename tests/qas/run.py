@@ -3,6 +3,7 @@
     HA_INSTANCE=N python <stage>/tests/qas/run.py --role ROLE ID [ID ...]
     HA_INSTANCE=N python <stage>/tests/qas/run.py --role ROLE M     # the role's minimum set
     HA_INSTANCE=N python <stage>/tests/qas/run.py --role boiler-count --author-release BP0 BR1 BR2
+    HA_INSTANCE=N python <stage>/tests/qas/run.py --role boiler-power --author-release BP14
     python <stage>/tests/qas/run.py --list [--markdown]             # the catalogue
     python <stage>/tests/qas/run.py --compare QAS.json AUTHOR.json  # BR1 or BR2 on both versions
 

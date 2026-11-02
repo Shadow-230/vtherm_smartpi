@@ -20,7 +20,7 @@ import configuration  # noqa: E402
 import learned_state  # noqa: E402
 import run  # noqa: E402
 from pack import AUTHOR_RELEASE, BOILER_SWITCH, ROLES, WEST_WINDOW, room  # noqa: E402
-from scenarios import SCENARIOS  # noqa: E402
+from scenarios import SCENARIOS, cycle_metrics, took_place  # noqa: E402
 from steps import (  # noqa: E402
     EAST,
     NORTH,
@@ -105,11 +105,17 @@ def test_each_scenario_says_its_start_state_event_and_expected_result() -> None:
         assert ("passes on the measurement" in scenario.checks) is scenario.measured, scenario.id
 
 
+def test_every_role_has_scenarios_beyond_bp0() -> None:
+    for name in ROLES:
+        assert [s.id for s in SCENARIOS.values() if name in s.roles and s.id != "BP0"], name
+
+
 def test_the_steps_of_the_pause_run_on_the_three_roles() -> None:
     """The role matrix: the pause's steps on the device count, the power and the activation delay."""
     three = {"boiler-count", "boiler-power", "boiler-delay"}
-    for sid in ("BP1", "BP2", "BP3", "BP5", "BP6", "BP7", "BP8", "BP9", "BP10", "BP11"):
+    for sid in ("BP1", "BP2", "BP3", "BP5", "BP6", "BP7", "BP8", "BP9", "BP10", "BP11", "BP18", "BP20"):
         assert three <= set(SCENARIOS[sid].roles), sid
+    assert set(SCENARIOS["BP13"].roles) == {"boiler-levels", "boiler-levels-delay"}
 
 
 @pytest.mark.parametrize(
@@ -141,6 +147,7 @@ def test_the_author_s_release_runs_only_its_scenarios() -> None:
     """With --author-release, the minimum set is BP0 only, and a scenario of the pause is refused."""
     assert run.selected(["M"], "boiler-count", author_release=True) == ["BP0"]
     assert run.selected(["BP0", "BR1", "BR2"], "boiler-count", author_release=True) == ["BP0", "BR1", "BR2"]
+    assert run.selected(["BP14"], "boiler-power", author_release=True) == ["BP14"]
     with pytest.raises(SystemExit):
         run.selected(["BP1"], "boiler-count", author_release=True)
 
@@ -341,3 +348,28 @@ def test_the_pause_agrees_with_the_call_and_the_threshold() -> None:
     assert pause_mismatches(_calls([True] * 12, below=False), "west")
     assert pause_mismatches(_calls([True] * 12, below=True, command=0.0), "west")
     assert not pause_mismatches([s | {"west.hvac": "off"} for s in _calls([False] * 30, below=True)], "west")
+
+
+def test_the_natural_cycle_s_measurement() -> None:
+    """BP14: switches and pauses per hour, the shortest whole times on and off, the swing and the
+    largest error after the first hour, the overshoot after a boiler start, and what was learned."""
+    rows = []
+    for i in range(int(7200 / 5)):
+        t = 5.0 * i
+        on = (t // 600) % 2 == 1  # 10 minutes off, 10 on
+        rows.append({"t": t, "boiler": "on" if on else "off", "west.paused": not on, "west.indoor": 20.1 if on else 19.9, "west.accepted_a": 31, "west.a": 0.04})
+    m = cycle_metrics(rows, 20.0, settle_s=3600.0)
+    assert m["hours"] == pytest.approx(2.0, abs=0.01)
+    assert m["boiler_switches_per_hour"] == pytest.approx(5.5, abs=0.1)
+    assert m["pauses_per_hour"] == pytest.approx(2.5, abs=0.1)
+    assert (m["shortest_on_s"], m["shortest_off_s"]) == (600, 600)
+    assert m["swing_c"] == pytest.approx(0.2)
+    assert m["overshoot_c"] == pytest.approx(0.1)
+    assert m["accepted_a"] == (31, 31)
+
+
+def test_a_measurement_takes_place_only_when_read_throughout() -> None:
+    full = [{"t": 5.0 * i, "west.command": 40.0} for i in range(721)]
+    assert took_place(full, 3600.0)[0]
+    assert not took_place(full[:300], 3600.0)[0]
+    assert not took_place([s | {"west.command": None} for s in full], 3600.0)[0]

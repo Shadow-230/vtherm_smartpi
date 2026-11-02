@@ -300,3 +300,36 @@ async def test_from_the_start_state_west_pauses_at_its_next_calculation(hass: Ho
     assert _live(hass, WEST)["power"]["current_cycle_percent"] > 0
     await _run_for(hass, freezer, 70)
     assert paused() is True
+
+
+@pytest.mark.parametrize("expected_lingering_timers", [True])
+async def test_the_pause_on_the_levels_of_power(hass: HomeAssistant, freezer: Any) -> None:
+    """As BP13 runs on the bench (boiler-levels: West 300 W, East 900 W, threshold 600 W): West
+    alone pauses with the boiler off; East too (1200 W) starts the boiler and resumes West; East
+    stopping stops the boiler at once and pauses West again."""
+    await _prepare(hass, ROLES["boiler-levels"])
+    registry = er.async_get(hass)
+    boiler = registry.async_get_entity_id("binary_sensor", VT, "central_boiler_state")
+    power = registry.async_get_entity_id("sensor", VT, "total_power_active_boiler")
+
+    def paused(climate: str) -> Any:
+        return _live(hass, climate).get("learning", {}).get("boiler_paused")
+
+    await _targets(hass, **{WEST: 7.0, EAST: 7.0, NORTH: 7.0})
+    await _run_for(hass, freezer, 15 * 60)
+    await _targets(hass, **{WEST: 23.0})
+    await _run_for(hass, freezer, 3 * 60)
+    assert float(hass.states.get(power).state) == pytest.approx(300.0)
+    assert paused(WEST) is True and hass.states.get(boiler).state == "off"
+
+    await _targets(hass, **{EAST: 23.0})
+    await _run_for(hass, freezer, 2 * 60)
+    assert float(hass.states.get(power).state) == pytest.approx(1200.0)
+    assert hass.states.get(boiler).state == "on"
+    assert paused(WEST) is False and paused(EAST) is False
+
+    await _targets(hass, **{EAST: 7.0})
+    await _run_for(hass, freezer, 7.0)
+    assert hass.states.get(boiler).state == "off"
+    await _run_for(hass, freezer, 3 * 60)
+    assert paused(WEST) is True and paused(EAST) is False
