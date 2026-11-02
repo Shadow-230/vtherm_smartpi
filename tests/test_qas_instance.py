@@ -103,8 +103,7 @@ async def _prepare(hass: HomeAssistant, role: Role) -> list[str]:
     the preparation's restart. The lines it said."""
     config = configuration(role)
     assert await async_setup_component(hass, ROOMS_DOMAIN, {ROOMS_DOMAIN: config[ROOMS_DOMAIN]})
-    if "input_boolean" in config:
-        assert await async_setup_component(hass, "input_boolean", {"input_boolean": config["input_boolean"]})
+    assert await async_setup_component(hass, "input_boolean", {"input_boolean": config["input_boolean"]})
     assert await async_setup_component(hass, VT, {})
     assert await async_setup_component(hass, SMARTPI, {})
     assert await async_setup_component(hass, HELPER_DOMAIN, {HELPER_DOMAIN: None})
@@ -132,8 +131,8 @@ def _live(hass: HomeAssistant, climate: str) -> dict[str, Any]:
 async def test_each_role_is_prepared_through_the_forms(hass: HomeAssistant, caplog: pytest.LogCaptureFixture, name: str) -> None:
     """Every form takes the answers, no integration logs a warning or an error, SmartPI reports no
     repair, VTherm's central boiler agrees with the test rooms' boiler switch, each thermostat runs
-    SmartPI with its diagnostics, the role's thresholds are set, and preparing again changes
-    nothing."""
+    SmartPI with its diagnostics and the role's device power, West has its window sensor, the
+    role's thresholds are set, and preparing again changes nothing."""
     caplog.set_level(logging.WARNING)
     role = ROLES[name]
     await _prepare(hass, role)
@@ -150,7 +149,10 @@ async def test_each_role_is_prepared_through_the_forms(hass: HomeAssistant, capl
     central = next(e for e in hass.config_entries.async_entries(VT) if e.title == "Central configuration")
     assert central.data.get("central_boiler_activation_delay_sec") == role.boiler_delay_s
     west = hass.config_entries.async_get_entry(registry.async_get(WEST).config_entry_id)
-    assert (west.data.get("window_sensor_entity_id") == WEST_WINDOW) is role.west_window
+    assert west.data.get("window_sensor_entity_id") == WEST_WINDOW
+    for r in ROOMS:
+        vt_entry = hass.config_entries.async_get_entry(registry.async_get(r.climate).config_entry_id)
+        assert vt_entry.data["device_power"] == role.device_power_w(r.name), r.name
     problems = [
         f"{r.levelname} {r.name}: {r.getMessage()[:200]}"
         for r in caplog.records
@@ -178,8 +180,8 @@ async def test_the_helper_loads_the_learned_state(hass: HomeAssistant) -> None:
 
     live = _live(hass, WEST)
     assert live["control"]["phase"] == "Stable"
-    assert live["model"]["a"] == pytest.approx(model()["a"])
-    assert live["model"]["deadtime_heat_s"] == pytest.approx(model()["deadtime_s"])
+    assert live["model"]["a"] == pytest.approx(model(room("West"))["a"])
+    assert live["model"]["deadtime_heat_s"] == pytest.approx(model(room("West"))["deadtime_s"])
 
 
 async def _run_for(hass: HomeAssistant, freezer: Any, seconds: float, step_s: float = 7.0) -> None:
@@ -279,3 +281,55 @@ async def test_the_pause_with_a_changed_threshold_off_and_window(hass: HomeAssis
     await _run_for(hass, freezer, 4 * 60)
     assert hass.states.get(WEST).state == "heat"
     assert paused() is True
+
+
+@pytest.mark.parametrize("expected_lingering_timers", [True])
+async def test_from_the_start_state_west_pauses_at_its_next_calculation(hass: HomeAssistant, freezer: Any) -> None:
+    """As BP1 runs from the common start state (steps.py): West not calling, its setpoint's own
+    calculation does not pause it; its next calculation does."""
+    await _prepare(hass, ROLES["boiler-count"])
+
+    def paused() -> Any:
+        return _live(hass, WEST).get("learning", {}).get("boiler_paused")
+
+    await _targets(hass, **{WEST: 7.0, EAST: 7.0, NORTH: 23.0})
+    await _run_for(hass, freezer, 15 * 60)
+    assert paused() is False
+    await _targets(hass, **{WEST: 23.0})
+    assert paused() is False
+    assert _live(hass, WEST)["power"]["current_cycle_percent"] > 0
+    await _run_for(hass, freezer, 70)
+    assert paused() is True
+
+
+@pytest.mark.parametrize("expected_lingering_timers", [True])
+async def test_the_pause_on_the_levels_of_power(hass: HomeAssistant, freezer: Any) -> None:
+    """As BP13 runs on the bench (boiler-levels: West 300 W, East 900 W, threshold 600 W): West
+    alone pauses with the boiler off; East too (1200 W) starts the boiler and resumes West; East
+    stopping stops the boiler at once and pauses West again."""
+    await _prepare(hass, ROLES["boiler-levels"])
+    registry = er.async_get(hass)
+    boiler = registry.async_get_entity_id("binary_sensor", VT, "central_boiler_state")
+    power = registry.async_get_entity_id("sensor", VT, "total_power_active_boiler")
+
+    def paused(climate: str) -> Any:
+        return _live(hass, climate).get("learning", {}).get("boiler_paused")
+
+    await _targets(hass, **{WEST: 7.0, EAST: 7.0, NORTH: 7.0})
+    await _run_for(hass, freezer, 15 * 60)
+    await _targets(hass, **{WEST: 23.0})
+    await _run_for(hass, freezer, 3 * 60)
+    assert float(hass.states.get(power).state) == pytest.approx(300.0)
+    assert paused(WEST) is True and hass.states.get(boiler).state == "off"
+
+    await _targets(hass, **{EAST: 23.0})
+    await _run_for(hass, freezer, 2 * 60)
+    assert float(hass.states.get(power).state) == pytest.approx(1200.0)
+    assert hass.states.get(boiler).state == "on"
+    assert paused(WEST) is False and paused(EAST) is False
+
+    await _targets(hass, **{EAST: 7.0})
+    await _run_for(hass, freezer, 7.0)
+    assert hass.states.get(boiler).state == "off"
+    await _run_for(hass, freezer, 3 * 60)
+    assert paused(WEST) is True and paused(EAST) is False

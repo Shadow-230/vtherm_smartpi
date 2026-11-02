@@ -7,6 +7,7 @@ import itertools
 import json
 import pathlib
 import sys
+from datetime import UTC, datetime
 from unittest.mock import MagicMock
 
 import pytest
@@ -18,8 +19,24 @@ if str(QAS) not in sys.path:
 import configuration  # noqa: E402
 import learned_state  # noqa: E402
 import run  # noqa: E402
-from pack import AUTHOR_RELEASE, ROLES  # noqa: E402
-from scenarios import SCENARIOS  # noqa: E402
+from pack import AUTHOR_RELEASE, BOILER_SWITCH, ROLES, WEST_WINDOW, room  # noqa: E402
+from scenarios import SCENARIOS, cycle_metrics, took_place  # noqa: E402
+from steps import (  # noqa: E402
+    EAST,
+    NORTH,
+    STARTS,
+    WAITING_HEAT,
+    WEST,
+    Bench,
+    Ids,
+    demand_agrees,
+    learned_in_pauses,
+    pause_mismatches,
+    reached,
+    snapshot_of,
+    spans,
+    transitions,
+)
 
 from custom_components.vtherm_smartpi.algo import SmartPI  # noqa: E402
 from custom_components.vtherm_smartpi.hvac_mode import VThermHvacMode_HEAT  # noqa: E402
@@ -36,16 +53,22 @@ def test_no_other_role_configuration() -> None:
     assert {p.stem for p in configuration.CONFIG.glob("*.yaml")} == set(ROLES)
 
 
-def test_the_learned_state_is_up_to_date() -> None:
-    assert learned_state.FILE.read_text(encoding="utf-8") == learned_state.text(), "run python tests/qas/learned_state.py"
+@pytest.mark.parametrize("room", learned_state.ROOMS, ids=lambda r: r.key)
+def test_each_learned_state_is_up_to_date(room) -> None:
+    assert learned_state.file(room).read_text(encoding="utf-8") == learned_state.text(room), "run python tests/qas/learned_state.py"
 
 
-def test_the_learned_state_loads_as_the_room_s_model() -> None:
+def test_no_other_learned_state() -> None:
+    assert {p.name for p in learned_state.STATES.glob("*.json")} == {learned_state.file(r).name for r in learned_state.ROOMS}
+
+
+@pytest.mark.parametrize("room", learned_state.ROOMS, ids=lambda r: r.key)
+def test_each_learned_state_loads_as_its_room_s_model(room) -> None:
     """Loaded into SmartPI, the state gives the room's a and b, its dead times reliable, and SmartPI
     past its first phase at its first calculation."""
-    model = learned_state.model()
+    model = learned_state.model(room)
     smartpi = SmartPI(hass=MagicMock(), cycle_min=5, minimal_activation_delay=0, minimal_deactivation_delay=0, name="QAS")
-    smartpi.load_state(json.loads(learned_state.FILE.read_text(encoding="utf-8")))
+    smartpi.load_state(json.loads(learned_state.file(room).read_text(encoding="utf-8")))
 
     smartpi.calculate(target_temp=20.0, current_temp=19.5, ext_current_temp=3.0, slope=0.0, hvac_mode=VThermHvacMode_HEAT)
 
@@ -69,8 +92,51 @@ def test_each_scenario_has_its_checks_roles_and_counterpart() -> None:
     for scenario in SCENARIOS.values():
         assert scenario.checks, scenario.id
         assert set(scenario.roles) <= set(ROLES), scenario.id
+        assert scenario.start in STARTS, scenario.id
         for name in scenario.counterpart.split(", "):
             assert (tests / name).is_file(), f"{scenario.id}: no {name}"
+
+
+def test_each_scenario_says_its_start_state_event_and_expected_result() -> None:
+    """One format for the catalogue: the start state → the event → the expected result; a scenario
+    that passes on a measurement says what the measurement is."""
+    for scenario in SCENARIOS.values():
+        assert len(scenario.parts) == 3 and all(scenario.parts), scenario.id
+        assert ("passes on the measurement" in scenario.checks) is scenario.measured, scenario.id
+
+
+def test_every_role_has_scenarios_beyond_bp0() -> None:
+    for name in ROLES:
+        assert [s.id for s in SCENARIOS.values() if name in s.roles and s.id != "BP0"], name
+
+
+def test_the_steps_of_the_pause_run_on_the_three_roles() -> None:
+    """The role matrix: the pause's steps on the device count, the power and the activation delay."""
+    three = {"boiler-count", "boiler-power", "boiler-delay"}
+    for sid in ("BP1", "BP2", "BP3", "BP5", "BP6", "BP7", "BP8", "BP9", "BP10", "BP11", "BP18", "BP20"):
+        assert three <= set(SCENARIOS[sid].roles), sid
+    assert set(SCENARIOS["BP13"].roles) == {"boiler-levels", "boiler-levels-delay"}
+
+
+@pytest.mark.parametrize(
+    ("name", "west", "east", "both"),
+    [
+        ("boiler-count", False, False, True),
+        ("boiler-power", False, False, True),
+        ("boiler-delay", False, False, True),
+        ("boiler-levels", False, True, True),
+        ("boiler-levels-delay", False, True, True),
+    ],
+)
+def test_what_each_role_makes_of_the_calls(name: str, west: bool, east: bool, both: bool) -> None:
+    """West alone is below every role's threshold; East alone reaches only the 600 W of the levels
+    (900 W); both reach every threshold. A thermostat calling below it is due to pause."""
+    bench = Bench(MagicMock(), Ids({}, None, None, None, None, None), ROLES[name])
+    for calling, reaches in (({WEST}, west), ({EAST}, east), ({WEST, EAST}, both)):
+        bench.calling = set(calling)
+        assert bench.reaches() is reaches, calling
+        assert all(bench.due_paused(c) is (not reaches) for c in calling)
+        assert bench.due_paused(NORTH) is False
 
 
 def test_nothing_in_the_pack_is_collected_by_pytest() -> None:
@@ -81,13 +147,16 @@ def test_the_author_s_release_runs_only_its_scenarios() -> None:
     """With --author-release, the minimum set is BP0 only, and a scenario of the pause is refused."""
     assert run.selected(["M"], "boiler-count", author_release=True) == ["BP0"]
     assert run.selected(["BP0", "BR1", "BR2"], "boiler-count", author_release=True) == ["BP0", "BR1", "BR2"]
+    assert run.selected(["BP14"], "boiler-power", author_release=True) == ["BP14"]
     with pytest.raises(SystemExit):
         run.selected(["BP1"], "boiler-count", author_release=True)
 
 
 def test_each_scenario_s_typical_time_is_within_its_maximum() -> None:
     for scenario in SCENARIOS.values():
-        assert 0 <= scenario.time.typical_s <= scenario.time.maximum_s, scenario.id
+        for name in scenario.roles:
+            wait = scenario.time_for(ROLES[name])
+            assert 0 <= wait.typical_s <= wait.maximum_s, (scenario.id, name)
 
 
 def test_the_reference_inputs_are_maximum_length_sequences() -> None:
@@ -149,7 +218,7 @@ def test_bp12_takes_the_outcome_of_the_detection_west_s_start_armed() -> None:
     from scenarios import heat_detection  # noqa: PLC0415
 
     def reading(state: str, outcome: str | None) -> dict:
-        return {"analysis": {"deadtime": {"state": state, "heat_last_outcome": outcome}}}
+        return {"west.dt_state": state, "west.heat_outcome": outcome}
 
     stale = reading("OFF", "aborted")
     waiting = reading("WAITING_HEAT_RESPONSE", "aborted")
@@ -157,3 +226,151 @@ def test_bp12_takes_the_outcome_of_the_detection_west_s_start_armed() -> None:
     assert heat_detection([stale]) == (False, None)
     assert heat_detection([stale, waiting, waiting]) == (True, None)
     assert heat_detection([stale, waiting, waiting, detected]) == (True, "detected")
+
+
+# --- the steps' readings and the trace's checks (steps.py) -------------------------------------
+
+
+def _ids() -> Ids:
+    return Ids(
+        diag={WEST: "sensor.west_diag", EAST: "sensor.east_diag", NORTH: "sensor.north_diag"},
+        boiler="binary_sensor.boiler",
+        count="sensor.count",
+        power="sensor.power",
+        count_threshold="number.count_threshold",
+        power_threshold="number.power_threshold",
+    )
+
+
+def test_a_snapshot_reads_every_entity_once() -> None:
+    """One reading of all states gives VTherm's boiler, count, power and thresholds, the boiler's
+    switch, the window, and each thermostat's SmartPI diagnostics (the valve opening among them),
+    mode, setpoint, and its valve's opening or its heater's state."""
+    live = {"learning": {"boiler_paused": True, "accepted_updates_a": 31}, "power": {"current_cycle_percent": 100.0, "next_cycle_percent": 80.0}}
+    states = {
+        "binary_sensor.boiler": {"state": "off", "last_changed": "2026-11-02T10:00:00+00:00"},
+        "sensor.count": {"state": "1"},
+        "sensor.power": {"state": "1600.0"},
+        "number.count_threshold": {"state": "0.0"},
+        "number.power_threshold": {"state": "2500.0"},
+        BOILER_SWITCH: {"state": "off"},
+        WEST_WINDOW: {"state": "off"},
+        "sensor.west_diag": {"state": "ok", "attributes": {"live": live}},
+        WEST: {"state": "heat", "attributes": {"temperature": 23.0}},
+        room("West").device: {"state": "80.0"},
+        room("North").device: {"state": "on"},
+    }
+    snap = snapshot_of(states, _ids(), 1.0)
+    assert (snap["boiler"], snap["count"], snap["power"], snap["power_threshold"], snap["switch"]) == ("off", 1.0, 1600.0, 2500.0, "off")
+    assert (snap["west.paused"], snap["west.opening"], snap["west.next_opening"], snap["west.accepted_a"]) == (True, 100.0, 80.0, 31)
+    assert (snap["west.hvac"], snap["west.setpoint"], snap["west.valve"], snap["north.heater"]) == ("heat", 23.0, 80.0, "on")
+    assert snap["east.paused"] is None and snap["east.valve"] is None
+    assert reached(snap) is False
+    assert demand_agrees(snap, ROLES["boiler-power"])
+
+
+def test_the_threshold_as_smartpi_reads_it() -> None:
+    assert reached({"count": 2.0, "count_threshold": 2.0, "power": None, "power_threshold": None}) is True
+    assert reached({"count": 1.0, "count_threshold": 2.0, "power": 0.0, "power_threshold": 0.0}) is False
+    assert reached({"count": None, "count_threshold": None, "power": 600.0, "power_threshold": 600.0}) is True
+    assert reached({"count": None, "count_threshold": 2.0, "power": None, "power_threshold": 600.0}) is None
+
+
+def test_vtherm_s_count_and_power_against_the_valve_openings() -> None:
+    """VTherm's count is the open valves; its power the device powers times the valve opening
+    SmartPI asks for the next cycle (300 W and 900 W in boiler-levels)."""
+    snap = {"count": 2.0, "power": 750.0, "west.valve": 100.0, "east.valve": 50.0, "west.next_opening": 100.0, "east.next_opening": 50.0}
+    assert demand_agrees(snap, ROLES["boiler-levels"])
+    assert not demand_agrees(snap | {"count": 1.0}, ROLES["boiler-levels"])
+    assert not demand_agrees(snap | {"power": 1200.0}, ROLES["boiler-levels"])
+
+
+def _trace(rows: list[dict]) -> list[dict]:
+    """Samples every 5 s from rows of the keys that change."""
+    out, last = [], {}
+    for i, row in enumerate(rows):
+        last = last | row
+        out.append({"t": 1000.0 + 5.0 * i} | last)
+    return out
+
+
+def test_the_trace_finds_its_changes_and_runs() -> None:
+    samples = _trace([{"boiler": "off"}, {}, {"boiler": "on"}, {}, {"boiler": "off"}])
+    assert transitions(samples, "boiler") == [(1000.0, "off"), (1010.0, "on"), (1020.0, "off")]
+    assert spans(samples, "boiler", "on") == [(2, 3)]
+
+
+def test_nothing_learned_in_a_pause() -> None:
+    """A pause with its counters and dead time unchanged and no detection armed, followed by an
+    episode that starts after the resume, is clean."""
+    episode = datetime.fromtimestamp(1030.0, UTC).isoformat()
+    samples = _trace(
+        [
+            {"west.paused": False, "west.accepted_a": 30, "west.deadtime": 780.0, "west.episode": None},
+            {"west.paused": True, "west.accepted_a": 31},
+            {},
+            {"west.paused": False},
+            {"west.episode": episode},
+        ]
+    )
+    assert learned_in_pauses(samples, "west") == (1, [])
+
+
+def test_what_a_pause_must_not_learn() -> None:
+    before = datetime.fromtimestamp(900.0, UTC).isoformat()
+    samples = _trace(
+        [
+            {"west.paused": True, "west.accepted_a": 31, "west.dt_state": "OFF"},
+            {"west.accepted_a": 32},
+            {"west.dt_state": WAITING_HEAT},
+            {"west.paused": False, "west.dt_state": "HEATING"},
+            {"west.episode": before},
+        ]
+    )
+    n, problems = learned_in_pauses(samples, "west")
+    assert n == 1
+    assert any("accepted_a changed" in p for p in problems)
+    assert any("detection armed" in p for p in problems)
+    assert any("before the resume" in p for p in problems)
+
+
+def _calls(paused: list[bool], below: bool, opening: float = 100.0) -> list[dict]:
+    threshold = {"count": 1.0 if below else 2.0, "count_threshold": 2.0, "power": None, "power_threshold": None}
+    return [{"t": 1000.0 + 10.0 * i, "west.paused": p, "west.opening": opening, "west.hvac": "heat"} | threshold for i, p in enumerate(paused)]
+
+
+def test_the_pause_agrees_with_the_call_and_the_threshold() -> None:
+    """Calling below the threshold, SmartPI pauses within two calculations; with the threshold
+    reached, or no call, it resumes within one; none of this is due before that."""
+    late = 2 * 60 + 20
+    assert not pause_mismatches(_calls([False] * 10 + [True] * 10, below=True), "west")
+    assert pause_mismatches(_calls([False] * (late // 10 + 3), below=True), "west")
+    assert not pause_mismatches(_calls([True] * 5 + [False] * 5, below=False), "west")
+    assert pause_mismatches(_calls([True] * 12, below=False), "west")
+    assert pause_mismatches(_calls([True] * 12, below=True, opening=0.0), "west")
+    assert not pause_mismatches([s | {"west.hvac": "off"} for s in _calls([False] * 30, below=True)], "west")
+
+
+def test_the_natural_cycle_s_measurement() -> None:
+    """BP14: switches and pauses per hour, the shortest whole times on and off, the swing and the
+    largest error after the first hour, the overshoot after a boiler start, and what was learned."""
+    rows = []
+    for i in range(int(7200 / 5)):
+        t = 5.0 * i
+        on = (t // 600) % 2 == 1  # 10 minutes off, 10 on
+        rows.append({"t": t, "boiler": "on" if on else "off", "west.paused": not on, "west.indoor": 20.1 if on else 19.9, "west.accepted_a": 31, "west.a": 0.04})
+    m = cycle_metrics(rows, 20.0, settle_s=3600.0)
+    assert m["hours"] == pytest.approx(2.0, abs=0.01)
+    assert m["boiler_switches_per_hour"] == pytest.approx(5.5, abs=0.1)
+    assert m["pauses_per_hour"] == pytest.approx(2.5, abs=0.1)
+    assert (m["shortest_on_s"], m["shortest_off_s"]) == (600, 600)
+    assert m["swing_c"] == pytest.approx(0.2)
+    assert m["overshoot_c"] == pytest.approx(0.1)
+    assert m["accepted_a"] == (31, 31)
+
+
+def test_a_measurement_takes_place_only_when_read_throughout() -> None:
+    full = [{"t": 5.0 * i, "west.opening": 40.0} for i in range(721)]
+    assert took_place(full, 3600.0)[0]
+    assert not took_place(full[:300], 3600.0)[0]
+    assert not took_place([s | {"west.opening": None} for s in full], 3600.0)[0]
