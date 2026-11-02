@@ -244,7 +244,8 @@ def _ids() -> Ids:
 
 def test_a_snapshot_reads_every_entity_once() -> None:
     """One reading of all states gives VTherm's boiler, count, power and thresholds, the boiler's
-    switch, the window, and each thermostat's SmartPI diagnostics, mode, setpoint and device."""
+    switch, the window, and each thermostat's SmartPI diagnostics (the valve opening among them),
+    mode, setpoint, and its valve's opening or its heater's state."""
     live = {"learning": {"boiler_paused": True, "accepted_updates_a": 31}, "power": {"current_cycle_percent": 100.0, "next_cycle_percent": 80.0}}
     states = {
         "binary_sensor.boiler": {"state": "off", "last_changed": "2026-11-02T10:00:00+00:00"},
@@ -261,9 +262,9 @@ def test_a_snapshot_reads_every_entity_once() -> None:
     }
     snap = snapshot_of(states, _ids(), 1.0)
     assert (snap["boiler"], snap["count"], snap["power"], snap["power_threshold"], snap["switch"]) == ("off", 1.0, 1600.0, 2500.0, "off")
-    assert (snap["west.paused"], snap["west.command"], snap["west.next"], snap["west.accepted_a"]) == (True, 100.0, 80.0, 31)
-    assert (snap["west.hvac"], snap["west.setpoint"], snap["west.device"], snap["north.device"]) == ("heat", 23.0, 80.0, "on")
-    assert snap["east.paused"] is None and snap["east.device"] is None
+    assert (snap["west.paused"], snap["west.opening"], snap["west.next_opening"], snap["west.accepted_a"]) == (True, 100.0, 80.0, 31)
+    assert (snap["west.hvac"], snap["west.setpoint"], snap["west.valve"], snap["north.heater"]) == ("heat", 23.0, 80.0, "on")
+    assert snap["east.paused"] is None and snap["east.valve"] is None
     assert reached(snap) is False
     assert demand_agrees(snap, ROLES["boiler-power"])
 
@@ -275,10 +276,10 @@ def test_the_threshold_as_smartpi_reads_it() -> None:
     assert reached({"count": None, "count_threshold": 2.0, "power": None, "power_threshold": 600.0}) is None
 
 
-def test_vtherm_s_count_and_power_against_the_valves_and_commands() -> None:
-    """VTherm's count is the open valves; its power the device powers times the next cycle's
-    command (300 W and 900 W in boiler-levels)."""
-    snap = {"count": 2.0, "power": 750.0, "west.device": 100.0, "east.device": 50.0, "west.next": 100.0, "east.next": 50.0}
+def test_vtherm_s_count_and_power_against_the_valve_openings() -> None:
+    """VTherm's count is the open valves; its power the device powers times the valve opening
+    SmartPI asks for the next cycle (300 W and 900 W in boiler-levels)."""
+    snap = {"count": 2.0, "power": 750.0, "west.valve": 100.0, "east.valve": 50.0, "west.next_opening": 100.0, "east.next_opening": 50.0}
     assert demand_agrees(snap, ROLES["boiler-levels"])
     assert not demand_agrees(snap | {"count": 1.0}, ROLES["boiler-levels"])
     assert not demand_agrees(snap | {"power": 1200.0}, ROLES["boiler-levels"])
@@ -333,9 +334,9 @@ def test_what_a_pause_must_not_learn() -> None:
     assert any("before the resume" in p for p in problems)
 
 
-def _calls(paused: list[bool], below: bool, command: float = 100.0) -> list[dict]:
+def _calls(paused: list[bool], below: bool, opening: float = 100.0) -> list[dict]:
     threshold = {"count": 1.0 if below else 2.0, "count_threshold": 2.0, "power": None, "power_threshold": None}
-    return [{"t": 1000.0 + 10.0 * i, "west.paused": p, "west.command": command, "west.hvac": "heat"} | threshold for i, p in enumerate(paused)]
+    return [{"t": 1000.0 + 10.0 * i, "west.paused": p, "west.opening": opening, "west.hvac": "heat"} | threshold for i, p in enumerate(paused)]
 
 
 def test_the_pause_agrees_with_the_call_and_the_threshold() -> None:
@@ -346,7 +347,7 @@ def test_the_pause_agrees_with_the_call_and_the_threshold() -> None:
     assert pause_mismatches(_calls([False] * (late // 10 + 3), below=True), "west")
     assert not pause_mismatches(_calls([True] * 5 + [False] * 5, below=False), "west")
     assert pause_mismatches(_calls([True] * 12, below=False), "west")
-    assert pause_mismatches(_calls([True] * 12, below=True, command=0.0), "west")
+    assert pause_mismatches(_calls([True] * 12, below=True, opening=0.0), "west")
     assert not pause_mismatches([s | {"west.hvac": "off"} for s in _calls([False] * 30, below=True)], "west")
 
 
@@ -369,7 +370,7 @@ def test_the_natural_cycle_s_measurement() -> None:
 
 
 def test_a_measurement_takes_place_only_when_read_throughout() -> None:
-    full = [{"t": 5.0 * i, "west.command": 40.0} for i in range(721)]
+    full = [{"t": 5.0 * i, "west.opening": 40.0} for i in range(721)]
     assert took_place(full, 3600.0)[0]
     assert not took_place(full[:300], 3600.0)[0]
-    assert not took_place([s | {"west.command": None} for s in full], 3600.0)[0]
+    assert not took_place([s | {"west.opening": None} for s in full], 3600.0)[0]

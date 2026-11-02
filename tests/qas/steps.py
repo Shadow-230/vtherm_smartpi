@@ -2,8 +2,8 @@
 their checks, and the trace of a run (README.md, section 4).
 
 **The start state.** Every scenario starts, and leaves the instance, in the same state: every
-thermostat heats (HVAC mode heat); West and East do not call (setpoint 7 degC, command 0 %, valves
-closed); North at the setpoint the scenario declares; VTherm's boiler off for longer than the
+thermostat heats (HVAC mode heat); West and East do not call (setpoint 7 degC, their valves closed,
+0 %); North at the setpoint the scenario declares; VTherm's boiler off for longer than the
 role's activation delay plus a margin; no thermostat paused. West's and East's learning starts as
 the scenario declares: ``fresh`` (reset) or ``learned`` (the helper's learned state, loaded before
 the start state is reached).
@@ -11,7 +11,12 @@ the start state is reached).
 **The steps.** Each step changes one thing (a setpoint, a mode, the window, the threshold, a
 restart), waits for what the role makes of it, and then checks the same things every time:
 West's and East's pause, North never paused, VTherm's boiler and the boiler's switch, West's and
-East's command, and VTherm's active-device count and power against the valves and the commands.
+East's valve opening, and VTherm's active-device count and power against the valve openings.
+
+**The valve opening.** For a valve, SmartPI's command is the valve's opening in %: 0 % closed, the
+thermostat not calling; 100 % fully open. The pack calls it the valve opening (``opening``, the
+cycle's, from which SmartPI pauses; ``next_opening``, the next cycle's, from which VTherm counts
+the power) and reads the valve's own state too (``valve``).
 What a step expects follows from the role (``Bench.reaches``): the thermostats calling at full
 power, the devices they count, their powers, the threshold.
 
@@ -22,7 +27,7 @@ later, a resume one. A closed window: VTherm's delay of 30 s, then two calculati
 
 **The trace.** While a scenario runs, every ``TRACE_S`` the trace reads the instance once and
 keeps what changed: VTherm's count, power and boiler, the boiler's switch, each thermostat's
-pause, command, valve, learning counters and dead-time detection. It is written next to the
+pause, valve opening, learning counters and dead-time detection. It is written next to the
 results, a short timeline goes into them, and every pause in it is checked: nothing learned
 while paused, and the next episode starts after the resume.
 """
@@ -60,7 +65,7 @@ WEST, EAST, NORTH = (room(name).climate for name in ("West", "East", "North"))
 COUNTED = (WEST, EAST)  # VTherm's central boiler counts their devices
 KEYS = {WEST: "west", EAST: "east", NORTH: "north"}
 NAMES = {WEST: "West", EAST: "East", NORTH: "North"}
-CALLING = 23.0  # far above the rooms: SmartPI calls at full power
+CALLING = 23.0  # far above the rooms: SmartPI opens the valve fully (100 %)
 STOPPED = 7.0  # far below the rooms: SmartPI does not call
 BASE_SETPOINT = 20.0
 STARTS = ("fresh", "learned")
@@ -138,8 +143,10 @@ def get(data: Any, dotted: str) -> Any:
 LIVE = {
     "paused": "learning.boiler_paused",
     "enabled": "learning.enabled",
-    "command": "power.current_cycle_percent",  # the cycle's, from which SmartPI pauses
-    "next": "power.next_cycle_percent",  # the next cycle's, from which VTherm counts the power
+    # SmartPI's command, for a valve its opening in %: the cycle's, from which SmartPI pauses, and
+    # the next cycle's, from which VTherm counts the power (for North: its heater's share of a cycle).
+    "opening": "power.current_cycle_percent",
+    "next_opening": "power.next_cycle_percent",
     "phase": "control.phase",
     "calibration": "calibration.state",
     "dt_state": "analysis.deadtime.state",
@@ -214,8 +221,12 @@ def snapshot_of(states: dict[str, dict[str, Any]], ids: Ids, now: float) -> dict
         thermostat = states.get(climate) or {}
         snap[f"{key}.hvac"] = thermostat.get("state")
         snap[f"{key}.setpoint"] = (thermostat.get("attributes") or {}).get("temperature")
-        device = states.get(room(NAMES[climate]).device) or {}
-        snap[f"{key}.device"] = _number(device) if device.get("state") not in ("on", "off") else device.get("state")
+        r = room(NAMES[climate])
+        device = states.get(r.device) or {}
+        if r.heater == "radiator":
+            snap[f"{key}.valve"] = _number(device)  # the valve's own opening, in %
+        else:
+            snap[f"{key}.heater"] = device.get("state")
     return snap
 
 
@@ -224,8 +235,8 @@ def of(snap: dict[str, Any], climate: str, name: str) -> Any:
 
 
 def calls(snap: dict[str, Any], climate: str) -> bool:
-    """SmartPI's command of the cycle is above 0, the thermostat heating."""
-    return of(snap, climate, "hvac") == "heat" and (of(snap, climate, "command") or 0) > 0
+    """The thermostat heating with its valve open: an opening of the cycle above 0 %."""
+    return of(snap, climate, "hvac") == "heat" and (of(snap, climate, "opening") or 0) > 0
 
 
 def reached(snap: dict[str, Any]) -> bool | None:
@@ -247,10 +258,11 @@ def reached(snap: dict[str, Any]) -> bool | None:
 
 def demand_agrees(snap: dict[str, Any], role: Role) -> bool:
     """VTherm's count is the open valves of the counted rooms; its power, each counted room's
-    device power times SmartPI's command for the next cycle (VTherm's ``mean_cycle_power``)."""
-    valves = [of(snap, c, "device") for c in COUNTED]
+    device power times the valve opening SmartPI asks for the next cycle (VTherm's
+    ``mean_cycle_power``)."""
+    valves = [of(snap, c, "valve") for c in COUNTED]
     active = sum(1 for v in valves if isinstance(v, (int, float)) and v > 0)
-    expected = sum(role.device_power_w(NAMES[c]) * (of(snap, c, "next") or 0) / 100.0 for c in COUNTED)
+    expected = sum(role.device_power_w(NAMES[c]) * (of(snap, c, "next_opening") or 0) / 100.0 for c in COUNTED)
     full = sum(role.device_power_w(NAMES[c]) for c in COUNTED)
     power = snap.get("power")
     return snap.get("count") == active and power is not None and abs(power - expected) <= 0.01 * full + 5.0
@@ -328,7 +340,7 @@ def learned_in_pauses(samples: Sequence[dict[str, Any]], key: str) -> tuple[int,
     return len(runs), problems
 
 
-PAUSE_DUE_S = 2 * RECALC_S + 20.0  # two calculations, the second on the command already applied
+PAUSE_DUE_S = 2 * RECALC_S + 20.0  # two calculations, the second on the opening already applied
 RESUME_DUE_S = RECALC_S + 20.0
 
 
@@ -340,7 +352,7 @@ def pause_mismatches(samples: Sequence[dict[str, Any]], key: str) -> list[str]:
     out: list[str] = []
 
     def demand(x: dict[str, Any]) -> float:
-        return (x.get(f"{key}.command") or 0) if x.get(f"{key}.hvac") == "heat" else 0.0
+        return (x.get(f"{key}.opening") or 0) if x.get(f"{key}.hvac") == "heat" else 0.0
 
     def held(i: int, holds: Callable[[dict[str, Any]], bool], lag_s: float) -> bool:
         t = samples[i]["t"]
@@ -367,7 +379,7 @@ def pause_mismatches(samples: Sequence[dict[str, Any]], key: str) -> list[str]:
 
 class Bench:
     """One scenario on one instance: its readings, its steps and its trace. ``calling``: the
-    thermostats the scenario has calling at full power, from which ``reaches`` gives what the
+    thermostats the scenario has calling with their valves fully open, from which ``reaches`` gives what the
     role makes of them."""
 
     def __init__(self, r: Any, ids: Ids, role: Role) -> None:
@@ -427,7 +439,7 @@ class Bench:
     # --- what the role makes of the calls
 
     def reaches(self) -> bool:
-        """Whether the thermostats calling at full power reach the role's threshold."""
+        """Whether the thermostats calling with their valves fully open reach the role's threshold."""
         counted = [c for c in self.calling if c in COUNTED]
         if self.count_threshold > 0 and len(counted) >= self.count_threshold:
             return True
@@ -458,12 +470,12 @@ class Bench:
                 self.check(climate not in self.calling, f"{step}: {NAMES[climate]} {of(snap, climate, 'hvac')}")
                 continue
             due = climate in self.calling
-            self.check(calls(snap, climate) is due, f"{step}: {NAMES[climate]}'s command {of(snap, climate, 'command')} % (calling: {due})")
+            self.check(calls(snap, climate) is due, f"{step}: {NAMES[climate]}'s valve opening {of(snap, climate, 'opening')} % (calling: {due})")
         took, agreed = await self.until(lambda s: demand_agrees(s, self.role), 3 * POLL_S)
         self.check(
             took is not None,
             f"{step}: VTherm counts {agreed.get('count')} active devices and {agreed.get('power')} W; valves "
-            f"{[of(agreed, c, 'device') for c in COUNTED]}, commands {[of(agreed, c, 'command') for c in COUNTED]} %",
+            f"{[of(agreed, c, 'valve') for c in COUNTED]} %, next openings {[of(agreed, c, 'next_opening') for c in COUNTED]} %",
         )
         return snap
 
@@ -550,7 +562,7 @@ class Bench:
             self.calling.discard(climate)
 
     async def west_calls(self) -> dict[str, float | None]:
-        """West calls at full power. Starting from not calling, its pause (if due) comes at its
+        """West calls, its valve fully open. Starting from not calling, its pause (if due) comes at its
         next calculation, never at the one its setpoint makes."""
         took = await self.change("West calls", lambda: self.calls_at(WEST, CALLING), own=WEST)
         paused = took.get("West paused")
@@ -565,7 +577,7 @@ class Bench:
         return await self.change("East calls", lambda: self.calls_at(EAST, CALLING), own=EAST)
 
     async def east_stops(self) -> dict[str, float | None]:
-        closed = (lambda s: of(s, EAST, "device") == 0.0, VALVE_CLOSES)
+        closed = (lambda s: of(s, EAST, "valve") == 0.0, VALVE_CLOSES)
         return await self.change("East stops calling", lambda: self.calls_at(EAST, STOPPED), own=EAST, goals={"East's valve closed": closed})
 
     async def west_off(self) -> dict[str, float | None]:
@@ -628,7 +640,7 @@ class Bench:
             snap = await self.snapshot()
             self.check(
                 of(snap, WEST, "paused") is True and calls(snap, WEST) and snap["boiler"] == "off",
-                f"the pause holds: West paused {of(snap, WEST, 'paused')}, command {of(snap, WEST, 'command')} %, boiler {snap['boiler']}",
+                f"the pause holds: West paused {of(snap, WEST, 'paused')}, valve opening {of(snap, WEST, 'opening')} %, boiler {snap['boiler']}",
             )
             await asyncio.sleep(RECALC_S)
 
@@ -677,7 +689,7 @@ class Bench:
         def quiet(s: dict[str, Any]) -> bool:
             off_since = published_at(s.get("boiler_since"))
             return (
-                all(not calls(s, c) and of(s, c, "device") == 0.0 for c in COUNTED)
+                all(not calls(s, c) and of(s, c, "valve") == 0.0 for c in COUNTED)
                 and (self.author or all(of(s, c, "paused") is not True for c in KEYS))
                 and s["boiler"] == "off"
                 and s["switch"] == "off"
@@ -688,8 +700,8 @@ class Bench:
         took, snap = await self.until(quiet, START_STATE.maximum_s)
         self.check(
             took is not None,
-            f"start state after {seconds(took)} s: commands {[of(snap, c, 'command') for c in COUNTED]} %, valves "
-            f"{[of(snap, c, 'device') for c in COUNTED]}, paused {[of(snap, c, 'paused') for c in KEYS]}, VTherm's boiler "
+            f"start state after {seconds(took)} s: valve openings {[of(snap, c, 'opening') for c in COUNTED]} %, valves "
+            f"{[of(snap, c, 'valve') for c in COUNTED]}, paused {[of(snap, c, 'paused') for c in KEYS]}, VTherm's boiler "
             f"{snap.get('boiler')} since {snap.get('boiler_since')} ({hold_s:.0f} s needed), switch {snap.get('switch')}",
         )
         return snap if took is not None else None
@@ -716,7 +728,7 @@ class Bench:
 # --- the trace --------------------------------------------------------------------------------
 
 
-TIMELINE = ("boiler", "switch", "count", "power", "west.paused", "east.paused", "west.command", "east.command", "east.device")
+TIMELINE = ("boiler", "switch", "count", "power", "west.paused", "east.paused", "west.opening", "east.opening", "east.valve")
 TIMELINE_LINES = 40
 
 

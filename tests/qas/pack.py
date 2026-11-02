@@ -10,10 +10,10 @@ The roles differ in the central boiler: its threshold, two active devices or a p
 of each device, and its activation delay:
 
 - boiler-count, boiler-delay: two active devices, without and with an activation delay;
-- boiler-power: 2500 W, each device 2000 W, so one at full power is below it and two at 63 %
-  reach it;
+- boiler-power: 2500 W, each device 2000 W, so one valve fully open is below it and two open at
+  63 % reach it;
 - boiler-levels, boiler-levels-delay: 600 W, West's device 300 W and East's 900 W, so West alone
-  at full power is below it and East alone or both reach it; without and with a delay.
+  with its valve fully open is below it and East alone or both reach it; without and with a delay.
 
 West has a window sensor (an ``input_boolean``) in every role. Everything else in Versatile
 Thermostat keeps its default. SmartPI runs with its "SmartPI defaults" entry only.
@@ -50,7 +50,7 @@ class Room:
     counted: bool  # counted by VTherm's central boiler
     temperature: float = 19.5  # degC at the start
     loss: float = 0.001  # 1/min, SmartPI's b
-    gain: float = 0.04  # degC/min at full power, SmartPI's a
+    gain: float = 0.04  # degC/min with the heater fully on (a valve fully open), SmartPI's a
     delay_min: float = 3.0
     lag_min: float = 10.0
 

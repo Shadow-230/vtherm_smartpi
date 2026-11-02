@@ -235,7 +235,7 @@ async def BP0(b: Bench) -> None:
 
 @scenario("BP1", THREE, lambda role: total(west_alone(role), HOLD), END_TO_END, minimum=True)
 async def BP1(b: Bench) -> None:
-    """The start state → West calls alone, below the threshold → West pauses at its next calculation, not at its setpoint's own; VTherm's boiler stays off; East and North (not counted) do not pause; West's command goes on."""
+    """The start state → West calls alone, below the threshold → West pauses at its next calculation, not at its setpoint's own; VTherm's boiler stays off; East and North (not counted) do not pause; West's valve stays open."""
     await b.west_calls()
     await b.hold()
 
@@ -259,7 +259,7 @@ SENSORS = Wait(40.0, 180.0)  # Home Assistant reloads VTherm's entry about 30 s 
 
 @scenario("BP4", ("boiler-count",), total(SENSORS, Wait(WITHIN_S, WITHIN_S), SENSORS, PAUSE_EXTERNAL), PAUSE_TESTS)
 async def BP4(b: Bench) -> None:
-    """VTherm's active-device and power sensors disabled, so the threshold cannot be read → West calls alone → West does not pause while its command is above 0; once the sensors are back, it pauses."""
+    """VTherm's active-device and power sensors disabled, so the threshold cannot be read → West calls alone → West does not pause while its valve is open; once the sensors are back, it pauses."""
     sensors = [b.ids.count, b.ids.power]
 
     async def disable(by: str | None) -> None:
@@ -276,7 +276,7 @@ async def BP4(b: Bench) -> None:
         found = [clock(s) for s in seen if of(s, WEST, "paused") is not False]
         b.check(not found, f"West alone, threshold unreadable: not paused for {WITHIN_S:.0f} s ({', '.join(found[:5]) or 'never paused'})")
         # The pause starts only while SmartPI calls: a West not calling would pass too.
-        b.check(all(calls(s, WEST) for s in seen[len(seen) // 2 :]), f"West calls meanwhile: command {of(seen[-1], WEST, 'command')} %")
+        b.check(all(calls(s, WEST) for s in seen[len(seen) // 2 :]), f"West calls meanwhile: valve opening {of(seen[-1], WEST, 'opening')} %")
     finally:
         await disable(None)
         took, snap = await b.until(lambda s: s["count"] is not None and s["power"] is not None, 180.0)
@@ -325,7 +325,7 @@ async def BP6(b: Bench) -> None:
         lambda: b.calls_at(EAST, STOPPED),
         own=EAST,
         goals={
-            "East's valve closed": (lambda s: of(s, EAST, "device") == 0.0, VALVE_CLOSES),
+            "East's valve closed": (lambda s: of(s, EAST, "valve") == 0.0, VALVE_CLOSES),
             "the boiler's switch off at once": (lambda s: s["switch"] == "off", BOILER_OFF_AT_ONCE),
         },
     )
@@ -366,7 +366,7 @@ async def BP7(b: Bench) -> None:
         await b.api.call(SMARTPI, "force_smartpi_calibration", {"entity_id": WEST})
         took, snap = await b.until(lambda s: of(s, WEST, "calibration") == "HeatUp", HEAT_UP.maximum_s, 30.0)
         b.check(took is not None, f"the calibration's heating step after {seconds(took)} s")
-        b.calling.add(WEST)  # the heating step calls at full power
+        b.calling.add(WEST)  # the heating step opens the valve fully
         took, _ = await b.until(b.paused_is(WEST, True), WITHIN_S)
         b.check(took is not None, f"heating alone below the threshold: paused after {seconds(took)} s")
         for _ in range(5):
@@ -614,7 +614,7 @@ async def BP12(b: Bench) -> None:
     await west_starts_the_boiler(b, "(b)")
 
 
-# --- BP13-BP20: thresholds of power, partial commands, restarts ---------------------------------
+# --- BP13-BP20: thresholds of power, partly open valves, restarts --------------------------------
 
 
 IDLE_PAUSE = Wait(20 * 60.0, 20 * 60.0)  # BP13 A′
@@ -654,7 +654,7 @@ async def BP13(b: Bench) -> None:
         lambda: b.calls_at(EAST, STOPPED),
         own=EAST,
         goals={
-            "East's valve closed": (lambda s: of(s, EAST, "device") == 0.0, VALVE_CLOSES),
+            "East's valve closed": (lambda s: of(s, EAST, "valve") == 0.0, VALVE_CLOSES),
             "the boiler's switch off at once": (lambda s: s["switch"] == "off", BOILER_OFF_AT_ONCE),
         },
     )
@@ -669,7 +669,7 @@ async def BP13(b: Bench) -> None:
 
 
 NATURAL_S = 3 * 3600.0
-NATURAL_THRESHOLD_W = 600.0  # West at 2000 W: the boiler runs above a command of 30 %
+NATURAL_THRESHOLD_W = 600.0  # West at 2000 W: the boiler runs above a valve opening of 30 %
 SETTLE_S = 3600.0  # BP14: the first hour, while the room reaches its setpoint
 OVERSHOOT_S = 1800.0
 
@@ -720,7 +720,7 @@ def cycle_metrics(samples: Sequence[dict[str, Any]], setpoint: float, settle_s: 
     }
 
 
-def took_place(samples: Sequence[dict[str, Any]], seconds_: float, key: str = "west.command") -> tuple[bool, str]:
+def took_place(samples: Sequence[dict[str, Any]], seconds_: float, key: str = "west.opening") -> tuple[bool, str]:
     """A measurement over ``seconds_`` took place: the trace covers it, with readings of ``key`` in
     at least 90 % of its intervals."""
     if not samples:
@@ -792,7 +792,7 @@ def switches(samples: Sequence[dict[str, Any]], key: str) -> int:
     measured=True,
 )
 async def BP15(b: Bench) -> None:
-    """West and East learned, the power threshold of 2500 W → West calls at full power (2000 W), East's setpoint just above its room so that it modulates (a share of its 2000 W), 45 minutes → both pause while the boiler stands, though both call; both resume once the demand reaches the threshold; it records the switches. It passes on the measurement, once both called below and above the threshold, each long enough for SmartPI to decide."""
+    """West and East learned, the power threshold of 2500 W → West's valve fully open (2000 W), East's setpoint just above its room so that its valve is partly open (that share of its 2000 W), 45 minutes → both pause while the boiler stands, though both call; both resume once the demand reaches the threshold; it records the switches. It passes on the measurement, once both called below and above the threshold, each long enough for SmartPI to decide."""
     await b.west_calls()
     indoor = of(await b.snapshot(), EAST, "indoor") or BASE_SETPOINT
     b.note(f"— East's setpoint {round(indoor + 0.2, 1)} degC, its room {indoor} degC; 45 minutes")
@@ -807,10 +807,10 @@ async def BP15(b: Bench) -> None:
     for key in ("west", "east"):
         wrong = pause_mismatches(samples, key)
         b.check(not wrong, f"{key}'s pause agrees with its call and the threshold ({len(wrong)} disagreements: {'; '.join(wrong[:3])})")
-    commands = [of(s, EAST, "command") for s in samples if of(s, EAST, "command") is not None]
+    openings = [of(s, EAST, "opening") for s in samples if of(s, EAST, "opening") is not None]
     b.note(
         f"switches: boiler {switches(samples, 'boiler')}, West's pause {switches(samples, 'west.paused')}, East's pause "
-        f"{switches(samples, 'east.paused')}; East's command {min(commands, default=None)}–{max(commands, default=None)} %"
+        f"{switches(samples, 'east.paused')}; East's valve opening {min(openings, default=None)}–{max(openings, default=None)} %"
     )
 
 
@@ -826,7 +826,7 @@ TAPER_S = 45 * 60.0
     measured=True,
 )
 async def BP16(b: Bench) -> None:
-    """West and East learned, both calling, the boiler on → East's setpoint just above its room, so East comes to it gradually while West calls, 45 minutes → West is paused when and only when the demand is below the threshold (with the device count, an East on any partial command keeps it reached; with the power, its share decides); it records East's valve, VTherm's count and power, the boiler, West's pause and what West learned, and the switches. It passes on the measurement, once the 45 minutes were read and East's command came down from its full call."""
+    """West and East learned, both calling, the boiler on → East's setpoint just above its room, so East comes to it gradually while West calls, 45 minutes → West is paused when and only when the demand is below the threshold (with the device count, an East valve open by any amount keeps it reached; with the power, the opening's share of the device decides); it records East's valve, VTherm's count and power, the boiler, West's pause and what West learned, and the switches. It passes on the measurement, once the 45 minutes were read and East's valve came down from fully open."""
     await b.west_calls()
     await b.east_calls()
     indoor = of(await b.snapshot(), EAST, "indoor") or BASE_SETPOINT
@@ -836,14 +836,14 @@ async def BP16(b: Bench) -> None:
     begin = len(b.trace.samples) if b.trace else 0
     await asyncio.sleep(TAPER_S)
     samples = list(b.trace.samples[begin:]) if b.trace else []
-    ok, what = took_place(samples, TAPER_S, "east.command")
-    commands = [of(s, EAST, "command") for s in samples if of(s, EAST, "command") is not None]
-    tapered = any(0 < c < 100 for c in commands)
-    b.check(ok and tapered, f"the measurement took place: {what}; East's command {commands[0] if commands else None} → {commands[-1] if commands else None} % (lowest {min(commands, default=None)})")
+    ok, what = took_place(samples, TAPER_S, "east.opening")
+    openings = [of(s, EAST, "opening") for s in samples if of(s, EAST, "opening") is not None]
+    tapered = any(0 < c < 100 for c in openings)
+    b.check(ok and tapered, f"the measurement took place: {what}; East's valve opening {openings[0] if openings else None} → {openings[-1] if openings else None} % (lowest {min(openings, default=None)})")
     wrong = pause_mismatches(samples, "west")
     b.check(not wrong, f"West's pause agrees with the threshold ({len(wrong)} disagreements: {'; '.join(wrong[:3])})")
     lost = held_both(samples, lambda s: calls(s, WEST) and reached(s) is False, PAUSE_DUE_S)
-    valves = [of(s, EAST, "device") for s in samples if isinstance(of(s, EAST, "device"), (int, float))]
+    valves = [of(s, EAST, "valve") for s in samples if isinstance(of(s, EAST, "valve"), (int, float))]
     first, last = (samples[0], samples[-1]) if samples else ({}, {})
     b.note(
         f"the demand below the threshold with West calling in {lost} readings; East's valve {valves[0] if valves else None} → "
@@ -876,7 +876,7 @@ async def BP17(b: Bench) -> None:
             await asyncio.sleep(period)
     await b.calls_at(EAST, STOPPED)
     await b.reach(
-        {"East's valve closed": (lambda s: of(s, EAST, "device") == 0.0, VALVE_CLOSES), "West paused": (b.paused_is(WEST, True), PAUSE_EXTERNAL)},
+        {"East's valve closed": (lambda s: of(s, EAST, "valve") == 0.0, VALVE_CLOSES), "West paused": (b.paused_is(WEST, True), PAUSE_EXTERNAL)},
         time.time(),
     )
     after = await b.after("East off after the flicker")
@@ -898,7 +898,7 @@ async def BP18(b: Bench) -> None:
         for climate, value in ((EAST, CALLING), (WEST, CALLING), (WEST, CALLING - 0.5)):
             await b.setpoints(**{climate: value})
             marks.append(time.time())
-        b.calling.update(COUNTED)  # 22.5 degC calls at full power too
+        b.calling.update(COUNTED)  # at 22.5 degC the valve is fully open too
 
     await b.change("East, West and West again, at once", quick)
     b.note(f"the three setpoints within {1000 * (marks[-1] - marks[0]):.0f} ms")
@@ -916,44 +916,48 @@ STEP_DOWN = Wait(4 * RECALC_S, STEP_DOWN_MAX * 2 * RECALC_S + MARGIN_S)
     ("boiler-count",),
     lambda role: total(PAUSE_ON_SETPOINT, MODULATE_HOLD, STEP_DOWN),
     PAUSE_TESTS,
-    depends="the steps down West needs until its command reaches 0 (each 0.2 degC, two calculations)",
+    depends="the steps down West needs until its valve closes (each 0.2 degC, two calculations)",
     start="learned",
     measured=True,
 )
 async def BP19(b: Bench) -> None:
-    """West learned, its setpoint just above its room, East not calling → West modulates on a partial command below the threshold, then its setpoint goes down in steps of 0.2 degC (no jump to 7 degC) → the pause holds while its command is above 0 and ends at the calculation its command reaches 0. It passes on the measurement, once West modulated and its command reached 0."""
+    """West learned, its setpoint just above its room, East not calling → West's valve partly open below the threshold, then its setpoint goes down in steps of 0.2 degC (no jump to 7 degC) until the valve closes (0 %) → the pause holds while the valve is open (above 0 %) and ends within the calculation it closes. It passes on the measurement, once West's valve was partly open (above 0 and below 100 %) and then closed."""
     indoor = of(await b.snapshot(), WEST, "indoor") or BASE_SETPOINT
     b.note(f"— West's setpoint {round(indoor + 0.2, 1)} degC, its room {indoor} degC")
     await b.setpoints(**{WEST: round(indoor + 0.2, 1)})
     took, snap = await b.until(b.paused_is(WEST, True), PAUSE_ON_SETPOINT.maximum_s)
-    b.check(took is not None, f"West paused after {seconds(took)} s, command {of(snap, WEST, 'command')} %")
+    b.check(took is not None, f"West paused after {seconds(took)} s, valve opening {of(snap, WEST, 'opening')} %")
     seen = await b.watch(MODULATE_HOLD.typical_s)
-    commands = [of(s, WEST, "command") for s in seen if of(s, WEST, "command") is not None]
-    b.check(bool(commands) and 0 < min(commands) and max(commands) < 100, f"the measurement: West modulates, command {min(commands, default=None)}–{max(commands, default=None)} %")
+    openings = [of(s, WEST, "opening") for s in seen if of(s, WEST, "opening") is not None]
+    b.check(
+        bool(openings) and 0 < min(openings) and max(openings) < 100,
+        f"the measurement: West's valve partly open, {min(openings, default=None)}–{max(openings, default=None)} %",
+    )
     breaks = [clock(s) for s in seen if calls(s, WEST) and of(s, WEST, "paused") is not True]
-    b.check(not breaks, f"paused while its command is above 0 ({', '.join(breaks[:5]) or 'throughout'})")
+    b.check(not breaks, f"paused while the valve is open ({', '.join(breaks[:5]) or 'throughout'})")
     setpoint = round(indoor - STEP_DOWN_C, 1)
-    zero_at: float | None = None
+    closed_at: float | None = None
     resumed_at: float | None = None
     early: list[str] = []
-    for step in range(STEP_DOWN_MAX):
+    step = 0
+    for step in range(1, STEP_DOWN_MAX + 1):
         b.note(f"— West's setpoint {setpoint} degC")
         await b.setpoints(**{WEST: setpoint})
         for s in await b.watch(2 * RECALC_S):
-            if zero_at is None and not calls(s, WEST):
-                zero_at = s["t"]
+            if closed_at is None and not calls(s, WEST):
+                closed_at = s["t"]
             if resumed_at is None and of(s, WEST, "paused") is False:
                 resumed_at = s["t"]
-                if zero_at is None:
-                    early.append(clock(s))
-        if zero_at is not None and resumed_at is not None:
+                if closed_at is None:
+                    early.append(f"{clock(s)} at {of(s, WEST, 'opening')} %")
+        if closed_at is not None and resumed_at is not None:
             break
         setpoint = round(setpoint - STEP_DOWN_C, 1)
-    b.check(zero_at is not None, f"the measurement: West's command reached 0, at the setpoint {setpoint} degC (step {step + 1})")
-    b.check(not early, f"the pause did not end before the command reached 0 ({', '.join(early) or 'no'})")
+    b.check(closed_at is not None, f"the measurement: West's valve closed (0 %) at the setpoint {setpoint} degC, step {step}")
+    b.check(not early, f"the pause did not end while the valve was still open ({', '.join(early) or 'no'})")
     b.check(
-        zero_at is not None and resumed_at is not None and resumed_at - zero_at <= RECALC_S + POLL_S,
-        f"the pause ended {seconds(zero_at and resumed_at and resumed_at - zero_at)} s after the command reached 0 (within a calculation)",
+        closed_at is not None and resumed_at is not None and resumed_at - closed_at <= RECALC_S + POLL_S,
+        f"the pause ended {seconds(closed_at and resumed_at and resumed_at - closed_at)} s after the valve closed (within a calculation)",
     )
 
 
@@ -1081,7 +1085,7 @@ def _reference_sample(data: dict[str, Any], boiler_state: Any, elapsed_s: float,
         "boiler_paused": get(data, "learning.boiler_paused"),
         "boiler": boiler_state,
         "indoor": get(data, "temperature.indoor"),
-        "command": get(data, "power.current_cycle_percent"),
+        "valve_opening": get(data, "power.current_cycle_percent"),
     }
 
 
