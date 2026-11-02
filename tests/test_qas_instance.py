@@ -103,8 +103,7 @@ async def _prepare(hass: HomeAssistant, role: Role) -> list[str]:
     the preparation's restart. The lines it said."""
     config = configuration(role)
     assert await async_setup_component(hass, ROOMS_DOMAIN, {ROOMS_DOMAIN: config[ROOMS_DOMAIN]})
-    if "input_boolean" in config:
-        assert await async_setup_component(hass, "input_boolean", {"input_boolean": config["input_boolean"]})
+    assert await async_setup_component(hass, "input_boolean", {"input_boolean": config["input_boolean"]})
     assert await async_setup_component(hass, VT, {})
     assert await async_setup_component(hass, SMARTPI, {})
     assert await async_setup_component(hass, HELPER_DOMAIN, {HELPER_DOMAIN: None})
@@ -132,8 +131,8 @@ def _live(hass: HomeAssistant, climate: str) -> dict[str, Any]:
 async def test_each_role_is_prepared_through_the_forms(hass: HomeAssistant, caplog: pytest.LogCaptureFixture, name: str) -> None:
     """Every form takes the answers, no integration logs a warning or an error, SmartPI reports no
     repair, VTherm's central boiler agrees with the test rooms' boiler switch, each thermostat runs
-    SmartPI with its diagnostics, the role's thresholds are set, and preparing again changes
-    nothing."""
+    SmartPI with its diagnostics and the role's device power, West has its window sensor, the
+    role's thresholds are set, and preparing again changes nothing."""
     caplog.set_level(logging.WARNING)
     role = ROLES[name]
     await _prepare(hass, role)
@@ -150,7 +149,10 @@ async def test_each_role_is_prepared_through_the_forms(hass: HomeAssistant, capl
     central = next(e for e in hass.config_entries.async_entries(VT) if e.title == "Central configuration")
     assert central.data.get("central_boiler_activation_delay_sec") == role.boiler_delay_s
     west = hass.config_entries.async_get_entry(registry.async_get(WEST).config_entry_id)
-    assert (west.data.get("window_sensor_entity_id") == WEST_WINDOW) is role.west_window
+    assert west.data.get("window_sensor_entity_id") == WEST_WINDOW
+    for r in ROOMS:
+        vt_entry = hass.config_entries.async_get_entry(registry.async_get(r.climate).config_entry_id)
+        assert vt_entry.data["device_power"] == role.device_power_w(r.name), r.name
     problems = [
         f"{r.levelname} {r.name}: {r.getMessage()[:200]}"
         for r in caplog.records
@@ -178,8 +180,8 @@ async def test_the_helper_loads_the_learned_state(hass: HomeAssistant) -> None:
 
     live = _live(hass, WEST)
     assert live["control"]["phase"] == "Stable"
-    assert live["model"]["a"] == pytest.approx(model()["a"])
-    assert live["model"]["deadtime_heat_s"] == pytest.approx(model()["deadtime_s"])
+    assert live["model"]["a"] == pytest.approx(model(room("West"))["a"])
+    assert live["model"]["deadtime_heat_s"] == pytest.approx(model(room("West"))["deadtime_s"])
 
 
 async def _run_for(hass: HomeAssistant, freezer: Any, seconds: float, step_s: float = 7.0) -> None:

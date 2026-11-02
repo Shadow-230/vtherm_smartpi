@@ -5,7 +5,7 @@
 
 A role's configuration is the bench's clean instance (``default_config:``) with the test rooms,
 the test helper, SmartPI's log at info, so that its learning pause is in the log too, and West's
-window sensor where the role has one (no ``initial:``: a restart keeps its state).
+window sensor (no ``initial:``: a restart keeps its state).
 """
 
 from __future__ import annotations
@@ -43,8 +43,7 @@ def configuration(role: Role) -> dict[str, Any]:
         ROOMS_DOMAIN: {"outdoor": 3.0, "rooms": rooms},
         HELPER_DOMAIN: None,
     }
-    if role.west_window:
-        config["input_boolean"] = {WEST_WINDOW.split(".", 1)[1]: {"name": "West window"}}
+    config["input_boolean"] = {WEST_WINDOW.split(".", 1)[1]: {"name": "West window"}}
     return config
 
 

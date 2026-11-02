@@ -36,16 +36,22 @@ def test_no_other_role_configuration() -> None:
     assert {p.stem for p in configuration.CONFIG.glob("*.yaml")} == set(ROLES)
 
 
-def test_the_learned_state_is_up_to_date() -> None:
-    assert learned_state.FILE.read_text(encoding="utf-8") == learned_state.text(), "run python tests/qas/learned_state.py"
+@pytest.mark.parametrize("room", learned_state.ROOMS, ids=lambda r: r.key)
+def test_each_learned_state_is_up_to_date(room) -> None:
+    assert learned_state.file(room).read_text(encoding="utf-8") == learned_state.text(room), "run python tests/qas/learned_state.py"
 
 
-def test_the_learned_state_loads_as_the_room_s_model() -> None:
+def test_no_other_learned_state() -> None:
+    assert {p.name for p in learned_state.STATES.glob("*.json")} == {learned_state.file(r).name for r in learned_state.ROOMS}
+
+
+@pytest.mark.parametrize("room", learned_state.ROOMS, ids=lambda r: r.key)
+def test_each_learned_state_loads_as_its_room_s_model(room) -> None:
     """Loaded into SmartPI, the state gives the room's a and b, its dead times reliable, and SmartPI
     past its first phase at its first calculation."""
-    model = learned_state.model()
+    model = learned_state.model(room)
     smartpi = SmartPI(hass=MagicMock(), cycle_min=5, minimal_activation_delay=0, minimal_deactivation_delay=0, name="QAS")
-    smartpi.load_state(json.loads(learned_state.FILE.read_text(encoding="utf-8")))
+    smartpi.load_state(json.loads(learned_state.file(room).read_text(encoding="utf-8")))
 
     smartpi.calculate(target_temp=20.0, current_temp=19.5, ext_current_temp=3.0, slope=0.0, hvac_mode=VThermHvacMode_HEAT)
 

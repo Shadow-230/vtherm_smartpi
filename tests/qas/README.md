@@ -48,8 +48,8 @@ checks both files are up to date.
 | `pack.py` | the rooms and the roles |
 | `configuration.py`, `config/<role>.yaml` | each role's `configuration.yaml`: the bench's clean instance (`default_config:`), the test rooms, the test helper, SmartPI's log at info |
 | `custom_components/smartpi_test_rooms` | the simulated rooms (below) |
-| `custom_components/smartpi_test_helper` | `load_learned_state`: a thermostat's SmartPI state replaced by the learned one of its room (`states/`), for BP7 |
-| `learned_state.py` | writes `states/west.json` from the room's own values |
+| `custom_components/smartpi_test_helper` | `load_learned_state`: a thermostat's SmartPI state replaced by the learned one of its room (`states/`), for the scenarios that start learned |
+| `learned_state.py` | writes `states/west.json` and `states/east.json` from the rooms' own values |
 | `instance.py` | one instance through Home Assistant's API, and the config flows driven step by step |
 | `prepare.py` | prepares an instance as a role |
 | `scenarios.py`, `run.py` | the scenarios, and the runner on the bench's harness |
@@ -69,22 +69,26 @@ or heater switch, the outdoor temperature sensor and the boiler's switch. One ti
 | East | water radiator, valve | counted | `climate.east` |
 | North | electric heater, switch | not counted | `climate.north` |
 
-| Role | Central boiler | Other |
+| Role | Central boiler | Devices |
 |---|---|---|
-| `boiler-count` | threshold of 2 active devices | West's window sensor, `input_boolean.west_window` (BP11) |
-| `boiler-power` | threshold of 2500 W (each device 2000 W) | — |
-| `boiler-delay` | threshold of 2 active devices, activation delay 120 s (BP12) | — |
+| `boiler-count` | threshold of 2 active devices | 2000 W each |
+| `boiler-power` | threshold of 2500 W: one device at full power is below it, two at 63 % reach it | 2000 W each |
+| `boiler-delay` | threshold of 2 active devices, activation delay 120 s | 2000 W each |
+| `boiler-levels` | threshold of 600 W: West alone at full power is below it, East alone or both reach it | West 300 W, East 900 W, North 2000 W |
+| `boiler-levels-delay` | as `boiler-levels`, activation delay 120 s | as `boiler-levels` |
+
+In every role West has a window sensor, `input_boolean.west_window`.
 
 `prepare.py` sets in Versatile Thermostat only what these rooms need; everything else keeps
 VTherm's defaults (a cycle of 5 minutes, for example):
 - central configuration: the outdoor sensor; the central boiler, switching the test rooms' boiler,
   with the role's activation delay; a safety delay of 100 hours, longer than the longest run, because a test room's sensor
   writes only when its reading changes and VTherm's 60 minutes would take a steady room for a dead sensor;
-- each thermostat: its room's sensor, its device and the device's power (2000 W), whether the
+- each thermostat: its room's sensor, its device and the device's power (the role's), whether the
   central boiler counts it, SmartPI; power management unticked (VTherm ticks it for a device with
   a power, and warns without a power manager); for a valve, VTherm's opening filters off (0 % and
-  0 minutes), as SmartPI's repairs advise; in `boiler-count`, West's window sensor (VTherm's own
-  window settings: West turns off 30 s after the window opens, and back 30 s after it closes);
+  0 minutes), as SmartPI's repairs advise; West's window sensor (VTherm's own window settings:
+  West turns off 30 s after the window opens, and back 30 s after it closes);
 - the role's threshold.
 
 SmartPI runs with its "SmartPI defaults" entry only.

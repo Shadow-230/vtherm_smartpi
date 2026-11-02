@@ -1,14 +1,14 @@
-"""Write the helper's learned SmartPI state of the room West (custom_components/smartpi_test_helper/states/west.json).
+"""Write the helper's learned SmartPI states of the rooms West and East (custom_components/smartpi_test_helper/states/<room>.json).
 
-    python tests/qas/learned_state.py           # write the file
-    python tests/qas/learned_state.py --check   # exit 1 when the file is not what this gives
+    python tests/qas/learned_state.py           # write the files
+    python tests/qas/learned_state.py --check   # exit 1 when a file is not what this gives
 
 SmartPI's state with the room's true model learned, from the test rooms' own values, not learned
 in a run: ``a`` the radiator's gain (with the boiler on), ``b`` the room's loss, the heating and
 cooling dead times the radiator's delay plus its lag. The two times SmartPI saves are fixed (the
 start of learning; the thermal twin's save time 0, which SmartPI takes as a long stop and
-resynchronises), so the file changes only with the model. ``tests/test_qas_files.py`` checks that
-it is up to date and loads into SmartPI as the room's learned model.
+resynchronises), so a file changes only with its room's model. ``tests/test_qas_files.py`` checks
+that each is up to date and loads into SmartPI as its room's learned model.
 """
 
 from __future__ import annotations
@@ -24,23 +24,27 @@ for path in (HERE, HERE.parents[1]):
     if str(path) not in sys.path:
         sys.path.insert(0, str(path))
 
-from pack import room  # noqa: E402
+from pack import Room, room  # noqa: E402
 
-ROOM = room("West")
-FILE = HERE / "custom_components" / "smartpi_test_helper" / "states" / f"{ROOM.key}.json"
+ROOMS = (room("West"), room("East"))
+STATES = HERE / "custom_components" / "smartpi_test_helper" / "states"
 LEARNING_START = "2026-01-01T00:00:00"
 
 
-def model() -> dict[str, float]:
-    return {"a": ROOM.gain, "b": ROOM.loss, "deadtime_s": 60.0 * (ROOM.delay_min + ROOM.lag_min)}
+def file(r: Room) -> pathlib.Path:
+    return STATES / f"{r.key}.json"
 
 
-def state() -> dict[str, Any]:
+def model(r: Room) -> dict[str, float]:
+    return {"a": r.gain, "b": r.loss, "deadtime_s": 60.0 * (r.delay_min + r.lag_min)}
+
+
+def state(r: Room) -> dict[str, Any]:
     """SmartPI's saved state with the room's model learned."""
     from custom_components.vtherm_smartpi.algo import SmartPI  # noqa: PLC0415
     from custom_components.vtherm_smartpi.smartpi.const import AB_HISTORY_SIZE  # noqa: PLC0415
 
-    values = model()
+    values = model(r)
     algo = SmartPI(hass=MagicMock(), cycle_min=5, minimal_activation_delay=0, minimal_deactivation_delay=0, name="QAS")
     est = algo.est
     est.a, est.b = values["a"], values["b"]
@@ -61,19 +65,21 @@ def state() -> dict[str, Any]:
     return saved
 
 
-def text() -> str:
-    return json.dumps(state(), indent=1, sort_keys=True) + "\n"
+def text(r: Room) -> str:
+    return json.dumps(state(r), indent=1, sort_keys=True) + "\n"
 
 
 def main(argv: list[str]) -> int:
     if "--check" in argv:
-        if not FILE.is_file() or FILE.read_text(encoding="utf-8") != text():
-            print(f"not up to date: {FILE.name}")
+        stale = [file(r).name for r in ROOMS if not file(r).is_file() or file(r).read_text(encoding="utf-8") != text(r)]
+        if stale:
+            print("not up to date:", ", ".join(stale))
             return 1
         return 0
-    FILE.parent.mkdir(parents=True, exist_ok=True)
-    FILE.write_text(text(), encoding="utf-8")
-    print(f"{FILE.name}: {model()}")
+    STATES.mkdir(parents=True, exist_ok=True)
+    for r in ROOMS:
+        file(r).write_text(text(r), encoding="utf-8")
+        print(f"{file(r).name}: {model(r)}")
     return 0
 
 

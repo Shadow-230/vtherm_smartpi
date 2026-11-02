@@ -13,8 +13,8 @@ need; everything else keeps VTherm's defaults:
 3. one thermostat per room, with SmartPI: its sensor, its device and the device's power, whether
    the central boiler counts it; power management unticked (VTherm ticks it for a device with a
    power, and warns without a power manager); for a valve, VTherm's opening filters off, as
-   SmartPI's repairs advise; West's window sensor where the role has one (VTherm turns West off
-   while the window is open);
+   SmartPI's repairs advise; West's window sensor (VTherm turns West off while the window is
+   open);
 4. the central boiler's threshold of the role.
 
 Home Assistant then restarts (unless ``--no-restart``): SmartPI's defaults entry shows the
@@ -36,7 +36,6 @@ if str(HERE) not in sys.path:
 from instance import Instance, Step, bench_lib, run_flow  # noqa: E402
 from pack import (  # noqa: E402
     BOILER_SWITCH,
-    DEVICE_POWER_W,
     OUTDOOR_SENSOR,
     ROLES,
     ROOMS,
@@ -82,7 +81,7 @@ def thermostat_steps(room: Room, role: Role) -> list[Step]:
     device: dict[str, Any] = {"underlying_entity_ids": [room.device], "proportional_function": "smartpi"}
     if kind == "over_valve":
         device |= {"auto_regulation_dtemp": 0, "auto_regulation_periode_min": 0}
-    window = role.west_window and room.name == "West"
+    window = room.name == "West"
     steps: list[Step] = [
         ("form", "user", {"thermostat_type": f"thermostat_{kind}"}),
         ("menu", "main"),
@@ -92,7 +91,7 @@ def thermostat_steps(room: Room, role: Role) -> list[Step]:
             {
                 "name": room.name,
                 "temperature_sensor_entity_id": room.sensor,
-                "device_power": DEVICE_POWER_W,
+                "device_power": role.device_power_w(room.name),
                 "used_by_controls_central_boiler": room.counted,
             },
         ),

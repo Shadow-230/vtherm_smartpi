@@ -6,11 +6,17 @@ Three rooms, the same in every role:
   boiler; it gives heat only while the boiler's switch is on;
 - North: an electric heater, not counted by the central boiler.
 
-The roles differ in the central boiler: its threshold, two active devices or 2500 W (each device
-is 2000 W, so one at full power is below it and two at 63 % reach it), and in boiler-delay its
-activation delay. In boiler-count, West has a window sensor (an ``input_boolean``) for BP11.
-Everything else in Versatile Thermostat keeps its default. SmartPI runs with its "SmartPI
-defaults" entry only.
+The roles differ in the central boiler: its threshold, two active devices or a power, the power
+of each device, and its activation delay:
+
+- boiler-count, boiler-delay: two active devices, without and with an activation delay;
+- boiler-power: 2500 W, each device 2000 W, so one at full power is below it and two at 63 %
+  reach it;
+- boiler-levels, boiler-levels-delay: 600 W, West's device 300 W and East's 900 W, so West alone
+  at full power is below it and East alone or both reach it; without and with a delay.
+
+West has a window sensor (an ``input_boolean``) in every role. Everything else in Versatile
+Thermostat keeps its default. SmartPI runs with its "SmartPI defaults" entry only.
 """
 
 from __future__ import annotations
@@ -33,7 +39,7 @@ BOILER_SWITCH = f"switch.{ROOMS_DOMAIN}_boiler"
 # default) would take a steady room for a dead sensor. 100 hours: longer than the longest run
 # (the 96-hour reference runs), in which North's steady room wrote nothing for 24 hours.
 SAFETY_DELAY_MIN = 100 * 60
-DEVICE_POWER_W = 2000.0
+DEVICE_POWER_W = 2000.0  # every device, unless the role gives its own
 WEST_WINDOW = "input_boolean.west_window"
 
 
@@ -82,15 +88,29 @@ class Role:
     count_threshold: int  # VTherm's active-device threshold (0: not used)
     power_threshold_w: float  # VTherm's power threshold (0: not used)
     boiler_delay_s: int = 0  # VTherm's central boiler activation delay
-    west_window: bool = False  # West's window sensor (WEST_WINDOW)
+    powers_w: tuple[tuple[str, float], ...] = ()  # (room, device power) where not DEVICE_POWER_W
+
+    def device_power_w(self, name: str) -> float:
+        """The power of a room's device (its thermostat's ``device_power``), in W."""
+        return dict(self.powers_w).get(name, DEVICE_POWER_W)
 
 
+LEVELS = (("West", 300.0), ("East", 900.0))
 ROLES = {
     role.name: role
     for role in (
-        Role("boiler-count", "SmartPI QAS, central boiler by device count", 2, 0.0, west_window=True),
+        Role("boiler-count", "SmartPI QAS, central boiler by device count", 2, 0.0),
         Role("boiler-power", "SmartPI QAS, central boiler by power", 0, 2500.0),
         Role("boiler-delay", "SmartPI QAS, central boiler with an activation delay", 2, 0.0, boiler_delay_s=120),
+        Role("boiler-levels", "SmartPI QAS, central boiler by power, devices of 300 and 900 W", 0, 600.0, powers_w=LEVELS),
+        Role(
+            "boiler-levels-delay",
+            "SmartPI QAS, central boiler by power, devices of 300 and 900 W, with an activation delay",
+            0,
+            600.0,
+            boiler_delay_s=120,
+            powers_w=LEVELS,
+        ),
     )
 }
 
