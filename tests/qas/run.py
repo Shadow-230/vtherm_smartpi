@@ -10,7 +10,8 @@
 instance runs the author's release (``pack.AUTHOR_RELEASE``); only the scenarios that run there are
 allowed. The harness runs each scenario from the role's base, SmartPI's defaults entry with no
 option changed, and reports a scenario NOT RUN on an instance in another state. Before and after
-each scenario every thermostat goes back to heating at its base setpoint (``scenarios.base``).
+each scenario the instance goes back to the start state (``steps.Bench.base``); then the scenario's
+learning start and North's setpoint are set, and its trace runs while it does (``steps.py``).
 """
 
 from __future__ import annotations
@@ -28,7 +29,8 @@ if str(HERE) not in sys.path:
 
 from instance import bench_lib  # noqa: E402
 from pack import AUTHOR_RELEASE, ROLES, SMARTPI, SMARTPI_DEFAULTS  # noqa: E402
-from scenarios import CHECKPOINT_HOURS, CONTEXT, SCENARIOS, STARTS_FOR_VALIDITY, base, reference_truth  # noqa: E402
+from scenarios import CHECKPOINT_HOURS, SCENARIOS, STARTS_FOR_VALIDITY, Scenario, reference_truth  # noqa: E402
+from steps import CONTEXT, Bench, Trace  # noqa: E402
 
 
 def selected(ids: list[str], role: str, author_release: bool) -> list[str]:
@@ -54,17 +56,52 @@ def duration(seconds: float) -> str:
     return f"{minutes} min" if minutes < 120 else f"{round(seconds / 3600.0, 1):g} h"
 
 
+def span(values: list[float]) -> str:
+    """A duration over a scenario's roles: one value, or the shortest to the longest."""
+    low, high = duration(min(values)), duration(max(values))
+    return low if low == high else f"{low} – {high}"
+
+
 def catalogue() -> str:
-    """The catalogue's rows of README.md."""
+    """The catalogue's rows of README.md: the start state → the event → the expected result."""
     rows = []
     for s in SCENARIOS.values():
-        roles = "both" if len(s.roles) == len(ROLES) else ", ".join(f"`{name}`" for name in s.roles)
+        roles = "all" if len(s.roles) == len(ROLES) else ", ".join(f"`{name}`" for name in s.roles)
+        given, event, expected = s.parts
         rows.append(
-            f"| {s.id} | {s.checks} | {roles} | {duration(s.time.typical_s)} | {duration(s.time.maximum_s)} | "
-            f"{s.depends or '—'} | {'yes' if s.detached else 'no'} | {'yes' if s.minimum else 'no'} | "
-            f"{'yes' if s.author_release else 'no'} | {s.counterpart} |"
+            f"| {s.id} | {given} | {event} | {expected} | {roles} | {s.start} | "
+            f"{span([w.typical_s for w in s.times])} | {span([w.maximum_s for w in s.times])} | {s.depends or '—'} | "
+            f"{'yes' if s.detached else 'no'} | {'yes' if s.minimum else 'no'} | {'yes' if s.author_release else 'no'} | "
+            f"{'the measurement' if s.measured else 'its checks'} | {s.counterpart} |"
         )
     return "\n".join(rows)
+
+
+def runner(s: Scenario):
+    """The scenario on the harness: its learning start and North's setpoint, its trace, its run."""
+
+    async def run(r: Any) -> None:
+        CONTEXT.scenario = s.id
+        b = await Bench.open(r)
+        if not await b.start(s.start, s.north):
+            r.check(False, "the start state was not reached: the scenario did not run")
+            return
+        if s.trace:
+            b.trace = Trace(b, s.id)
+            b.trace.start()
+        try:
+            await s.run(b)
+        finally:
+            if b.trace is not None:
+                await b.trace.stop()
+
+    run.__doc__ = s.run.__doc__
+    return run
+
+
+async def base(r: Any) -> None:
+    """The start state (``steps.Bench.base``), before and after each scenario."""
+    await (await Bench.open(r)).base()
 
 
 TOLERANCE = 0.20  # the decision rule: an error within 20 % of the true value
@@ -170,10 +207,10 @@ def main(argv: list[str]) -> int:
             print(catalogue())
         else:
             for s in SCENARIOS.values():
-                print(
-                    f"{s.id:4} {'M' if s.minimum else '-'} {duration(s.time.typical_s):>7} / {duration(s.time.maximum_s):>7}"
-                    f"  {','.join(s.roles):26} {s.checks}"
-                )
+                print(f"{s.id:4} {'M' if s.minimum else '-'} {s.start:7} {'detached' if s.detached else '-':8} {s.checks}")
+                for name in s.roles:
+                    w = s.time_for(ROLES[name])
+                    print(f"     {name:20} typical {duration(w.typical_s):>8}, maximum {duration(w.maximum_s):>8}")
         return 0
     if args.role is None:
         raise SystemExit("name the role the instance was prepared as: --role ROLE")
@@ -185,8 +222,9 @@ def main(argv: list[str]) -> int:
     from harness import main as harness_main  # noqa: PLC0415
 
     CONTEXT.author_release = args.author_release
+    CONTEXT.role = ROLES[args.role]
     pack = Pack(domain=SMARTPI, base={args.role: {SMARTPI_DEFAULTS: {}}}, multi_entry=True)
-    asyncio.run(harness_main(pack, {sid: SCENARIOS[sid].run for sid in ids}, ids, reset=base, role=args.role))
+    asyncio.run(harness_main(pack, {sid: runner(SCENARIOS[sid]) for sid in ids}, ids, reset=base, role=args.role))
     return 0
 
 

@@ -281,3 +281,22 @@ async def test_the_pause_with_a_changed_threshold_off_and_window(hass: HomeAssis
     await _run_for(hass, freezer, 4 * 60)
     assert hass.states.get(WEST).state == "heat"
     assert paused() is True
+
+
+@pytest.mark.parametrize("expected_lingering_timers", [True])
+async def test_from_the_start_state_west_pauses_at_its_next_calculation(hass: HomeAssistant, freezer: Any) -> None:
+    """As BP1 runs from the common start state (steps.py): West not calling, its setpoint's own
+    calculation does not pause it; its next calculation does."""
+    await _prepare(hass, ROLES["boiler-count"])
+
+    def paused() -> Any:
+        return _live(hass, WEST).get("learning", {}).get("boiler_paused")
+
+    await _targets(hass, **{WEST: 7.0, EAST: 7.0, NORTH: 23.0})
+    await _run_for(hass, freezer, 15 * 60)
+    assert paused() is False
+    await _targets(hass, **{WEST: 23.0})
+    assert paused() is False
+    assert _live(hass, WEST)["power"]["current_cycle_percent"] > 0
+    await _run_for(hass, freezer, 70)
+    assert paused() is True
