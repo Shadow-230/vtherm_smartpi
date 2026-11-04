@@ -5,6 +5,7 @@ import logging
 import time
 from typing import TYPE_CHECKING
 from homeassistant.util import slugify
+from homeassistant.util import dt as dt_util
 from homeassistant.components.sensor import DOMAIN as SENSOR_DOMAIN
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.event import async_track_time_interval
@@ -45,7 +46,7 @@ from .const import (
 from .hvac_mode import VThermHvacMode_OFF, VThermHvacMode_HEAT, VThermHvacMode_COOL
 from .commons import write_event_log
 from .valve_config_check import apply_valve_config_check, clear_valve_config_issues
-from .boiler_call import central_boiler_threshold_reached
+from .boiler_call import central_boiler_threshold_readings, central_boiler_threshold_reached
 from .smartpi.valve_curve import ValveCurveParams
 
 if TYPE_CHECKING:
@@ -74,6 +75,10 @@ class SmartPIHandler:
         self._allow_pwm_cycle_force: bool = False
         # Whether the central boiler threshold was not reached at the previous calculation.
         self._below_boiler_threshold_before: bool = False
+        # The threshold as last read for the pause (None when not read), and whether the
+        # calculation running now is SmartPI's own periodic one: for the debug line only.
+        self._boiler_threshold_reading: bool | None = None
+        self._periodic_calculation: bool = False
         self._valve_linearization_configured: bool = False
         self._valve_curve_params: ValveCurveParams | None = None
 
@@ -399,7 +404,7 @@ class SmartPIHandler:
             )
             safety = getattr(getattr(t, "safety_manager", None), "is_safety_detected", False)
             algo.vt_safety_override = safety is True
-            self._update_boiler_learning_pause(algo)
+            self._update_boiler_learning_pause(algo, self._calculation_source(timestamp, force))
             t.prop_algorithm.calculate(
                 target_temp=t.target_temperature,
                 current_temp=t.current_temperature,
@@ -535,20 +540,77 @@ class SmartPIHandler:
         if self._should_publish_intermediate:
             async_dispatcher_send(t.hass, diag_update_signal(t.unique_id))
 
-    def _update_boiler_learning_pause(self, algo: SmartPI) -> None:
+    def _calculation_source(self, timestamp, force: bool) -> str:
+        """What started the calculation, for the debug line: SmartPI's own periodic
+        calculation, a forced one (a change of the setpoint or the mode, or a guard
+        that forces a new cycle), Versatile Thermostat's cycle (a timestamp), or
+        another event (a sensor, for example)."""
+        if self._periodic_calculation:
+            return "periodic"
+        if force:
+            return "force"
+        if timestamp is not None:
+            return "cycle"
+        return "other"
+
+    def _update_boiler_learning_pause(self, algo: SmartPI, source: str = "other") -> None:
         """Pause SmartPI's learning below the central boiler threshold, or resume it.
 
         The pause starts when the threshold is not reached at two consecutive
         calculations: when a thermostat starts calling, Versatile Thermostat
         counts its device a moment after SmartPI reads the threshold. Learning
-        resumes at once. A change is published at once.
+        resumes at once. A change is published at once. At debug level each
+        evaluation is logged (``_log_boiler_pause_evaluation``).
         """
+        self._boiler_threshold_reading = None
+        before = self._below_boiler_threshold_before
+        was_paused = algo.boiler_learning_paused
         below = self._below_boiler_threshold(algo)
-        paused = below and (self._below_boiler_threshold_before or algo.boiler_learning_paused)
+        paused = below and (before or was_paused)
         self._below_boiler_threshold_before = below
-        if paused != algo.boiler_learning_paused:
+        if paused != was_paused:
             algo.set_boiler_learning_paused(paused)
             self._should_publish_intermediate = True
+        if _LOGGER.isEnabledFor(logging.DEBUG):
+            self._log_boiler_pause_evaluation(algo, source, below, before, was_paused, paused)
+
+    def _log_boiler_pause_evaluation(
+        self, algo: SmartPI, source: str, below: bool, before: bool, was_paused: bool, paused: bool
+    ) -> None:
+        """One debug line per evaluation of the pause, as ``key=value`` pairs: the wall
+        time (UTC) and the monotonic time, what started the calculation, SmartPI's
+        phase, the committed command, Versatile Thermostat's count and power with
+        their thresholds, the threshold as read for the pause, the previous
+        evaluation, the pause before and after, and the decision."""
+        t = self._thermostat
+        readings = central_boiler_threshold_readings(t.hass) or {}
+        if paused == was_paused:
+            decision = "stay_paused" if paused else "stay_running"
+        else:
+            decision = "pause" if paused else "resume"
+        phase = getattr(algo.phase, "value", algo.phase)
+        _LOGGER.debug(
+            "%s - SmartPI boiler pause evaluation: at=%s mono=%.3f source=%s phase=%s committed=%.3f "
+            "counted=%s count=%s count_threshold=%s power_w=%s power_threshold_w=%s reached=%s "
+            "below=%s before=%s paused=%s->%s decision=%s",
+            t,
+            dt_util.utcnow().isoformat(timespec="milliseconds"),
+            time.monotonic(),
+            source,
+            phase,
+            algo.committed_on_percent,
+            getattr(t, "is_used_by_central_boiler", False) is True,
+            readings.get("count"),
+            readings.get("count_threshold"),
+            readings.get("power_w"),
+            readings.get("power_threshold_w"),
+            self._boiler_threshold_reading,
+            below,
+            before,
+            was_paused,
+            paused,
+            decision,
+        )
 
     def _below_boiler_threshold(self, algo: SmartPI) -> bool:
         """True while SmartPI calls for heat below the central boiler threshold.
@@ -562,7 +624,8 @@ class SmartPIHandler:
         power = algo.committed_on_percent
         if not isinstance(power, (int, float)) or power <= 0.0:
             return False
-        return central_boiler_threshold_reached(t.hass) is False
+        self._boiler_threshold_reading = central_boiler_threshold_reached(t.hass)
+        return self._boiler_threshold_reading is False
 
     async def on_state_changed(self, changed: bool):
         """Handle state changes."""
@@ -595,7 +658,11 @@ class SmartPIHandler:
             # Force control_heating but without timestamp to avoid triggering learning
             # The learning should only be triggered by the cycle manager (every cycle_min)
             # automatic recalculation is done inside control_heating
-            await t.async_control_heating(timestamp=None)
+            self._periodic_calculation = True
+            try:
+                await t.async_control_heating(timestamp=None)
+            finally:
+                self._periodic_calculation = False
 
         self._recalc_timer_remove = async_track_time_interval(
             t.hass,

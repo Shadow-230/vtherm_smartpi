@@ -401,7 +401,14 @@ next one starts after the resume (3.7). Learning resumes at the first
 calculation where the threshold is reached or SmartPI stops calling. Regulation is unchanged:
 SmartPI sees the room cool and keeps calling. The pause also holds during a
 calibration (4.6). It is shown in the diagnostics as `learning.boiler_paused`,
-published at once when it changes, and each change is logged.
+published at once when it changes, and each change is logged. At debug level
+(`custom_components.vtherm_smartpi.handler`) every check writes one line,
+"SmartPI boiler pause evaluation:", with its time, what started the
+calculation (`periodic`, SmartPI's own calculation every minute; `force`, a
+change of the setpoint or the mode; `cycle`, Versatile Thermostat's cycle;
+`other`), SmartPI's phase, the committed power, Versatile Thermostat's count
+and power with their thresholds, the previous check and the decision. It
+shows which calculations decided a pause.
 
 Sources:
 
