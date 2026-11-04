@@ -4,6 +4,8 @@
     HA_INSTANCE=N python <stage>/tests/qas/run.py --role ROLE M     # the role's minimum set
     HA_INSTANCE=N python <stage>/tests/qas/run.py --role boiler-count --author-release BP0 BR1 BR2
     HA_INSTANCE=N python <stage>/tests/qas/run.py --role boiler-power --author-release BP14
+    HA_INSTANCE=N python <stage>/tests/qas/run.py --role ROLE --valve-delay 2 BP18      # valves reporting after 2 s
+    HA_INSTANCE=N python <stage>/tests/qas/run.py --role ROLE --repeat 5 --valve-delays 0,2 BP22
     python <stage>/tests/qas/run.py --list [--markdown]             # the catalogue
     python <stage>/tests/qas/run.py --compare QAS.json AUTHOR.json  # BR1 or BR2 on both versions
 
@@ -13,6 +15,9 @@ allowed. The harness runs each scenario from the role's base, SmartPI's defaults
 option changed, and reports a scenario NOT RUN on an instance in another state. Before and after
 each scenario the instance goes back to the start state (``steps.Bench.base``); then the scenario's
 learning start and North's setpoint are set, and its trace runs while it does (``steps.py``).
+``--valve-delay``: the test rooms' valves report a new opening that long after it is set, in every
+scenario (0 s by default). ``--repeat`` and ``--valve-delays``: BP22-BP24's starts for each
+combination and the valve delays they measure.
 """
 
 from __future__ import annotations
@@ -31,7 +36,7 @@ if str(HERE) not in sys.path:
 from instance import bench_lib  # noqa: E402
 from pack import AUTHOR_RELEASE, ROLES, SMARTPI, SMARTPI_DEFAULTS  # noqa: E402
 from scenarios import CHECKPOINT_HOURS, SCENARIOS, STARTS_FOR_VALIDITY, Scenario, reference_truth  # noqa: E402
-from steps import CONTEXT, Bench, Trace  # noqa: E402
+from steps import CONTEXT, REPEAT, VALVE_DELAYS_S, Bench, Trace  # noqa: E402
 
 
 def selected(ids: list[str], role: str, author_release: bool) -> list[str]:
@@ -84,7 +89,7 @@ def runner(s: Scenario):
     async def run(r: Any) -> None:
         CONTEXT.scenario = s.id
         b = await Bench.open(r)
-        if not await b.start(s.start, s.north):
+        if not await b.start("fresh" if s.start == "both" else s.start, s.north):
             r.check(False, "the start state was not reached: the scenario did not run")
             return
         if s.trace:
@@ -199,6 +204,9 @@ def main(argv: list[str]) -> int:
     parser.add_argument("--list", action="store_true")
     parser.add_argument("--markdown", action="store_true")
     parser.add_argument("--compare", nargs=2, metavar=("QAS_JSON", "AUTHOR_JSON"))
+    parser.add_argument("--valve-delay", type=float, default=0.0, metavar="S")
+    parser.add_argument("--repeat", type=int, default=REPEAT, metavar="N")
+    parser.add_argument("--valve-delays", default=",".join(f"{d:g}" for d in VALVE_DELAYS_S), metavar="S,S")
     args = parser.parse_args(argv)
     if args.compare:
         print(compare(*args.compare))
@@ -224,6 +232,9 @@ def main(argv: list[str]) -> int:
 
     CONTEXT.author_release = args.author_release
     CONTEXT.role = ROLES[args.role]
+    CONTEXT.valve_delay_s = args.valve_delay
+    CONTEXT.repeat = args.repeat
+    CONTEXT.valve_delays_s = tuple(float(d) for d in args.valve_delays.split(","))
     pack = Pack(domain=SMARTPI, base={args.role: {SMARTPI_DEFAULTS: {}}}, multi_entry=True)
     asyncio.run(harness_main(pack, {sid: runner(SCENARIOS[sid]) for sid in ids}, ids, reset=base, role=args.role))
     return 0

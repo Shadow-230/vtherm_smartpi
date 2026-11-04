@@ -20,7 +20,17 @@ import configuration  # noqa: E402
 import learned_state  # noqa: E402
 import run  # noqa: E402
 from pack import AUTHOR_RELEASE, BOILER_SWITCH, ROLES, ROOMS_DOMAIN, WEST_WINDOW, room  # noqa: E402
-from scenarios import NATURAL_SWITCHES, NATURAL_THRESHOLD_W, SCENARIOS, boiler_back, cycle_metrics, took_place, west_leaves  # noqa: E402
+from scenarios import (  # noqa: E402
+    NATURAL_SWITCHES,
+    NATURAL_THRESHOLD_W,
+    SCENARIOS,
+    boiler_back,
+    cycle_metrics,
+    race_start,
+    race_summary,
+    took_place,
+    west_leaves,
+)
 from steps import (  # noqa: E402
     EAST,
     NORTH,
@@ -35,6 +45,7 @@ from steps import (  # noqa: E402
     Ids,
     demand_agrees,
     learned_in_pauses,
+    parse_evaluation,
     pause_mismatches,
     reached,
     snapshot_of,
@@ -427,3 +438,54 @@ def test_the_typical_times_of_the_own_setpoint_and_the_closing_start_state() -> 
     assert SCENARIOS["BP2"].closing(delay).typical_s == 150.0
     assert SCENARIOS["BP9"].closing(count).typical_s == RECALC_S
     assert SCENARIOS["BP1"].closing(delay).typical_s == 0.0
+
+
+# --- BP22-BP24: the race at a thermostat's own start --------------------------------------------
+
+
+def _line(at: str, source: str, below: str, decision: str, name: str = "West") -> str:
+    return (
+        f"2026-11-04 09:00:00.000 DEBUG (MainThread) [custom_components.vtherm_smartpi.handler] {name} - SmartPI boiler pause "
+        f"evaluation: at={at} mono=12.000 source={source} phase=Hysteresis committed=1.000 counted=True count=1.0 "
+        f"count_threshold=2.0 power_w=2000.0 power_threshold_w=0.0 reached=False below={below} before=False paused=False->False decision={decision}"
+    )
+
+
+def test_a_check_of_the_pause_is_read_from_its_log_line() -> None:
+    """The debug line of handler.py gives the thermostat, the time and every key=value."""
+    check = parse_evaluation(_line("2026-11-04T09:00:00.250+00:00", "force", "True", "stay_running"))
+    assert (check["name"], check["source"], check["below"], check["decision"], check["count"]) == ("West", "force", "True", "stay_running", "1.0")
+    assert check["at_s"] == pytest.approx(datetime(2026, 11, 4, 9, 0, 0, 250000, tzinfo=UTC).timestamp())
+    assert parse_evaluation("2026-11-04 09:00:00.000 INFO [x] West - SmartPI learning paused (central boiler threshold)") is None
+
+
+def _at(seconds: float) -> str:
+    return datetime.fromtimestamp(1000.0 + seconds, UTC).isoformat()
+
+
+def test_a_start_s_record() -> None:
+    """From the checks and the snapshots: a false pause at the second check below the threshold,
+    held until the resume, VTherm counting West and starting the boiler after the valve reported."""
+    checks = [
+        parse_evaluation(_line(_at(-30.0), "periodic", "False", "stay_running")),
+        parse_evaluation(_line(_at(0.002), "force", "True", "stay_running")),
+        parse_evaluation(_line(_at(1.0), "other", "True", "pause")),
+        parse_evaluation(_line(_at(60.0), "periodic", "False", "resume")),
+    ]
+    snapshots = [
+        {"count": 1.0, "count_threshold": 2.0, "power": None, "power_threshold": None, "boiler": "off", "west.valve": 0.0, "west.dt_state": "OFF"},
+        {"count": 2.0, "count_threshold": 2.0, "power": None, "power_threshold": None, "count_since": _at(2.004), "boiler": "on", "boiler_since": _at(2.01), "west.valve": 100.0, "west.valve_since": _at(2.0), "west.dt_state": "OFF"},
+    ]
+    record = race_start(checks, 1000.0, snapshots)
+    assert [c["source"] for c in record["checks"]] == ["force", "other", "periodic"]
+    assert (record["valve_reported_s"], record["counted_s"], record["boiler_on_s"]) == (2.0, 2.004, 2.01)
+    assert (record["false_pause"], record["pause_at_s"], record["pause_s"], record["pause_still_on"], record["detection_armed"]) == (True, 1.0, 59.0, False, False)
+
+
+def test_the_race_s_summary_for_each_combination() -> None:
+    def rec(learning: str, delay: float, pause_s: float | None) -> dict:
+        return {"learning": learning, "valve_delay_s": delay, "extra": "none", "false_pause": pause_s is not None, "pause_s": pause_s, "pause_still_on": False, "detection_armed": pause_s is None, "counted_s": delay + 0.003}
+
+    lines = race_summary([rec("fresh", 0.0, None), rec("fresh", 0.0, None), rec("fresh", 2.0, 59.0), rec("fresh", 2.0, None)])
+    assert lines[0] == "West fresh, valve delay 0 s, extra check none: 2 starts, false pause in 0; detection armed in 2; VTherm counted West 0.003–0.003 s after the setpoint"
+    assert lines[1].startswith("West fresh, valve delay 2 s, extra check none: 2 starts, false pause in 1 (held 59.0–59.0 s, median 59.0 s)")

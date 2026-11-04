@@ -45,7 +45,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from instance import Instance
-from pack import BOILER_SWITCH, HELPER_DOMAIN, ROLES, SMARTPI, VT, WEST_WINDOW, Role, room
+from pack import BOILER_SWITCH, HELPER_DOMAIN, ROLES, ROOMS_DOMAIN, SMARTPI, VT, WEST_WINDOW, Role, room
 
 _CONST = pathlib.Path(__file__).resolve().parents[2] / "custom_components" / SMARTPI / "smartpi" / "const.py"
 _spec = importlib.util.spec_from_file_location("qas_smartpi_const", _CONST)
@@ -68,7 +68,7 @@ NAMES = {WEST: "West", EAST: "East", NORTH: "North"}
 CALLING = 23.0  # far above the rooms: SmartPI opens the valve fully (100 %)
 STOPPED = 7.0  # far below the rooms: SmartPI does not call
 BASE_SETPOINT = 20.0
-STARTS = ("fresh", "learned")
+STARTS = ("fresh", "learned", "both")  # "both": the scenario sets each start's learning itself
 WAITING_HEAT = "WAITING_HEAT_RESPONSE"  # deadtime_estimator.py: a heating detection waits for the room
 LEARNED = ("accepted_a", "accepted_b", "learn_ok", "deadtime")  # what the learning changes
 
@@ -122,12 +122,21 @@ def boiler_starts(role: Role) -> Wait:
     return BOILER_STARTS_LATE if role.boiler_delay_s else BOILER_STARTS
 
 
+VALVE_DELAYS_S = (0.0, 0.5, 2.0, 5.0, 15.0)  # BP22-BP24: the valves' report delays measured
+REPEAT = 20  # BP22-BP24: starts for each combination
+
+
 class Context:
-    """Set by the runner: the instance's role, whether it runs the author's release, the scenario."""
+    """Set by the runner: the instance's role, whether it runs the author's release, the scenario,
+    the valves' report delay of every scenario (``--valve-delay``), and BP22-BP24's starts and
+    delays (``--repeat``, ``--valve-delays``)."""
 
     role: Role = ROLES["boiler-count"]
     author_release: bool = False
     scenario: str = ""
+    valve_delay_s: float = 0.0
+    repeat: int = REPEAT
+    valve_delays_s: tuple[float, ...] = VALVE_DELAYS_S
 
 
 CONTEXT = Context()
@@ -218,6 +227,8 @@ def snapshot_of(states: dict[str, dict[str, Any]], ids: Ids, now: float) -> dict
     snap["switch"] = (states.get(BOILER_SWITCH) or {}).get("state")
     for key, entity_id in (("count", ids.count), ("power", ids.power), ("count_threshold", ids.count_threshold), ("power_threshold", ids.power_threshold)):
         snap[key] = _number(states.get(entity_id or ""))
+    snap["count_since"] = (states.get(ids.count or "") or {}).get("last_changed")
+    snap["power_since"] = (states.get(ids.power or "") or {}).get("last_changed")
     snap["window"] = (states.get(WEST_WINDOW) or {}).get("state")
     for climate, key in KEYS.items():
         live = ((states.get(ids.diag[climate] or "") or {}).get("attributes") or {}).get("live") or {}
@@ -230,6 +241,7 @@ def snapshot_of(states: dict[str, dict[str, Any]], ids: Ids, now: float) -> dict
         device = states.get(r.device) or {}
         if r.heater == "radiator":
             snap[f"{key}.valve"] = _number(device)  # the valve's own opening, in %
+            snap[f"{key}.valve_since"] = device.get("last_changed")
         else:
             snap[f"{key}.heater"] = device.get("state")
     return snap
@@ -289,6 +301,38 @@ def published_at(value: Any) -> float | None:
         return datetime.fromisoformat(str(value)).timestamp()
     except ValueError:
         return None
+
+
+# --- SmartPI's log: each check of the pause (handler.py, at debug) ------------------------------
+
+HANDLER_LOGGER = f"custom_components.{SMARTPI}.handler"
+EVALUATION = "SmartPI boiler pause evaluation:"
+LOG_MARGIN_S = 60.0  # the bench's clock against Home Assistant's, when reading the log
+
+
+def parse_evaluation(line: str) -> dict[str, Any] | None:
+    """One check of the pause from its log line: the thermostat's ``name``, ``at`` (Home
+    Assistant's clock, epoch seconds), and every ``key=value`` of the line as text."""
+    if EVALUATION not in line:
+        return None
+    head, tail = line.split(EVALUATION, 1)
+    name = head.rsplit("] ", 1)[-1].rsplit(" - ", 1)[0].strip()
+    fields: dict[str, Any] = dict(pair.split("=", 1) for pair in tail.split() if "=" in pair)
+    at = published_at(fields.get("at"))
+    if at is None:
+        return None
+    return {"name": name, "at_s": at} | fields
+
+
+def instance_log(pattern: str, since: datetime) -> list[str]:
+    """The instance's log lines with ``pattern`` since ``since``, through the bench (as its
+    harness reads a failure's evidence)."""
+    from ha_client import CONTAINER, ssh  # noqa: PLC0415 — the bench's client
+
+    start = since.timestamp() - LOG_MARGIN_S
+    stamp = datetime.fromtimestamp(start, UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+    out = ssh(f"docker logs --since {stamp} {CONTAINER} 2>&1 | grep -a -F '{pattern}'", timeout=120)
+    return out.splitlines()
 
 
 # --- what a trace shows -----------------------------------------------------------------------
@@ -556,6 +600,20 @@ class Bench:
         for climate, value in values.items():
             await self.api.call("climate", "set_temperature", {"entity_id": climate, "temperature": value})
 
+    async def valve_delay(self, seconds_: float) -> None:
+        """The test rooms' valves take and report a new opening ``seconds_`` after it is set."""
+        await self.api.call(ROOMS_DOMAIN, "set_valve_report_delay", {"seconds": seconds_})
+
+    async def log_level(self, level: str) -> None:
+        """SmartPI's handler logs at ``level``: at debug, a line for each check of the pause."""
+        await self.api.call("logger", "set_level", {HANDLER_LOGGER: level})
+
+    async def evaluations(self, since: datetime, name: str) -> list[dict[str, Any]]:
+        """The checks of the pause SmartPI logged for the thermostat ``name`` since ``since``
+        (the bench's clock, with a margin for Home Assistant's), read from the instance's log."""
+        lines = await asyncio.to_thread(instance_log, EVALUATION, since)
+        return [e for e in (parse_evaluation(line) for line in lines) if e is not None and e["name"] == name]
+
     async def hvac(self, climate: str, mode: str) -> None:
         await self.api.call("climate", "set_hvac_mode", {"entity_id": climate, "hvac_mode": mode})
 
@@ -673,6 +731,7 @@ class Bench:
             if state is not None and state["state"] != "heat":
                 await self.hvac(climate, "heat")
         await self.api.call("input_boolean", "turn_off", {"entity_id": WEST_WINDOW})
+        await self.valve_delay(CONTEXT.valve_delay_s)
         await self.setpoints(**{WEST: STOPPED, EAST: STOPPED, NORTH: STOPPED})
         self.calling.clear()
         entity_id, value = await self.threshold_entity()

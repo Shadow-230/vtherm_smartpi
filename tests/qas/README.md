@@ -40,6 +40,13 @@ is the testing session's choice.
 `run.py --list` gives every scenario with its roles, its learning at the start, whether it runs
 detached, and its typical and maximum time on each of its roles: the plan of the runs.
 
+`--valve-delay S` makes the test rooms' valves report a new opening S seconds after it is set, in
+every scenario run (0 s by default). `--repeat N` and `--valve-delays 0,0.5,2,5,15` set BP22–BP24's
+starts for each combination (20 by default) and the valve delays they measure:
+
+       HA_INSTANCE=N python stage/vtherm_smartpi/tests/qas/run.py --role ROLE --valve-delay 2 BP18
+       HA_INSTANCE=N python stage/vtherm_smartpi/tests/qas/run.py --role ROLE --repeat 5 --valve-delays 0,2 BP22
+
 The scripts find the bench's `lib/` in `TESTBED_ROOT` or the current directory. After a change to
 `pack.py`, run `python tests/qas/configuration.py` and `python tests/qas/learned_state.py`; CI
 checks both files are up to date.
@@ -50,7 +57,7 @@ checks both files are up to date.
 |---|---|
 | `pack.py` | the rooms and the roles |
 | `configuration.py`, `config/<role>.yaml` | each role's `configuration.yaml`: the bench's clean instance (`default_config:`), the test rooms, the test helper, SmartPI's log at info |
-| `custom_components/smartpi_test_rooms` | the simulated rooms (below) |
+| `custom_components/smartpi_test_rooms` | the simulated rooms and their scenario services (below) |
 | `custom_components/smartpi_test_helper` | `load_learned_state`: a thermostat's SmartPI state replaced by the learned one of its room (`states/`), for the scenarios that start learned |
 | `learned_state.py` | writes `states/west.json` and `states/east.json` from the rooms' own values |
 | `instance.py` | one instance through Home Assistant's API, and the config flows driven step by step |
@@ -64,6 +71,11 @@ after its delay and through its lag. A water radiator gets heat only while the b
 on. The outdoor temperature moves by ±0.2 °C around 3 °C, so its sensor never holds one value
 for hours. Entities: each room's temperature sensor (0.1 °C, written when it changes), its valve
 or heater switch, the outdoor temperature sensor and the boiler's switch. One tick every 7 s.
+Two services change the rooms in place: `smartpi_test_rooms.set_valve_report_delay` (`seconds`):
+a valve takes and reports a new opening only that long after it was set, as a real valve head
+moves for seconds before it reports (0 s by default, which reports at once); and
+`smartpi_test_rooms.step_temperature` (`room`, `delta`): the room's temperature moves by a step at
+once, so its sensor writes a new reading.
 
 ## 3. The rooms and the roles
 
@@ -161,11 +173,31 @@ In the columns:
   for the start state when the boiler was just on. Plan detached runs and reminders from it;
 - **time depends on**: what changes a scenario's time beyond SmartPI's timing.
 
+**The race at a thermostat's own start** (BP22–BP24). SmartPI checks the pause before each
+calculation, on its committed command and on VTherm's count, and pauses at the second check below
+the threshold, whatever the time between the two (`documentation/en/technical_doc.md`, 3.8). At
+West's own start, which completes the threshold, VTherm counts West only once its valve reports
+the new opening: a second check before that pauses learning although the boiler is about to start.
+With the simulated valve reporting at once, the window is a few milliseconds; a real valve head
+reports after seconds, and the window then holds SmartPI's periodic calculation or a change of the
+room's temperature. Each start begins from the start state, with East calling alone and paused;
+then West calls and completes the threshold. The scenarios measure each combination of West's
+learning (fresh in BP22, learned in BP23, both in BP24), the valves' report delay, and in BP24 one
+more check while West's valve has not reported: a step of West's room temperature half a second
+after its setpoint, or West's start a second before SmartPI's periodic calculation. For each
+start they record West's checks of the pause from SmartPI's debug line (each with its time and
+source), when VTherm counted West and started the boiler (the times of its count, power and boiler
+entities), any false pause and how long it held, and whether the dead-time detection armed. The
+records go to `traces/<date>-<ID>-<role>-instance<N>-starts.json`, and the results get a line for
+each start and one for each combination. They set SmartPI's handler logger to debug for their run
+(`logger.set_level`, back to info at the end) and read the instance's log through the bench, as
+its harness does for a failure's evidence.
+
 **Passes on**: its checks, or a measurement. A scenario that passes on a measurement first checks
 that the measurement took place (BP12, BP21: the detection West's start armed ended detected;
 BP14–BP16: the whole time was read, and what the scenario needs happened in it, in BP14 at least
-4 switches of VTherm's boiler; BP19: West
-modulated and its valve then closed; BR2: the 96 hours ran).
+4 switches of VTherm's boiler; BP19: West modulated and its valve then closed; BP22–BP24: every
+start took place, with SmartPI's checks logged; BR2: the 96 hours ran).
 
 M: in the minimum set, run after any change. Detached: a maximum over the bench's two-hour limit
 for a background command. On the author's release: runs there too (section 5).
@@ -195,6 +227,9 @@ for a background command. On the author's release: runs there too (section 5).
 | BP19 | West learned, its setpoint just above its room, East not calling | West's valve partly open below the threshold, then its setpoint goes down in steps of 0.2 degC (no jump to 7 degC) until the valve closes (0 %) | the pause holds while the valve is open (above 0 %) and ends within the calculation it closes. It passes on the measurement, once West's valve was partly open (above 0 and below 100 %) and then closed. | `boiler-count` | learned | 10 min | 56 min | the steps down West needs until its valve closes (each 0.2 degC, two calculations) | no | no | no | the measurement | test_boiler_call.py |
 | BP20 | West and East learned, both calling, the boiler on, nothing paused | Home Assistant restarts | once SmartPI runs again, neither pauses while VTherm counts their devices again and the boiler comes back (with an activation delay, 120 s later); a, b and the dead times are kept. | `boiler-count`, `boiler-power`, `boiler-delay` | learned | 6 min – 10 min | 42 min – 44 min | — | no | no | no | its checks | test_boiler_call.py |
 | BP21 | Fresh, the boiler starting at once (no activation delay) | BP12 (b): East calls alone (paused below the threshold), West stopped and reset, its room cooling, then West's own start reaches the threshold | no pause, the boiler at West's start, and SmartPI's first heating dead-time detection without a delay, the reference for BP12 (b). It passes on the measurement, once West's start armed that detection and it ended detected. | `boiler-count` | fresh | 27 min | 2.6 h | — | yes | no | no | the measurement | test_boiler_call.py |
+| BP22 | Each start from the start state, West fresh (SmartPI's first phase), East calling alone and paused, the valves reporting their opening after 0, 0.5, 2, 5 or 15 s | West starts and completes the threshold, 20 times for each delay | it records each of West's checks of the pause, when VTherm counts West and starts the boiler, any false pause and its length, and whether the dead-time detection armed; a line for each delay with the share of false pauses. It passes on the measurement, once every start took place with SmartPI's checks logged. | `boiler-count`, `boiler-power`, `boiler-delay` | fresh | 5.1 h – 8.5 h | 50.5 h | the starts per combination (run.py --repeat, 20) and the valve delays (--valve-delays, 0, 0.5, 2, 5 and 15 s) | yes | no | no | the measurement | test_boiler_call.py |
+| BP23 | Each start from the start state as in BP22, but West learned (SmartPI past its first phase, its command committed later) | West starts and completes the threshold, 20 times for each valve delay | the same record as BP22 for each start, and a line for each delay. It passes on the measurement, once every start took place with SmartPI's checks logged. | `boiler-count`, `boiler-power`, `boiler-delay` | learned | 5.1 h – 8.5 h | 50.5 h | the starts per combination (run.py --repeat, 20) and the valve delays (--valve-delays, 0, 0.5, 2, 5 and 15 s) | yes | no | no | the measurement | test_boiler_call.py |
+| BP24 | Each start from the start state as in BP22, West fresh and then learned, the valves reporting after 2, 5 or 15 s | West starts and completes the threshold, with one more check of the pause while its valve has not reported yet: its room's temperature moves by 0.1 degC half a second after its setpoint, or West starts a second before SmartPI's periodic calculation; 20 times for each combination | the same record as BP22 for each start, and a line for each combination. It passes on the measurement, once every start took place with SmartPI's checks logged. | `boiler-count`, `boiler-power`, `boiler-delay` | both | 12.5 h – 20.5 h | 120.8 h | the starts per combination (run.py --repeat, 20) and the valve delays (--valve-delays, 0, 0.5, 2, 5 and 15 s); only the delays of 2 s and more | yes | no | no | the measurement | test_boiler_call.py |
 | BR1 | Fresh, North at 20 degC | reference run, the same on this version and on the author's release: for 96 hours West's setpoint switches between 19 and 21 degC and East's call (so the boiler) on and off, each by its own pseudo-random sequence (steps of 30 and 40 minutes) | every 10 minutes West's dead time, a and b are kept (BR1-<version>-instance<N>.json in the results), and run.py --compare judges both versions' heating dead time at 48 hours and at the end against the room's true value. | `boiler-count`, `boiler-power` | fresh | 96 h | 96.4 h | — | yes | no | yes | its checks | test_boiler_call.py |
 | BR2 | Fresh, North at 20 degC | as BR1, but East calls in fixed phases of 3 hours, off first, so West mostly starts heating while the boiler is off | it measures a limit of the pause, the same on this version and on the author's release: kept as BR2-<version>-instance<N>.json and shown by run.py --compare, not judged. It passes on the measurement, once the 96 hours ran. | `boiler-count` | fresh | 96 h | 96.4 h | — | yes | no | yes | the measurement | test_boiler_call.py |
 <!-- end of catalogue -->
@@ -326,3 +361,6 @@ shortest pause at a power threshold.
 - With the device count, a thermostat near its setpoint keeps its valve partly open: it keeps the
   threshold reached (BP16).
 - BR1 and BR2 reset West's learning; West keeps what it learned in the run.
+- BP22–BP24 need SmartPI's debug line of each check of the pause, which SmartPI has since this
+  pack's version: on an older plugin they record no checks and fail their measurement. They run
+  for hours (`run.py --list`); `--repeat` and `--valve-delays` shorten them.
