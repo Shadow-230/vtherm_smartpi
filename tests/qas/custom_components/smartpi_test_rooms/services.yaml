@@ -1,0 +1,29 @@
+set_valve_report_delay:
+  name: Set the valves' report delay
+  description: A valve takes and reports a new opening only this long after it was set (test only).
+  fields:
+    seconds:
+      name: Seconds
+      required: true
+      selector:
+        number:
+          min: 0
+          max: 600
+          step: 0.1
+step_temperature:
+  name: Step a room's temperature
+  description: Move a test room's temperature by a step at once (test only).
+  fields:
+    room:
+      name: Room
+      required: true
+      selector:
+        text:
+    delta:
+      name: Step, degC
+      required: true
+      selector:
+        number:
+          min: -5
+          max: 5
+          step: 0.1
