@@ -79,6 +79,7 @@ from .smartpi.const import (
     ERROR_FILTER_TAU,
     TRAJECTORY_ENABLE_ERROR_THRESHOLD,
     NEAR_SETPOINT_UNWIND_STEPS,
+    NEAR_BAND_HYSTERESIS_C,
     INTEGRAL_GUARD_STALL_CYCLES,
     RESPONSE_LAG_RESTART_MAX_GAP_S,
     clamp,
@@ -259,6 +260,8 @@ class SmartPI:
         self._last_calculate_time: Optional[float] = None
         # Last learning tick while the guard cut holds the output at zero
         self._guard_cut_learning_ts: Optional[float] = None
+        # Last integral tick while the guard cut holds the output at zero
+        self._guard_cut_integral_ts: Optional[float] = None
         # Wall-clock time of the last valid active regulation tick. OFF saves
         # preserve this value so prolonged inactivity remains measurable.
         self._last_active_wall_ts: float | None = None
@@ -571,8 +574,8 @@ class SmartPI:
         in_core_deadband: bool,
         trajectory_active: bool,
         dt_min: float = 0.0,
-    ) -> tuple[bool, bool, str, bool]:
-        """Return which integral direction must stay blocked and whether opposing memory may unwind."""
+    ) -> tuple[bool, bool, str, bool, float]:
+        """Return the blocked integral directions, whether opposing memory may unwind, and the integral rate factor."""
         release_error = error_p if trajectory_active else error_i
         decision = self.integral_guard.decide(
             raw_error=error_i,
@@ -589,6 +592,7 @@ class SmartPI:
             decision.block_negative,
             decision.mode_suffix,
             decision.allow_unwind,
+            decision.integral_scale,
         )
 
     def update_learning(
@@ -654,6 +658,55 @@ class SmartPI:
             raw_temp=raw_temp,
             min_active_window_min=self._cycle_min,
         )
+
+    def _unwind_integral_during_guard_cut(
+        self,
+        now: float,
+        target_temp: float | None,
+        current_temp: float | None,
+    ) -> None:
+        """Track the forced zero output with the integral, down to the release point.
+
+        The cut overrides the PI with 0 % while the PI still requests power: a
+        positive integral that keeps the room above the cut threshold must
+        follow the applied output, or the release restores the same power and
+        the cut repeats. The integral tracks the applied 0 % by
+        back-calculation, d(Ki * I)/dt = -v / Ti with v the PI request and
+        Ti = Kp / Ki, while the PI request stays positive (never into SAT_LO).
+        The unwinding rate scales with the request, not with the overshoot:
+        an integral that carries more than the heat need comes down within a
+        few cuts even when the room barely exceeds the threshold.
+
+        Once the feed-forward balances the losses, the integral alone holds
+        the room Ki * I / Kp above the setpoint. The unwinding stops when this
+        offset is back at the cut threshold minus its hysteresis: a smaller
+        integral cannot hold the room above the threshold and is not what
+        keeps the cut (the heat need left after a setpoint decrease, the
+        overshoot of a rise), so it is kept.
+        """
+        last = self._guard_cut_integral_ts
+        if last is None:
+            last = self._last_calculate_time
+        self._guard_cut_integral_ts = now
+        if last is None or target_temp is None or current_temp is None:
+            return
+        dt_min = min(max(now - last, 0.0) / 60.0, self._cycle_min)
+        error = float(target_temp) - float(current_temp)  # the cut is HEAT only
+        if dt_min <= 0.0 or error >= 0.0 or self.Ki <= 0.0:
+            return
+        release_offset = max(self.deadband_mgr.near_band_above_deg - NEAR_BAND_HYSTERESIS_C, 0.0)
+        integral_floor = self.Kp * release_offset / self.Ki
+        if self.ctl.integral <= integral_floor:
+            return
+        request = self.ctl.u_ff + self.Kp * error + self.Ki * self.ctl.integral
+        if request <= 0.0:
+            return
+        if self.Kp > 0.0:
+            # Back-calculation with Ti = Kp / Ki: delta(Ki * I) = -v * dt / Ti
+            self.ctl.integral = max(self.ctl.integral - request * dt_min / self.Kp, integral_floor)
+        else:
+            self.ctl.integral = max(self.ctl.integral + error * dt_min, integral_floor)
+        self.ctl.u_i = self.Ki * self.ctl.integral
 
     def _update_learning_during_guard_cut(
         self,
@@ -1191,6 +1244,7 @@ class SmartPI:
             "last_active_wall_ts": self._last_active_wall_ts,
             "deadtime_skip_count_a": self._deadtime_skip_count_a,
             "deadtime_skip_count_b": self._deadtime_skip_count_b,
+            "cycles_since_reset": min(self._cycles_since_reset, self.ff_warmup_cycles),
             "est_state": self.est.save_state(),
             "dt_est_state": self.dt_est.save_state(),
             "gov_state": self.gov.save_state(),
@@ -1336,6 +1390,16 @@ class SmartPI:
 
         self.set_learning_enabled(bool(state.get("learning_enabled", True)))
 
+        # The restored integral holds the share of the load that the
+        # feed-forward did not cover before the restart: resume the time_scale
+        # ramp where it stood, so that the feed-forward comes back at the same
+        # level and the restart stays bumpless.
+        try:
+            restored_cycles = int(state.get("cycles_since_reset", 0))
+        except (TypeError, ValueError):
+            restored_cycles = 0
+        self._cycles_since_reset = max(0, min(restored_cycles, self.ff_warmup_cycles))
+
         # Instant FF on reboot when model is well-learned:
         # skip the time_scale ramp by pre-setting _cycles_since_reset.
         tau_info = self.est.tau_reliability()
@@ -1352,8 +1416,9 @@ class SmartPI:
             )
         else:
             _LOGGER.debug(
-                "%s - Reboot: model not ready (ok_a=%d, tau_reliable=%s) -> FF ramp active",
+                "%s - Reboot: model not ready (ok_a=%d, tau_reliable=%s) -> FF ramp resumes at %d/%d",
                 self._name, self.est.learn_ok_count_a, tau_info.reliable,
+                self._cycles_since_reset, self.ff_warmup_cycles,
             )
 
     def _force_off_output(
@@ -1945,11 +2010,13 @@ class SmartPI:
                 hvac_mode=hvac_mode,
             )
             self.ctl.last_i_mode = "I:OVERRIDE(guard_cut)"
+            self._unwind_integral_during_guard_cut(now, target_temp, current_temp)
             self._set_linear_output(0.0)
             self._last_calculate_time = None
             return
         # The learning stays contiguous across the end of a guard cut.
         guard_cut_learning_ts, self._guard_cut_learning_ts = self._guard_cut_learning_ts, None
+        self._guard_cut_integral_ts = None
 
         self._refresh_active_timestamp_and_expire_controller_memory()
 
@@ -2010,7 +2077,7 @@ class SmartPI:
                 IntegralGuardSource.WINDOW_RESUME,
                 IntegralGuardSource.POWER_SHEDDING_RESUME,
             }:
-                self.integral_guard.reset()
+                self.integral_guard.suspend()
                 self._last_integral_guard_mode = "resume_pending"
                 self.resume_hold.start(resume_guard_source)
             else:
@@ -2164,6 +2231,7 @@ class SmartPI:
             block_negative_integral,
             positive_integral_guard_mode,
             allow_guard_unwind,
+            integral_scale,
         ) = self._update_integral_guard(
             error_i=error_i,
             error_p=e_p,
@@ -2248,6 +2316,7 @@ class SmartPI:
             integrator_hold_source=integrator_hold_source,
             u_max=u_max,
             unwind_band_c=NEAR_SETPOINT_UNWIND_STEPS * self.learn_win.balance.resolution_c,
+            integral_scale=integral_scale,
         )
 
         # Anti-windup on the limit known at this tick (max_on_percent).

@@ -30,6 +30,7 @@
  "ctl_state": {
   "integral": 0.0
  },
+ "cycles_since_reset": 0,
  "db_state": {
   "in_deadband": false,
   "in_near_band": false,

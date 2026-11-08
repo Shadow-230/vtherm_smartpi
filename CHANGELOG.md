@@ -35,6 +35,43 @@ All notable changes to this project will be documented in this file.
   SmartPI stops calling, and the next heating is a new start. Regulation is
   unchanged. No new setting. See `documentation/en/technical_doc.md`, 3.8.
 
+## [0.6.2]
+
+- Regulation: a room no longer stays below the setpoint for good after a
+  setpoint increase or a power-shedding, window or OFF resume. When the
+  proportional and feed-forward action settle short of the setpoint, the
+  integral was held until the room came within 0.1 °C, which it never did. A
+  recovery that stays stalled now releases the integral, which then closes the
+  gap at a reduced rate to avoid overshooting. Frequent power shedding no longer
+  restarts the stall detection at each resume.
+- Regulation: a restart no longer causes a dip followed by an overshoot while
+  the feed-forward is still warming up. The feed-forward restarted from zero
+  while the integral was restored, so part of the heating need went missing
+  for half an hour. The feed-forward now comes back at the level it had before
+  the restart.
+- Diagnostics: the recorded history also keeps the integral state
+  (`temperature.integral_error`) and the gains (`control.kp`, `control.ki`),
+  so their evolution can be charted.
+- Regulation: a room whose integral carries more than the heat need no longer
+  cycles for hours between the overheat cut and the restart. During the cut
+  the integral now follows the forced zero output at the pace of the power the
+  PI still requests, instead of the small overshoot, so the surplus is gone
+  within a few cuts. The heating need left after a setpoint decrease is still
+  kept.
+
+## [0.6.1]
+
+- Regulation: a room no longer cycles between the overheat cut and the
+  restart. During the cut the integral now sees the overshoot and comes back
+  down while the PI still asks for power, as long as it alone holds the room
+  above the cut threshold. The heating need left after a setpoint decrease is
+  kept.
+- Calibration: a cool-down is no longer stopped as unreachable on an absurd
+  equilibrium. With the heating off, the twin's disturbance estimate is a
+  leftover from the last heating; the passive phase is now judged on the more
+  favourable of that equilibrium and the outdoor temperature, and a heating
+  phase waits until the estimate is fresh again.
+
 ## [0.6.0]
 
 - Calibration: with a sensor flickering between two values, the heating deadtime is no longer measured as zero. The calibration now detects the room

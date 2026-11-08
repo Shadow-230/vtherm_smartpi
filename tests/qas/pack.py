@@ -30,8 +30,8 @@ VT = "versatile_thermostat"
 SMARTPI_DEFAULTS = "SmartPI defaults"
 VT_CENTRAL = "Central configuration"
 # The author's release the reference runs compare with (run.py --author-release).
-AUTHOR_RELEASE = "0.6.0"
-AUTHOR_COMMIT = "de15302"
+AUTHOR_RELEASE = "0.6.2"
+AUTHOR_COMMIT = "110675d"
 
 OUTDOOR_SENSOR = f"sensor.{ROOMS_DOMAIN}_outdoor_temperature"
 BOILER_SWITCH = f"switch.{ROOMS_DOMAIN}_boiler"
