@@ -92,8 +92,13 @@ def times(wait: Wait, n: int) -> Wait:
     return Wait(n * wait.typical_s, n * wait.maximum_s)
 
 
-PAUSE_ON_SETPOINT = Wait(RECALC_S, WITHIN_S)  # the thermostat's own change: one calculation
+# The thermostat's own change: its pause comes at its next calculation, half a calculation later on
+# average, as the setpoint falls at any moment of SmartPI's 60-s period (BP3: 15-16 s on the bench).
+PAUSE_ON_SETPOINT = Wait(RECALC_S / 2, WITHIN_S)
 RESUME_ON_SETPOINT = Wait(0.0, WITHIN_S)  # at once
+# A learned thermostat (past SmartPI's first phase) that stops calling commits its 0 % only after the
+# calculation of its setpoint: its resume comes at SmartPI's next calculation (48-56 s on the bench).
+RESUME_ON_STOP_LEARNED = Wait(RECALC_S, WITHIN_S)
 PAUSE_EXTERNAL = Wait(2 * RECALC_S, WITHIN_S)  # a change from outside: two calculations
 RESUME_EXTERNAL = Wait(RECALC_S, WITHIN_S)  # one calculation
 WINDOW_DELAY_S = 30.0  # VTherm's default delay before it acts on an opened or closed window
@@ -392,6 +397,7 @@ class Bench:
         self.power_threshold = float(role.power_threshold_w)
         self.trace: Trace | None = None
         self.started = 0.0  # when the last step's action started
+        self.learning = "fresh"  # West's and East's learning at the start (``start``)
 
     @classmethod
     async def open(cls, r: Any) -> Bench:
@@ -571,7 +577,9 @@ class Bench:
         return took
 
     async def west_stops(self) -> dict[str, float | None]:
-        return await self.change("West stops calling", lambda: self.calls_at(WEST, STOPPED), own=WEST)
+        """West stops calling: a pause ends at once, for a learned West at its next calculation."""
+        waits = {WEST: RESUME_ON_STOP_LEARNED} if self.learning == "learned" else None
+        return await self.change("West stops calling", lambda: self.calls_at(WEST, STOPPED), own=WEST, waits=waits)
 
     async def east_calls(self) -> dict[str, float | None]:
         return await self.change("East calls", lambda: self.calls_at(EAST, CALLING), own=EAST)
@@ -709,6 +717,7 @@ class Bench:
     async def start(self, start: str, north: float) -> bool:
         """West's and East's learning as ``start`` declares, North at ``north``, then the settled
         start state; whether it was reached."""
+        self.learning = start
         for climate in COUNTED:
             if start == "learned":
                 await self.api.call(HELPER_DOMAIN, "load_learned_state", {"entity_id": climate, "state": KEYS[climate]})
