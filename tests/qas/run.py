@@ -83,6 +83,20 @@ def catalogue() -> str:
     return "\n".join(rows)
 
 
+def listing() -> str:
+    """The plan of the runs: each scenario with its typical and maximum time on each of its roles,
+    and for BP22-BP24 on each valve delay (``--repeat`` and ``--valve-delays`` change them)."""
+    lines = []
+    for s in SCENARIOS.values():
+        lines.append(f"{s.id:4} {'M' if s.minimum else '-'} {s.start:7} {'detached' if s.detached else '-':8} {s.checks}")
+        for name in s.roles:
+            w = s.time_for(ROLES[name])
+            lines.append(f"     {name:20} typical {duration(w.typical_s):>8}, maximum {duration(w.maximum_s):>8}")
+            for d, w in (s.by_delay(ROLES[name]) if s.by_delay else {}).items():
+                lines.append(f"       valve delay {f'{d:g} s':6} typical {duration(w.typical_s):>8}, maximum {duration(w.maximum_s):>8}")
+    return "\n".join(lines)
+
+
 def runner(s: Scenario):
     """The scenario on the harness: its learning start and North's setpoint, its trace, its run."""
 
@@ -211,15 +225,13 @@ def main(argv: list[str]) -> int:
     if args.compare:
         print(compare(*args.compare))
         return 0
+    CONTEXT.repeat = args.repeat
+    CONTEXT.valve_delays_s = tuple(float(d) for d in args.valve_delays.split(","))
     if args.list:
         if args.markdown:
             print(catalogue())
         else:
-            for s in SCENARIOS.values():
-                print(f"{s.id:4} {'M' if s.minimum else '-'} {s.start:7} {'detached' if s.detached else '-':8} {s.checks}")
-                for name in s.roles:
-                    w = s.time_for(ROLES[name])
-                    print(f"     {name:20} typical {duration(w.typical_s):>8}, maximum {duration(w.maximum_s):>8}")
+            print(listing())
         return 0
     if args.role is None:
         raise SystemExit("name the role the instance was prepared as: --role ROLE")
@@ -233,9 +245,7 @@ def main(argv: list[str]) -> int:
     CONTEXT.author_release = args.author_release
     CONTEXT.role = ROLES[args.role]
     CONTEXT.valve_delay_s = args.valve_delay
-    CONTEXT.repeat = args.repeat
-    CONTEXT.valve_delays_s = tuple(float(d) for d in args.valve_delays.split(","))
-    pack = Pack(domain=SMARTPI, base={args.role: {SMARTPI_DEFAULTS: {}}}, multi_entry=True)
+    pack =Pack(domain=SMARTPI, base={args.role: {SMARTPI_DEFAULTS: {}}}, multi_entry=True)
     asyncio.run(harness_main(pack, {sid: runner(SCENARIOS[sid]) for sid in ids}, ids, reset=base, role=args.role))
     return 0
 

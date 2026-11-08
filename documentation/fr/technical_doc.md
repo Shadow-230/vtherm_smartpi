@@ -343,12 +343,16 @@ continue de demander. La pause vaut aussi pendant une calibration (4.6). Elle
 apparaît dans le diagnostic sous `learning.boiler_paused`, publié dès qu'il
 change, et chaque changement est journalisé. Au niveau debug
 (`custom_components.vtherm_smartpi.handler`), chaque vérification écrit une
-ligne, « SmartPI boiler pause evaluation: », avec son heure, ce qui a lancé le
-calcul (`periodic`, le calcul propre de SmartPI chaque minute ; `force`, un
-changement de consigne ou de mode ; `cycle`, le cycle de Versatile Thermostat ;
-`other`), la phase de SmartPI, la puissance engagée, le nombre d'équipements et
-la puissance de Versatile Thermostat avec leurs seuils, la vérification
-précédente et la décision. Elle montre quels calculs ont décidé une pause.
+ligne, « SmartPI boiler pause evaluation: », avec son heure murale et son
+heure monotone (une horloge qui ne saute jamais, pour les écarts entre
+vérifications), ce qui a lancé le calcul (`periodic`, le calcul propre de
+SmartPI chaque minute ; `force`, un changement de consigne ou de mode ;
+`cycle`, le cycle de Versatile Thermostat ; `other`, par exemple une nouvelle
+température de la pièce), la phase de SmartPI, la puissance engagée, le nombre
+d'équipements et la puissance de Versatile Thermostat avec leurs seuils, le
+seuil tel que lu pour la pause, la vérification précédente, la pause avant et
+après la vérification, et la décision. Elle montre quels calculs ont décidé une
+pause. La ligne ne change rien à la pause.
 
 Sources :
 

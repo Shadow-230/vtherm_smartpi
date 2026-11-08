@@ -6,9 +6,11 @@ All notable changes to this project will be documented in this file.
 
 - Diagnostics: at debug level, each check of the learning pause below the
   central boiler threshold logs one line ("SmartPI boiler pause evaluation:")
-  with its time, what started the calculation, the phase, the committed
-  power, Versatile Thermostat's count and power with their thresholds, the
-  previous check and the decision. The pause itself is unchanged.
+  with its wall-clock and monotonic time, what started the calculation, the
+  phase, the committed power, Versatile Thermostat's count and power with
+  their thresholds, the threshold as read, the previous check, the pause
+  before and after the check, and the decision. The pause itself is
+  unchanged.
 - Diagnostics: `analysis.deadtime.heat_episode_start` and `cool_episode_start`
   publish the start of the current heating or cooling episode (ISO time, UTC),
   from which the dead-time window counts; `null` outside an episode.
