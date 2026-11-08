@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -316,7 +317,7 @@ def _handler(counted: bool = True) -> SmartPIHandler:
     return handler
 
 
-async def _control(handler: SmartPIHandler, reached: bool | None, power: float) -> SmartPI:
+async def _control(handler: SmartPIHandler, reached: bool | None, power: float, **kwargs) -> SmartPI:
     """One calculation; returns the algorithm, with the diagnostics' publications in ``handler.published``."""
     algo = handler._thermostat.prop_algorithm
     algo._committed_on_percent = power
@@ -325,7 +326,7 @@ async def _control(handler: SmartPIHandler, reached: bool | None, power: float) 
         patch("custom_components.vtherm_smartpi.handler.async_dispatcher_send") as send,
         patch.object(handler, "_async_save", new_callable=AsyncMock),
     ):
-        await handler.control_heating(force=False)
+        await handler.control_heating(**({"force": False} | kwargs))
     handler.published = send.call_count
     handler.should_publish_intermediate()  # as Versatile Thermostat asks after each calculation
     return algo
@@ -431,3 +432,79 @@ def test_the_diagnostics_publish_when_the_heating_episode_started() -> None:
     assert started() >= resumed - timedelta(milliseconds=50)
     assert resumed > during
     assert build_published_diagnostics(smartpi)["analysis"]["deadtime"]["cool_episode_start"] is None
+
+
+# --- the debug line of each evaluation ---------------------------------------------
+
+EVALUATION = "SmartPI boiler pause evaluation:"
+SEQUENCE = ((False, 0.5), (False, 0.5), (True, 0.5), (False, 0.5), (False, 0.0), (None, 0.5))
+
+
+def _evaluations(caplog) -> list[dict[str, str]]:
+    """The ``key=value`` pairs of each debug line of an evaluation, in order."""
+    out = []
+    for record in caplog.records:
+        message = record.getMessage()
+        if EVALUATION in message:
+            out.append(dict(pair.split("=", 1) for pair in message.split(EVALUATION, 1)[1].split()))
+    return out
+
+
+async def _pauses(caplog, level: int) -> list[bool]:
+    caplog.set_level(level, logger="custom_components.vtherm_smartpi.handler")
+    handler = _handler()
+    return [(await _control(handler, reached=reached, power=power)).boiler_learning_paused for reached, power in SEQUENCE]
+
+
+async def test_each_evaluation_has_a_debug_line_and_the_same_result(caplog) -> None:
+    """At debug level every evaluation of the pause logs its time, source, phase, committed
+    command, the threshold read, the previous evaluation, the pause before and after and the
+    decision; the pause decided is the same as without the line."""
+    without = await _pauses(caplog, logging.INFO)
+    assert not _evaluations(caplog)
+    caplog.clear()
+
+    with patch(
+        "custom_components.vtherm_smartpi.handler.central_boiler_threshold_readings",
+        return_value={"count": 1.0, "count_threshold": 2.0, "power_w": None, "power_threshold_w": None},
+    ):
+        with_line = await _pauses(caplog, logging.DEBUG)
+
+    assert with_line == without == [False, True, False, False, False, False]
+    lines = _evaluations(caplog)
+    assert len(lines) == len(SEQUENCE)
+    first, second = lines[0], lines[1]
+    assert set(first) >= {"at", "mono", "source", "phase", "committed", "counted", "count", "count_threshold", "power_w", "power_threshold_w", "reached", "below", "before", "paused", "decision"}
+    assert (first["source"], first["committed"], first["count"], first["count_threshold"]) == ("other", "0.500", "1.0", "2.0")
+    assert (first["reached"], first["below"], first["before"], first["paused"], first["decision"]) == ("False", "True", "False", "False->False", "stay_running")
+    assert (second["before"], second["paused"], second["decision"]) == ("True", "False->True", "pause")
+    assert (lines[2]["reached"], lines[2]["decision"]) == ("True", "resume")
+    assert (lines[4]["reached"], lines[4]["below"]) == ("None", "False")  # not calling: the threshold is not read
+
+
+@pytest.mark.parametrize(("kwargs", "source"), [({"force": True}, "force"), ({"timestamp": 1.0}, "cycle"), ({}, "other")])
+async def test_the_debug_line_says_what_started_the_calculation(caplog, kwargs, source) -> None:
+    caplog.set_level(logging.DEBUG, logger="custom_components.vtherm_smartpi.handler")
+    await _control(_handler(), reached=False, power=0.5, **kwargs)
+
+    assert [line["source"] for line in _evaluations(caplog)] == [source]
+
+
+async def test_the_debug_line_tells_smartpi_s_periodic_calculation(caplog) -> None:
+    """SmartPI's own calculation every minute is told apart from Versatile Thermostat's calls."""
+    caplog.set_level(logging.DEBUG, logger="custom_components.vtherm_smartpi.handler")
+    handler = _handler()
+    thermostat = handler._thermostat
+
+    async def control(timestamp=None) -> None:
+        await _control(handler, reached=False, power=0.5, timestamp=timestamp)
+
+    thermostat.async_control_heating = control
+    with patch("custom_components.vtherm_smartpi.handler.async_track_time_interval") as track:
+        handler._recalc_timer_remove = None
+        handler._start_recalc_timer()
+        periodic = track.call_args.args[1]
+    await periodic(None)
+    await _control(handler, reached=False, power=0.5)
+
+    assert [line["source"] for line in _evaluations(caplog)] == ["periodic", "other"]

@@ -11,6 +11,14 @@ Entities, all ``*.smartpi_test_rooms_*``: each room's temperature sensor and its
 ``number``, for a water radiator; a ``switch`` for an electric heater), the outdoor temperature
 sensor and, with a radiator, the boiler's switch that Versatile Thermostat's central boiler
 drives. The physics is ``model.py``; it runs in real time, one tick every 7 s.
+
+Scenario services, which change the rooms in place:
+
+- ``set_valve_report_delay`` (``seconds``): a valve takes a new opening, and reports it, only
+  that long after it was set, as a real valve head moves for seconds before it reports; a new
+  opening set meanwhile replaces the pending one. 0 s (the default) reports at once;
+- ``step_temperature`` (``room``, ``delta``): the room's temperature moves by ``delta`` degC at
+  once, so its sensor writes a new reading.
 """
 
 from __future__ import annotations
@@ -20,7 +28,8 @@ from datetime import datetime, timedelta
 
 import voluptuous as vol
 from homeassistant.const import EVENT_HOMEASSISTANT_STOP
-from homeassistant.core import Event, HomeAssistant, callback
+from homeassistant.core import Event, HomeAssistant, ServiceCall, callback
+from homeassistant.exceptions import ServiceValidationError
 from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers.discovery import async_load_platform
 from homeassistant.helpers.dispatcher import async_dispatcher_connect, async_dispatcher_send
@@ -57,6 +66,7 @@ class Hub:
         self.sim = sim
         self.heaters = heaters  # room -> "radiator" or "electric"
         self._start = time.monotonic()
+        self.valve_report_delay_s = 0.0
 
     @callback
     def update(self, _now: datetime | None = None) -> None:
@@ -108,6 +118,24 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     for platform in ("sensor", "switch", "number"):
         hass.async_create_task(async_load_platform(hass, platform, DOMAIN, {}, config))
     stop = async_track_time_interval(hass, hub.update, timedelta(seconds=STEP_S))
+
+    async def set_valve_report_delay(call: ServiceCall) -> None:
+        hub.valve_report_delay_s = float(call.data["seconds"])
+
+    async def step_temperature(call: ServiceCall) -> None:
+        room = call.data["room"]
+        if room not in hub.sim.rooms:
+            raise ServiceValidationError(f"no room {room}")
+        hub.update()
+        hub.sim.rooms[room].temperature += float(call.data["delta"])
+        hub.update()
+
+    hass.services.async_register(
+        DOMAIN, "set_valve_report_delay", set_valve_report_delay, vol.Schema({vol.Required("seconds"): vol.All(vol.Coerce(float), vol.Range(min=0.0))})
+    )
+    hass.services.async_register(
+        DOMAIN, "step_temperature", step_temperature, vol.Schema({vol.Required("room"): cv.slug, vol.Required("delta"): vol.Coerce(float)})
+    )
 
     @callback
     def _stop(_event: Event) -> None:

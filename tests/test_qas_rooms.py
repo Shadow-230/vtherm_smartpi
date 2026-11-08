@@ -6,10 +6,13 @@ from __future__ import annotations
 import math
 import pathlib
 import sys
+from datetime import timedelta
 
 import pytest
 from homeassistant.core import HomeAssistant
 from homeassistant.setup import async_setup_component
+from homeassistant.util import dt as dt_util
+from pytest_homeassistant_custom_component.common import async_fire_time_changed
 
 QAS = pathlib.Path(__file__).resolve().parent / "qas"
 if str(QAS) not in sys.path:
@@ -148,3 +151,45 @@ async def test_an_electric_heater_warms_its_room(rooms_hass: HomeAssistant) -> N
     _later(hass, 1800.0)
     await hass.async_block_till_done()
     assert float(hass.states.get("sensor.smartpi_test_rooms_north_temperature").state) > 19.5
+
+
+VALVE = "number.smartpi_test_rooms_west_valve"
+
+
+async def _set_valve(hass: HomeAssistant, value: float) -> None:
+    await hass.services.async_call("number", "set_value", {"entity_id": VALVE, "value": value}, blocking=True)
+    await hass.async_block_till_done()
+
+
+async def _after(hass: HomeAssistant, seconds: float) -> None:
+    async_fire_time_changed(hass, dt_util.utcnow() + timedelta(seconds=seconds))
+    await hass.async_block_till_done()
+
+
+async def test_a_valve_reports_its_opening_after_the_delay(rooms_hass: HomeAssistant) -> None:
+    """With a report delay a valve takes and reports a new opening only that long after it was
+    set; an opening set meanwhile replaces the pending one; 0 s reports at once again."""
+    hass = rooms_hass
+    await hass.services.async_call("smartpi_test_rooms", "set_valve_report_delay", {"seconds": 2.0}, blocking=True)
+    await _set_valve(hass, 100)
+    assert hass.states.get(VALVE).state == "0.0"
+    assert hass.data["smartpi_test_rooms"].sim.rooms["west"].command == 0.0
+    await _after(hass, 2.5)
+    assert hass.states.get(VALVE).state == "100.0"
+    assert hass.data["smartpi_test_rooms"].sim.rooms["west"].command == 1.0
+
+    await _set_valve(hass, 40)
+    await _set_valve(hass, 60)
+    await _after(hass, 2.5)
+    assert hass.states.get(VALVE).state == "60.0"
+
+    await hass.services.async_call("smartpi_test_rooms", "set_valve_report_delay", {"seconds": 0.0}, blocking=True)
+    await _set_valve(hass, 0)
+    assert hass.states.get(VALVE).state == "0.0"
+
+
+async def test_a_room_s_temperature_steps(rooms_hass: HomeAssistant) -> None:
+    hass = rooms_hass
+    await hass.services.async_call("smartpi_test_rooms", "step_temperature", {"room": "west", "delta": -0.1}, blocking=True)
+    await hass.async_block_till_done()
+    assert hass.states.get("sensor.smartpi_test_rooms_west_temperature").state == "18.9"

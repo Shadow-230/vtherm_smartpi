@@ -42,12 +42,10 @@ def _watts(value: float, unit: str | None) -> float:
     return value * 1000.0 if unit in _KILO_WATT_UNITS else value
 
 
-def central_boiler_threshold_reached(hass: Any) -> bool | None:
-    """Whether the demand reaches Versatile Thermostat's central boiler threshold.
-
-    Versatile Thermostat's rule: a threshold counts when it is above 0 and the
-    number of active devices (valve heads or switches), or their total power,
-    reaches it. None when the values cannot be read.
+def central_boiler_threshold_readings(hass: Any) -> dict[str, float | None] | None:
+    """Versatile Thermostat's active-device count and total power, and their
+    thresholds, as the threshold reads them (the powers in W); a value that
+    cannot be read is None, and None when the registry cannot be read.
     """
     try:
         registry = er.async_get(hass)
@@ -57,6 +55,26 @@ def central_boiler_threshold_reached(hass: Any) -> bool | None:
     count_threshold, _ = _number(hass, registry, "number", VT_COUNT_THRESHOLD_UNIQUE_ID)
     power, power_unit = _number(hass, registry, "sensor", VT_ACTIVE_POWER_UNIQUE_ID)
     power_threshold, threshold_unit = _number(hass, registry, "number", VT_POWER_THRESHOLD_UNIQUE_ID)
+    return {
+        "count": count,
+        "count_threshold": count_threshold,
+        "power_w": _watts(power, power_unit) if power is not None else None,
+        "power_threshold_w": _watts(power_threshold, threshold_unit) if power_threshold is not None else None,
+    }
+
+
+def central_boiler_threshold_reached(hass: Any) -> bool | None:
+    """Whether the demand reaches Versatile Thermostat's central boiler threshold.
+
+    Versatile Thermostat's rule: a threshold counts when it is above 0 and the
+    number of active devices (valve heads or switches), or their total power,
+    reaches it. None when the values cannot be read.
+    """
+    readings = central_boiler_threshold_readings(hass)
+    if readings is None:
+        return None
+    count, count_threshold = readings["count"], readings["count_threshold"]
+    power, power_threshold = readings["power_w"], readings["power_threshold_w"]
     known = False
     if count is not None and count_threshold is not None:
         known = True
@@ -64,6 +82,6 @@ def central_boiler_threshold_reached(hass: Any) -> bool | None:
             return True
     if power is not None and power_threshold is not None:
         known = True
-        if power_threshold > 0 and _watts(power, power_unit) >= _watts(power_threshold, threshold_unit):
+        if power_threshold > 0 and power >= power_threshold:
             return True
     return False if known else None

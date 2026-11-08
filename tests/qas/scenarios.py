@@ -27,21 +27,23 @@ from __future__ import annotations
 import asyncio
 import json
 import pathlib
+import statistics
 import time
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 
-from pack import AUTHOR_RELEASE, ROLES, SMARTPI, VT, Role, room
+from pack import AUTHOR_RELEASE, ROLES, ROOMS_DOMAIN, SMARTPI, VT, Role, room
 from steps import (
     AFTER_RESTART,
     BASE_SETPOINT,
     BOILER_DELAY_S,
     BOILER_STOPS,
     CALLING,
-    CYCLE_S,
+    CONTEXT,
     COUNTED,
+    CYCLE_S,
     DETACHED_AFTER_S,
     EAST,
     HOLD,
@@ -141,6 +143,7 @@ class Scenario:
     trace: bool
     boiler_at_end: bool  # the closing start state waits for VTherm's boiler off (``closing``)
     paused_at_end: bool  # West paused at the end: the closing start state waits for its resume
+    by_delay: Callable[[Role], dict[float, Wait]] | None = None  # BP22-BP24: the time of each valve delay
 
     def closing(self, role: Role) -> Wait:
         """The start state after the scenario (``steps.Bench.settled``): VTherm's boiler off for the
@@ -189,6 +192,7 @@ def scenario(
     trace: bool = True,
     boiler_at_end: bool = False,
     paused_at_end: bool = False,
+    by_delay: Callable[[Role], dict[float, Wait]] | None = None,
 ):
     def register(run: Callable[[Bench], Awaitable[None]]) -> Callable[[Bench], Awaitable[None]]:
         if id in SCENARIOS:
@@ -196,7 +200,9 @@ def scenario(
         if start not in STARTS:
             raise ValueError(f"{id}: start {start!r}")
         timing = time if callable(time) else (lambda _role, w=time: w)
-        SCENARIOS[id] = Scenario(id, run, roles, timing, counterpart, minimum, depends, author_release, start, north, measured, trace, boiler_at_end, paused_at_end)
+        SCENARIOS[id] = Scenario(
+            id, run, roles, timing, counterpart, minimum, depends, author_release, start, north, measured, trace, boiler_at_end, paused_at_end, by_delay
+        )
         return run
 
     return register
@@ -1036,6 +1042,263 @@ async def BP21(b: Bench) -> None:
     """Fresh, the boiler starting at once (no activation delay) → BP12 (b): East calls alone (paused below the threshold), West stopped and reset, its room cooling, then West's own start reaches the threshold → no pause, the boiler at West's start, and SmartPI's first heating dead-time detection without a delay, the reference for BP12 (b). It passes on the measurement, once West's start armed that detection and it ended detected."""
     await b.change("East calls alone", lambda: b.calls_at(EAST, CALLING), own=EAST)
     await west_starts_the_boiler(b, "(b)")
+
+
+# --- BP22-BP24: a thermostat's own start that completes the threshold ------------------------
+#
+# A race at a thermostat's own start (README.md, section 4): SmartPI checks the pause before each
+# calculation, on its committed command and on VTherm's count, and pauses at the second check
+# below the threshold, whatever the time between the two. At West's own start, which completes
+# the threshold, VTherm counts West only once its valve reports the new opening; a second check
+# before that pauses learning although the boiler is about to start. Each start is measured from
+# the start state, East calling alone (paused), with the valves reporting their opening after a
+# delay (``smartpi_test_rooms.set_valve_report_delay``), from SmartPI's debug line of each check
+# (handler.py) and the times of VTherm's count, power and boiler.
+
+RACE_WATCH_S = RECALC_S + 15.0  # after West's valve reports: past the next periodic calculation
+RACE_START = Wait(SETTLED_S + 3 * POLL_S + RECALC_S, BOILER_DELAY_S + SETTLED_S + 2 * WITHIN_S + WITHIN_S)
+
+
+def race_time(role: Role, starts: int, delays: Sequence[float], kinds: int = 1) -> Wait:
+    """The starts' time: each one's start state (with the role's delay), East's pause, and West's
+    start watched for its valve's delay and a calculation more."""
+    per_start = [
+        Wait(RACE_START.typical_s + role.boiler_delay_s + d + RACE_WATCH_S, RACE_START.maximum_s + d + RACE_WATCH_S) for d in delays
+    ]
+    return Wait(kinds * starts * sum(w.typical_s for w in per_start), kinds * starts * sum(w.maximum_s for w in per_start))
+
+
+EXTRA_SOURCE = {"sensor": "other", "periodic": "periodic"}  # the source of the extra check's line (handler.py)
+
+
+def race_start(evaluations: Sequence[dict[str, Any]], setpoint_at: float, snapshots: Sequence[dict[str, Any]], extra: str = "none") -> dict[str, Any]:
+    """One start's record: West's setpoint (Home Assistant's clock), and in seconds from it West's
+    checks of the pause, each a call of its control (with its source, its committed command, below
+    the threshold or not, the decision), when its valve reported, when VTherm counted West (its
+    count or power reaching the threshold), when the boiler started, the checks in the window
+    before VTherm counted West and whether the ``extra`` check was one of them, the false pause (a
+    pause decided after the setpoint, and how long it held within the watch) and whether the
+    dead-time detection armed (``WAITING_HEAT_RESPONSE``)."""
+    checks = [e for e in evaluations if e["at_s"] >= setpoint_at - 0.05]
+    out: dict[str, Any] = {
+        "setpoint_at": datetime.fromtimestamp(setpoint_at, UTC).isoformat(timespec="milliseconds"),
+        "checks": [
+            {"t_s": round(e["at_s"] - setpoint_at, 3), "source": e.get("source"), "committed": e.get("committed"), "below": e.get("below"), "decision": e.get("decision")}
+            for e in checks
+        ],
+    }
+    counted = next((s for s in snapshots if reached(s) is True), None)
+    since = None
+    if counted is not None:
+        since = published_at(counted.get("count_since")) if (counted.get("count_threshold") or 0) > 0 else published_at(counted.get("power_since"))
+    out["counted_s"] = round(since - setpoint_at, 3) if since is not None else None
+    on = next((s for s in snapshots if s.get("boiler") == "on"), None)
+    on_at = published_at(on.get("boiler_since")) if on else None
+    out["boiler_on_s"] = round(on_at - setpoint_at, 3) if on_at is not None else None
+    valve = next((s for s in snapshots if (s.get("west.valve") or 0) > 0), None)
+    valve_at = published_at(valve.get("west.valve_since")) if valve else None
+    out["valve_reported_s"] = round(valve_at - setpoint_at, 3) if valve_at is not None else None
+    window = [c for c in out["checks"] if out["counted_s"] is None or c["t_s"] < out["counted_s"]]
+    out["checks_in_window"] = len(window)
+    out["extra_in_window"] = any(c["source"] == EXTRA_SOURCE[extra] for c in window) if extra in EXTRA_SOURCE else None
+    paused = next((e for e in checks if e.get("decision") == "pause"), None)
+    resumed = next((e for e in checks if paused is not None and e["at_s"] > paused["at_s"] and e.get("decision") == "resume"), None)
+    out["false_pause"] = paused is not None
+    out["pause_at_s"] = round(paused["at_s"] - setpoint_at, 3) if paused else None
+    out["pause_s"] = round(resumed["at_s"] - paused["at_s"], 3) if paused and resumed else None
+    out["pause_still_on"] = paused is not None and resumed is None
+    out["detection_armed"] = any(s.get("west.dt_state") == WAITING_HEAT for s in snapshots)
+    return out
+
+
+def race_summary(records: Sequence[dict[str, Any]]) -> list[str]:
+    """A line for each combination (West's learning, the valve's delay, the kind of start): the
+    starts, those with a second check before VTherm counted West (and with the extra check among
+    them), the false pauses and their length, the detections armed, VTherm's count after the
+    setpoint."""
+    groups: dict[tuple, list[dict[str, Any]]] = {}
+    for rec in records:
+        groups.setdefault((rec["learning"], rec["valve_delay_s"], rec.get("extra", "none")), []).append(rec)
+    lines = []
+    for (learning, delay, extra), recs in groups.items():
+        pauses = [r["pause_s"] for r in recs if r["false_pause"] and r["pause_s"] is not None]
+        still = sum(1 for r in recs if r["pause_still_on"])
+        counted = sorted(r["counted_s"] for r in recs if r["counted_s"] is not None)
+        second = sum(1 for r in recs if (r.get("checks_in_window") or 0) >= 2)
+        hit = sum(1 for r in recs if r.get("extra_in_window"))
+        lines.append(
+            f"West {learning}, valve delay {delay:g} s, extra check {extra}: {len(recs)} starts, "
+            f"a second check before VTherm counted West in {second}"
+            + (f" (the extra check in {hit})" if extra in EXTRA_SOURCE else "")
+            + f", false pause in {sum(1 for r in recs if r['false_pause'])}"
+            + (f" (held {min(pauses):.1f}–{max(pauses):.1f} s, median {statistics.median(pauses):.1f} s)" if pauses else "")
+            + (f", {still} still paused at the end of the watch" if still else "")
+            + f"; detection armed in {sum(1 for r in recs if r['detection_armed'])}; VTherm counted West "
+            + (f"{counted[0]:.3f}–{counted[-1]:.3f} s after the setpoint" if counted else "never")
+        )
+    return lines
+
+
+async def own_start(b: Bench, learning: str, delay_s: float, extra: str = "none") -> dict[str, Any] | None:
+    """One start: the start state with West's ``learning``, the valves' report delay, East calling
+    alone until it pauses, then West's own start, with an ``extra`` check while West's valve has
+    not reported yet ("sensor": its room's temperature moves by a step halfway through the delay,
+    at most half a second after the setpoint; "periodic": West starts before SmartPI's periodic
+    calculation by half the delay, at most a second). Its record, or None when the start state or
+    East's pause was not reached."""
+    await b.valve_delay(0.0)
+    await b.base()
+    if not await b.start(learning, STOPPED):
+        return None
+    await b.valve_delay(delay_s)
+    began = datetime.now(UTC)
+    sent = time.time()
+    await b.setpoints(**{EAST: CALLING})
+    east_state = await b.r.ha.state(EAST)
+    offset = (published_at((east_state or {}).get("last_updated")) or time.time()) - time.time()  # Home Assistant's clock ahead
+    took, _ = await b.until(lambda s: of(s, EAST, "paused") is True and (of(s, EAST, "valve") or 0) > 0, delay_s + WITHIN_S, 2.0)
+    if took is None:
+        b.note(f"West {learning}, delay {delay_s:g} s: East did not pause alone within {delay_s + WITHIN_S:.0f} s; start skipped")
+        return None
+    lead = min(1.0, delay_s / 2)  # West's start before the periodic calculation
+    if extra == "periodic":
+        periodic = [e for e in await b.evaluations(began, "West") if e.get("source") == "periodic"]
+        if not periodic:
+            b.note(f"West {learning}, delay {delay_s:g} s: no periodic check of West logged; start skipped")
+            return None
+        upcoming = periodic[-1]["at_s"] + RECALC_S
+        while upcoming - lead - offset < time.time() + 1.0:
+            upcoming += RECALC_S
+        await asyncio.sleep(max(upcoming - lead - offset - time.time(), 0.0))
+    await b.setpoints(**{WEST: CALLING})
+    west_state = await b.r.ha.state(WEST)
+    setpoint_at = published_at((west_state or {}).get("last_updated")) or (time.time() + offset)
+    if extra == "sensor":
+        await asyncio.sleep(min(0.5, delay_s / 2))
+        await b.api.call(ROOMS_DOMAIN, "step_temperature", {"room": "west", "delta": -0.1})
+    snapshots = await b.watch(delay_s + RACE_WATCH_S, 1.0)
+    record = race_start(await b.evaluations(began, "West"), setpoint_at, snapshots, extra)
+    record |= {"learning": learning, "valve_delay_s": delay_s, "extra": extra, "east_sent": datetime.fromtimestamp(sent, UTC).isoformat()}
+    b.note(
+        f"West {learning}, delay {delay_s:g} s, extra {extra}: checks {[(c['t_s'], c['source'], c['below'], c['decision']) for c in record['checks'][:4]]}, "
+        f"valve reported {record['valve_reported_s']} s, VTherm counted {record['counted_s']} s, boiler on {record['boiler_on_s']} s, "
+        f"checks in the window {record['checks_in_window']}" + (f" (extra {record['extra_in_window']})" if extra in EXTRA_SOURCE else "") + ", "
+        f"false pause {record['false_pause']}" + (f" ({record['pause_s']} s)" if record["pause_s"] is not None else "") + f", detection armed {record['detection_armed']}"
+    )
+    return record
+
+
+def _race_file(b: Bench, sid: str) -> pathlib.Path:
+    from ha_client import N  # noqa: PLC0415 — the bench's client
+    from harness import results_file  # noqa: PLC0415 — the bench's harness
+
+    return results_file(b.r.pack).parent / "traces" / f"{datetime.now(UTC):%Y-%m-%d}-{sid}-{b.role.name}-instance{N}-starts.json"
+
+
+async def race(b: Bench, sid: str, learnings: Sequence[str], delays: Sequence[float], extras: Sequence[str]) -> None:
+    """Every combination's starts (``CONTEXT.repeat`` each), their records kept in a file next to
+    the results, a line for each combination, and the check that every start took place."""
+    out = _race_file(b, sid)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    if is_control(b.role):
+        b.note(f"{b.role.name}: {CONTROL}")
+    records: list[dict[str, Any]] = []
+    expected = 0
+    await b.log_level("debug")
+    try:
+        for learning in learnings:
+            for delay_s in delays:
+                for extra in extras:
+                    for _ in range(CONTEXT.repeat):
+                        expected += 1
+                        rec = await own_start(b, learning, delay_s, extra)
+                        if rec is not None:
+                            records.append(rec)
+                            out.write_text(json.dumps({"scenario": sid, "role": b.role.name, "starts": records}, indent=1), encoding="utf-8")
+    finally:
+        await b.log_level("info")
+        await b.valve_delay(CONTEXT.valve_delay_s)
+    b.note(f"kept: {out.name}")
+    for line in race_summary(records):
+        b.note(line)
+    logged = sum(1 for r in records if r["checks"])
+    b.check(len(records) == expected and logged == len(records), f"the measurement took place: {len(records)} of {expected} starts, {logged} with SmartPI's checks logged")
+
+
+def is_control(role: Role) -> bool:
+    """A role whose threshold is VTherm's power alone: there VTherm counts West's power from
+    SmartPI's command, not from its valve (feature_power_manager.py, mean_cycle_power), so the
+    valve's report delay does not widen the window."""
+    return role.count_threshold == 0 and role.power_threshold_w > 0
+
+
+CONTROL = "a control run: VTherm counts West's power from SmartPI's command, not from its valve, so the valve's delay does not widen the window"
+
+
+def _delays(positive: bool = False) -> list[float]:
+    """The valve delays measured (``--valve-delays``); for BP24 only those above 0 s, which leave
+    room for a check before the valve reports."""
+    return [d for d in CONTEXT.valve_delays_s if d > 0.0 or not positive]
+
+
+def _race_by_delay(positive: bool = False, kinds: int = 1) -> Callable[[Role], dict[float, Wait]]:
+    return lambda role: {d: race_time(role, CONTEXT.repeat, [d], kinds) for d in _delays(positive)}
+
+
+RACE_DEPENDS = "the starts per combination (run.py --repeat, 20) and the valve delays (--valve-delays, 0, 0.5, 2, 5 and 15 s; run.py --list gives each delay's time)"
+
+
+@scenario(
+    "BP22",
+    THREE,
+    lambda role: race_time(role, CONTEXT.repeat, _delays()),
+    PAUSE_TESTS,
+    depends=RACE_DEPENDS,
+    north=STOPPED,
+    measured=True,
+    trace=False,
+    boiler_at_end=True,
+    by_delay=_race_by_delay(),
+)
+async def BP22(b: Bench) -> None:
+    """Each start from the start state, West fresh (SmartPI's first phase), East calling alone and paused, the valves reporting their opening after 0, 0.5, 2, 5 or 15 s → West starts and completes the threshold, 20 times for each delay → it records for each start West's setpoint, each of West's checks of the pause (each call of its control, with its time and source), when its valve reports, when VTherm counts West and starts the boiler, any false pause and its length, and whether the dead-time detection armed; a line for each delay with the share of false pauses. On `boiler-power` it is a control run: VTherm counts West's power from SmartPI's command, not from its valve. It passes on the measurement, once every start took place with SmartPI's checks logged."""
+    await race(b, "BP22", ("fresh",), _delays(), ("none",))
+
+
+@scenario(
+    "BP23",
+    THREE,
+    lambda role: race_time(role, CONTEXT.repeat, _delays()),
+    PAUSE_TESTS,
+    depends=RACE_DEPENDS,
+    north=STOPPED,
+    start="learned",
+    measured=True,
+    trace=False,
+    boiler_at_end=True,
+    by_delay=_race_by_delay(),
+)
+async def BP23(b: Bench) -> None:
+    """Each start from the start state as in BP22, but West learned (SmartPI past its first phase, its command committed later) → West starts and completes the threshold, 20 times for each valve delay → the same record as BP22 for each start, and a line for each delay; a control run on `boiler-power`, as BP22. It passes on the measurement, once every start took place with SmartPI's checks logged."""
+    await race(b, "BP23", ("learned",), _delays(), ("none",))
+
+
+@scenario(
+    "BP24",
+    THREE,
+    lambda role: race_time(role, CONTEXT.repeat, _delays(positive=True), kinds=4),
+    PAUSE_TESTS,
+    depends=RACE_DEPENDS + "; only the delays above 0 s",
+    north=STOPPED,
+    start="both",
+    measured=True,
+    trace=False,
+    boiler_at_end=True,
+    by_delay=_race_by_delay(positive=True, kinds=4),
+)
+async def BP24(b: Bench) -> None:
+    """Each start from the start state as in BP22, West fresh and then learned, the valves reporting after 0.5, 2, 5 or 15 s → West starts and completes the threshold, with one more check of the pause while its valve has not reported yet: its room's temperature moves by 0.1 degC halfway through the delay (at most half a second after its setpoint), or West starts before SmartPI's periodic calculation by half the delay (at most a second); 20 times for each combination → the same record as BP22 for each start, with whether the extra check came before VTherm counted West, and a line for each combination with how many did; a control run on `boiler-power`, as BP22. It passes on the measurement, once every start took place with SmartPI's checks logged."""
+    await race(b, "BP24", ("fresh", "learned"), _delays(positive=True), ("sensor", "periodic"))
 
 
 # --- the reference runs -----------------------------------------------------------------------
