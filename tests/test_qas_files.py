@@ -19,11 +19,15 @@ if str(QAS) not in sys.path:
 import configuration  # noqa: E402
 import learned_state  # noqa: E402
 import run  # noqa: E402
-from pack import AUTHOR_RELEASE, BOILER_SWITCH, ROLES, WEST_WINDOW, room  # noqa: E402
-from scenarios import SCENARIOS, cycle_metrics, took_place  # noqa: E402
+from pack import AUTHOR_RELEASE, BOILER_SWITCH, ROLES, ROOMS_DOMAIN, WEST_WINDOW, room  # noqa: E402
+from scenarios import NATURAL_SWITCHES, NATURAL_THRESHOLD_W, SCENARIOS, boiler_back, cycle_metrics, took_place, west_leaves  # noqa: E402
 from steps import (  # noqa: E402
     EAST,
     NORTH,
+    PAUSE_ON_SETPOINT,
+    RECALC_S,
+    RESUME_ON_SETPOINT,
+    SETTLED_S,
     STARTS,
     WAITING_HEAT,
     WEST,
@@ -374,3 +378,52 @@ def test_a_measurement_takes_place_only_when_read_throughout() -> None:
     assert took_place(full, 3600.0)[0]
     assert not took_place(full[:300], 3600.0)[0]
     assert not took_place([s | {"west.opening": None} for s in full], 3600.0)[0]
+
+
+def test_bp20_reads_the_boiler_s_return_from_its_watch() -> None:
+    """The boiler's return after the restart, from the readings of the watch: at the time VTherm
+    gives for it, 0 s when it never went off, None when it did not come back."""
+    since = 1000.0
+    seen = [
+        {"t": 1004.0, "boiler": None},
+        {"t": 1009.0, "boiler": "off", "boiler_since": datetime.fromtimestamp(998.0, UTC).isoformat()},
+        {"t": 1129.0, "boiler": "on", "boiler_since": datetime.fromtimestamp(1120.2, UTC).isoformat()},
+    ]
+    assert boiler_back(seen, since) == pytest.approx(120.2)
+    assert boiler_back([{"t": 1005.0, "boiler": "on", "boiler_since": datetime.fromtimestamp(900.0, UTC).isoformat()}], since) == 0.0
+    assert boiler_back([{"t": 1005.0, "boiler": "on"}], since) == 5.0
+    assert boiler_back(seen[:2], since) is None
+
+
+def test_bp14_s_threshold_is_above_west_s_steady_opening() -> None:
+    """BP14 needs the valve to cross the power threshold again and again: the threshold is above
+    West's steady opening at any setpoint BP14 sets (its room plus 0.3 degC, the room between 19
+    and 21 degC), with the outdoor temperature at its lowest; and its measurement needs at least
+    4 switches of the boiler."""
+    west = room("West")
+    outdoor = configuration.configuration(ROLES["boiler-power"])[ROOMS_DOMAIN]["outdoor"] - 0.2  # its lowest: the largest need
+    power = ROLES["boiler-power"].device_power_w("West")
+    for setpoint in (19.3, 20.3, 21.3):
+        steady = west.loss * (setpoint - outdoor) / west.gain  # gain x opening = loss x (indoor - outdoor)
+        assert steady * power < NATURAL_THRESHOLD_W < power, (setpoint, steady)
+    assert NATURAL_SWITCHES >= 4
+    assert "at least 4 times" in SCENARIOS["BP14"].checks
+
+
+def test_the_typical_times_of_the_own_setpoint_and_the_closing_start_state() -> None:
+    """A thermostat's own start pauses at its next calculation, half a calculation later on
+    average; a learned West that stops resumes a calculation later, a fresh one at once; the start
+    state after a scenario that ends with the boiler on waits for it off the role's delay plus
+    30 s, and after one that ends with a learned West paused for its resume."""
+    assert PAUSE_ON_SETPOINT.typical_s == RECALC_S / 2
+    count, delay = ROLES["boiler-count"], ROLES["boiler-delay"]
+    assert west_leaves(count).typical_s == RESUME_ON_SETPOINT.typical_s == 0.0
+    assert west_leaves(count, learned=True).typical_s == RECALC_S
+    assert SCENARIOS["BP3"].time_for(count).typical_s == RECALC_S / 2
+    for sid in ("BP0", "BP2", "BP5", "BP7", "BP8", "BP12", "BP18", "BP20", "BP21"):
+        s = SCENARIOS[sid]
+        for name in s.roles:
+            assert s.closing(ROLES[name]).typical_s == ROLES[name].boiler_delay_s + SETTLED_S, (sid, name)
+    assert SCENARIOS["BP2"].closing(delay).typical_s == 150.0
+    assert SCENARIOS["BP9"].closing(count).typical_s == RECALC_S
+    assert SCENARIOS["BP1"].closing(delay).typical_s == 0.0
