@@ -449,6 +449,11 @@ Le `warmup_scale` n'est pas un simple interrupteur. Il est le produit :
 - du nombre d'apprentissages valides,
 - du nombre de cycles depuis reset.
 
+Le compteur de cycles est conservé au redémarrage. L'intégrale restaurée ne
+porte que la part de la charge que le feedforward ne couvrait pas : le
+feedforward repart donc au niveau qu'il avait avant le redémarrage, sans
+à-coup.
+
 Le trim FF2 reste gelé (`ff_warmup`) tant que `warmup_scale` est inférieur à 1.
 
 $k_{ff}$ est nul, et donc $u_{ff1}$ l'est aussi, lorsque le modèle n'est pas prêt (`a` non publié avec moins de 5 mesures, ou moins de 5 mesures de `b`), que `tau` n'est pas fiable, ou que le signe de `a` ne correspond pas au mode actif.
@@ -573,6 +578,22 @@ peut donc pas maintenir la pièce sous une nouvelle consigne plus élevée, et u
 changement de consigne n'efface pas le biais qui évite le dépassement à la
 nouvelle consigne.
 
+Après un changement de consigne ou une reprise, les actions proportionnelle et
+feed-forward peuvent se stabiliser avant la cible, au-delà du seuil de release,
+et seule l'intégrale peut alors refermer l'écart restant. Quand le rattrapage
+reste calé pendant `INTEGRAL_GUARD_RELEASE_STALL_RATIO = 2` fois la durée de
+calage de la résorption, la garde est relâchée. Ce relâchement est progressif :
+l'intégrale avance à `INTEGRAL_GUARD_SOFT_RELEASE_SCALE = 0.20` de sa vitesse
+jusqu'à ce que l'erreur atteigne la bande morte centrale ou change de signe,
+pour ne pas dépasser la puissance de maintien pendant qu'une pièce lente est en
+retard sur elle (`soft_release` dans le mode de la garde de l'intégrale). Une
+reprise après fenêtre, délestage ou OFF dans le même sens conserve le compteur
+de calage, ou le relâchement progressif en cours, au lieu de repartir de zéro ;
+rattraper le creux de l'interruption ne compte comme un progrès qu'une fois
+l'erreur redescendue de `INTEGRAL_GUARD_RESUME_PROGRESS_C = 0.05 °C` sous son
+niveau d'avant l'interruption. Une récupération de perturbation garde sa propre
+sortie sur palier, décrite ci-dessous.
+
 Une trajectoire de récupération de perturbation freine la branche P parce que
 le modèle prédit que la puissance engagée suffit à refermer l'écart. Quand ce
 modèle est biaisé, la pièce peut se stabiliser sur un palier sous la consigne :
@@ -649,7 +670,7 @@ Le redémarrage repart donc d'un état PI persistant utile, mais sans restaurer 
 
 Les protections complémentaires actuellement présentes sont :
 
-- `SmartPIGuards` (chauffage uniquement, hors bootstrap et calibration) : `guard_cut` force la sortie à 0 lorsque la température mesurée dépasse `setpoint + near_band_above` pendant que le chauffage est actif, jusqu'à ce qu'elle redescende à ce seuil diminué du plus grand de `NEAR_BAND_HYSTERESIS_C = 0.05°C` et de `GUARD_CUT_RESET_STEPS = 1.5` pas de capteur observés (sans quoi une mesure qui oscille entre deux paliers autour du seuil relancerait la coupure, et le cycle, à chaque mesure). Pendant une coupure, la sortie reste à 0 et l'intégrale est figée (`I:OVERRIDE(guard_cut)`), mais le filtre de température, le détecteur de temps mort, la température publiée et l'apprentissage continuent de suivre la pièce. La pièce refroidit alors sans chauffage, par exemple pendant toute la descente qui suit une baisse de consigne : c'est une fenêtre passive pour `b` et pour la ligne de base du retard de réponse. La gouvernance y voit une commande nulle hors de toute bande, et les fenêtres `a` sont bloquées (`skip: guard cut`). L'apprentissage reste contigu à la fin de la coupure ; `guard_kick` relance le cycle lorsque, dans la near-band, la température descend sous `setpoint - near_band_below` alors que la commande est inférieure à 99 %. En refroidissement, aucune des deux gardes n'agit et la near-band n'est pas calculée automatiquement. Pendant le bootstrap, le chauffage fonctionne entre ses propres seuils d'hystérésis et une garde en cours est relâchée,
+- `SmartPIGuards` (chauffage uniquement, hors bootstrap et calibration) : `guard_cut` force la sortie à 0 lorsque la température mesurée dépasse `setpoint + near_band_above` pendant que le chauffage est actif, jusqu'à ce qu'elle redescende à ce seuil diminué du plus grand de `NEAR_BAND_HYSTERESIS_C = 0.05°C` et de `GUARD_CUT_RESET_STEPS = 1.5` pas de capteur observés (sans quoi une mesure qui oscille entre deux paliers autour du seuil relancerait la coupure, et le cycle, à chaque mesure). Pendant une coupure, la sortie reste à 0 (`I:OVERRIDE(guard_cut)`). Tant que le PI demande encore de la puissance, une intégrale positive suit les 0 % imposés par back-calculation, `d(Ki·I)/dt = −v/Ti` avec `v` la demande du PI et `Ti = Kp/Ki`, au plus un cycle par itération. Sa vitesse suit la demande, pas le dépassement : une intégrale qui porte plus que le besoin de chauffe redescend en quelques coupures, même quand la pièce dépasse à peine le seuil. Elle redescend jusqu'au point où elle seule maintiendrait la pièce au seuil de coupure diminué de `NEAR_BAND_HYSTERESIS_C` (`Ki·I/Kp`) ; en dessous, elle est conservée, de même que le besoin de chauffe qui reste après une baisse de consigne. Sans cela, un biais de l'intégrale restituait le même excès de puissance à chaque fin de coupure, et la pièce cyclait entre coupure et reprise. Le filtre de température, le détecteur de temps mort, la température publiée et l'apprentissage continuent de suivre la pièce. La pièce refroidit alors sans chauffage, par exemple pendant toute la descente qui suit une baisse de consigne : c'est une fenêtre passive pour `b` et pour la ligne de base du retard de réponse. La gouvernance y voit une commande nulle hors de toute bande, et les fenêtres `a` sont bloquées (`skip: guard cut`). L'apprentissage reste contigu à la fin de la coupure ; `guard_kick` relance le cycle lorsque, dans la near-band, la température descend sous `setpoint - near_band_below` alors que la commande est inférieure à 99 %. En refroidissement, aucune des deux gardes n'agit et la near-band n'est pas calculée automatiquement. Pendant le bootstrap, le chauffage fonctionne entre ses propres seuils d'hystérésis et une garde en cours est relâchée,
 - anti-windup à chaque tick sur la limite haute applicable (voir ci-dessous),
 - garde intégrale signée pendant les reprises, rattrapages et changements de consigne,
 - `I:HOLD` explicite pendant la phase post-reprise liée à `deadtime_heat` pour `window_resume` et `power_shedding_resume` en chauffage,
@@ -906,7 +927,7 @@ puissance précédente (`legacy_gap_fill`) reste utilisable.
 - `build_published_diagnostics()` : la fonction qui construit ce payload.
 
 `diagnostic_history.py` enveloppe ce payload dans `schema_version`, `live` et le
-bloc stable de huit séries `history`. Les entités normales excluent `live` du
+bloc stable de onze séries `history`. Les entités normales excluent `live` du
 Recorder ; la sous-classe debug l'enregistre directement. Le mode debug ne fait que sélectionner la classe de capteur enregistrée ; il n'ajoute pas de second bloc de diagnostic.
 
 `analysis.learning.learn_ok_count` et `learn_skip_count` sont des compteurs
@@ -996,6 +1017,9 @@ une acceptation ou un rejet causal sans modifier la décision d’apprentissage.
 | `GAIN_TI_LAMBDA_FACTOR`       | `4.0`   |
 | `NEAR_SETPOINT_UNWIND_STEPS`  | `1.5`   |
 | `INTEGRAL_GUARD_STALL_CYCLES` | `3`     |
+| `INTEGRAL_GUARD_RELEASE_STALL_RATIO` | `2.0` |
+| `INTEGRAL_GUARD_SOFT_RELEASE_SCALE` | `0.20` |
+| `INTEGRAL_GUARD_RESUME_PROGRESS_C` | `0.05` |
 | `INTEGRAL_GUARD_PLATEAU_BLOCK_CYCLES` | `3` |
 | `INTEGRAL_GUARD_PLATEAU_BLOCKS` | `2` |
 | `INTEGRAL_GUARD_PLATEAU_PROGRESS_BLOCKS` | `4` |

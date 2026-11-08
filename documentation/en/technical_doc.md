@@ -505,6 +505,10 @@ power.
 - the number of valid learning episodes,
 - the number of cycles since reset.
 
+The cycle count is kept across restarts. The restored integral only holds the
+share of the load that the feed-forward did not cover, so the feed-forward
+comes back at the level it had before the restart, without a bump.
+
 The FF2 trim stays frozen (`ff_warmup`) while `warmup_scale` is below 1.
 
 $k_{ff}$ is zero, and therefore $u_{ff1}$ is zero, whenever the model is not
@@ -635,6 +639,20 @@ previous setpoint therefore cannot hold the room below a new, higher setpoint,
 and a setpoint step does not erase the bias that keeps the room from
 overshooting at the new setpoint.
 
+After a setpoint change or a resume, the proportional and feed-forward action
+can settle short of the target, beyond the release threshold, and only the
+integral can close the remaining error. When the recovery stays stalled for
+`INTEGRAL_GUARD_RELEASE_STALL_RATIO = 2` times the unwind stall, the guard
+releases. The release is soft: the integral runs at
+`INTEGRAL_GUARD_SOFT_RELEASE_SCALE = 0.20` of its rate until the error reaches
+the core deadband or changes sign, so it does not overshoot the holding power
+while a slow room lags behind it (`soft_release` in the integral guard mode).
+A window, power-shedding or OFF resume in the same direction keeps the stall
+clock, or the soft release in progress, instead of starting over; recovering
+the dip of the interruption counts as progress only once the error falls
+`INTEGRAL_GUARD_RESUME_PROGRESS_C = 0.05 °C` below its level before the
+interruption. A disturbance recovery keeps its own plateau release below.
+
 A disturbance-recovery trajectory brakes the P branch because the model
 predicts that the committed power is enough to close the gap. When this model
 is biased, the room can settle on a plateau below the setpoint: the trajectory
@@ -710,7 +728,7 @@ The restart therefore keeps only useful persistent PI memory, without restoring 
 
 Additional protections currently present are:
 
-- `SmartPIGuards` (heating mode only, outside the bootstrap and the calibration): `guard_cut` forces the output to 0 when the measured temperature exceeds `setpoint + near_band_above` while the heater is active, until it falls back to that threshold minus the larger of `NEAR_BAND_HYSTERESIS_C = 0.05°C` and `GUARD_CUT_RESET_STEPS = 1.5` observed sensor steps (a reading flickering between two levels around the threshold would otherwise re-trigger the cut, and restart the cycle, at every measurement). During a cut the output stays at 0 and the integral is frozen (`I:OVERRIDE(guard_cut)`), but the temperature filter, the dead time detector, the published temperature and the learning keep following the room. The room then cools without heating, for example during the whole fall after a setpoint decrease: this is a passive window for `b` and for the response lag baseline. The governance sees a zero command outside any band, and `a` windows are blocked (`skip: guard cut`). The learning stays contiguous at the end of the cut; `guard_kick` restarts the cycle when, inside the near-band, the temperature falls below `setpoint - near_band_below` while the command is below 99 %. In cooling mode neither guard acts and the near-band is not auto-sized. In the bootstrap the heating runs between its own hysteresis thresholds and a running guard is released,
+- `SmartPIGuards` (heating mode only, outside the bootstrap and the calibration): `guard_cut` forces the output to 0 when the measured temperature exceeds `setpoint + near_band_above` while the heater is active, until it falls back to that threshold minus the larger of `NEAR_BAND_HYSTERESIS_C = 0.05°C` and `GUARD_CUT_RESET_STEPS = 1.5` observed sensor steps (a reading flickering between two levels around the threshold would otherwise re-trigger the cut, and restart the cycle, at every measurement). During a cut the output stays at 0 (`I:OVERRIDE(guard_cut)`). While the PI still requests power, a positive integral tracks the forced 0 % by back-calculation, `d(Ki·I)/dt = −v/Ti` with `v` the PI request and `Ti = Kp/Ki`, at most one cycle per tick. Its rate follows the request, not the overshoot: an integral that carries more than the heat need comes down within a few cuts, even when the room barely exceeds the threshold. It comes down until it alone would hold the room at the cut threshold minus `NEAR_BAND_HYSTERESIS_C` (`Ki·I/Kp`); below that point it is kept, as is the heating need left after a setpoint decrease. Without this, a bias of the integral restored the same excess power at each release and the room cycled between cut and restart. The temperature filter, the dead time detector, the published temperature and the learning keep following the room. The room then cools without heating, for example during the whole fall after a setpoint decrease: this is a passive window for `b` and for the response lag baseline. The governance sees a zero command outside any band, and `a` windows are blocked (`skip: guard cut`). The learning stays contiguous at the end of the cut; `guard_kick` restarts the cycle when, inside the near-band, the temperature falls below `setpoint - near_band_below` while the command is below 99 %. In cooling mode neither guard acts and the near-band is not auto-sized. In the bootstrap the heating runs between its own hysteresis thresholds and a running guard is released,
 - per-tick anti-windup on the applicable upper limit (see below),
 - signed integral guard during resumes, catch-up phases, and setpoint changes,
 - explicit `I:HOLD` during the post-resume `deadtime_heat` phase for `window_resume` and `power_shedding_resume` in heating mode,
@@ -952,7 +970,7 @@ power (`legacy_gap_fill`) stays usable.
 - `build_published_diagnostics()`: the function that builds that payload.
 
 `diagnostic_history.py` wraps this payload in `schema_version`, `live` and the
-stable eight-series `history` block. Normal sensor entities exclude `live` from
+stable eleven-series `history` block. Normal sensor entities exclude `live` from
 Recorder; the debug sensor subclass records it directly. The debug option only selects the sensor class that is recorded; it does not
 add a second diagnostic block.
 
@@ -1042,6 +1060,9 @@ acceptance or rejection without changing the learning decision.
 | `GAIN_TI_LAMBDA_FACTOR`       | `4.0`   |
 | `NEAR_SETPOINT_UNWIND_STEPS`  | `1.5`   |
 | `INTEGRAL_GUARD_STALL_CYCLES` | `3`     |
+| `INTEGRAL_GUARD_RELEASE_STALL_RATIO` | `2.0` |
+| `INTEGRAL_GUARD_SOFT_RELEASE_SCALE` | `0.20` |
+| `INTEGRAL_GUARD_RESUME_PROGRESS_C` | `0.05` |
 | `INTEGRAL_GUARD_PLATEAU_BLOCK_CYCLES` | `3` |
 | `INTEGRAL_GUARD_PLATEAU_BLOCKS` | `2` |
 | `INTEGRAL_GUARD_PLATEAU_PROGRESS_BLOCKS` | `4` |
