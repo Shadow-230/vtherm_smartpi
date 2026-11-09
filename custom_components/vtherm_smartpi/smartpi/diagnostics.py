@@ -678,8 +678,8 @@ def _build_analysis(algo: SmartPI, twin_diag: Dict[str, Any]) -> Dict[str, Any]:
         "deadtime": {
             "state": algo.dt_est.state,
             "last_power": algo.dt_est.last_power,
-            "heat_episode_start": _episode_start(algo._t_heat_episode_start),
-            "cool_episode_start": _episode_start(algo._t_cool_episode_start),
+            "heat_episode_start": _episode_start(algo.heat_learning_episode_start),
+            "cool_episode_start": _episode_start(algo.cool_learning_episode_start),
             "waiting_elapsed_s": _round_optional(algo.dt_est.waiting_elapsed_s, 0),
             "heat_last_outcome": algo.dt_est.last_outcome["heat"],
             "cool_last_outcome": algo.dt_est.last_outcome["cool"],
