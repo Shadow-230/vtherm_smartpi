@@ -202,9 +202,9 @@ async def _targets(hass: HomeAssistant, **values: float) -> None:
 
 @pytest.mark.parametrize("expected_lingering_timers", [True])
 async def test_the_boiler_pause_end_to_end(hass: HomeAssistant, freezer: Any) -> None:
-    """As BP8, BP1, BP2 and BP7's end run on the bench: West and East starting together never pause;
-    West calling alone pauses with VTherm's boiler off while North (not counted) does not; East
-    calling too resumes West, and West's next heating starts a new episode."""
+    """As BP8, BP1 and BP2 run on the bench: West and East starting together never pause; West
+    calling alone pauses with VTherm's boiler off while North (not counted) does not; East calling
+    too resumes West."""
     await _prepare(hass, ROLES["boiler-count"])
     boiler = er.async_get(hass).async_get_entity_id("binary_sensor", VT, "central_boiler_state")
 
@@ -229,16 +229,10 @@ async def test_the_boiler_pause_end_to_end(hass: HomeAssistant, freezer: Any) ->
     assert hass.states.get(boiler).state == "off"
     assert paused(EAST) is False and paused(NORTH) is False
 
-    episode_in_pause = _live(hass, WEST)["analysis"]["deadtime"]["heat_episode_start"]
-    east_calls = dt_util.utcnow()
     await _targets(hass, **{EAST: 23.0})
     await _run_for(hass, freezer, 6 * 60)
     assert paused(WEST) is False
     assert hass.states.get(boiler).state == "on"
-    # As BP7: the first heating after the resume starts a new episode.
-    episode = _live(hass, WEST)["analysis"]["deadtime"]["heat_episode_start"]
-    assert episode is not None and episode != episode_in_pause
-    assert dt_util.parse_datetime(episode) >= east_calls
     assert room("West").counted and not room("North").counted
 
 

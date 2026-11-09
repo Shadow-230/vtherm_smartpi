@@ -29,9 +29,6 @@ SMARTPI = "vtherm_smartpi"
 VT = "versatile_thermostat"
 SMARTPI_DEFAULTS = "SmartPI defaults"
 VT_CENTRAL = "Central configuration"
-# The author's release the reference runs compare with (run.py --author-release).
-AUTHOR_RELEASE = "0.6.3"
-AUTHOR_COMMIT = "f7ee1cb"
 
 OUTDOOR_SENSOR = f"sensor.{ROOMS_DOMAIN}_outdoor_temperature"
 BOILER_SWITCH = f"switch.{ROOMS_DOMAIN}_boiler"

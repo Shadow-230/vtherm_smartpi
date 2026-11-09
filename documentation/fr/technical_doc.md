@@ -329,59 +329,45 @@ la détection du temps mort) se met donc en pause tant que toutes ces conditions
 - Versatile Thermostat compte le thermostat pour sa chaudière centrale
   (`is_used_by_central_boiler`),
 - SmartPI demande de la chaleur (puissance engagée supérieure à 0),
-- le seuil n'est pas atteint depuis une période de calcul de SmartPI sans
-  interruption (60 s, moins 1 s pour la gigue de l'horloge,
-  `BOILER_PAUSE_CONFIRM_S`) ; la pause commence au premier calcul après ce
-  délai. Quand le démarrage propre d'un thermostat complète le seuil, Versatile
-  Thermostat ne compte son appareil qu'une fois que l'appareil l'a signalé : en
-  quelques millisecondes avec une vanne simulée, après quelques secondes avec
-  une vraie tête de vanne. Les vérifications dans cette fenêtre ne doivent pas
-  mettre en pause, et une période entière est bien plus longue que la fenêtre.
-  Atteindre le seuil, ne pas demander ou un seuil illisible interrompt la
-  série. La valeur suit la période de calcul de SmartPI et les mesures du banc
-  d'essai, pas une publication. `boiler_call.py` lit le seuil dans les entités de
-  Versatile Thermostat (`nb_device_active_boiler` comparé à
-  `boiler_activation_threshold`, `total_power_active_boiler` comparé à
-  `boiler_power_activation_threshold`) avec la règle de Versatile Thermostat :
-  un seul seuil supérieur à 0 et atteint suffit ; les kW sont convertis.
-  Lorsque les valeurs ne peuvent pas être lues, l'apprentissage ne se met pas
-  en pause.
+- le seuil n'est pas atteint, sans interruption, depuis une période de calcul
+  de SmartPI (`BOILER_PAUSE_CONFIRM_S` : 60 s, moins 1 s pour la gigue de
+  l'horloge) ; la pause commence au calcul suivant. Quand le démarrage propre
+  d'un thermostat complète le seuil, Versatile Thermostat ne compte son
+  appareil qu'une fois que l'appareil l'a signalé, après quelques secondes avec
+  une vraie tête de vanne, et une vérification pendant ce temps ne doit pas
+  mettre en pause. La valeur suit la période de calcul et les mesures du banc
+  d'essai, pas une publication.
+
+`boiler_call.py` lit le seuil dans les entités de Versatile Thermostat
+(`nb_device_active_boiler` comparé à `boiler_activation_threshold`,
+`total_power_active_boiler` comparé à `boiler_power_activation_threshold`) avec
+la règle de Versatile Thermostat : un seul seuil supérieur à 0 et atteint
+suffit ; les kW sont convertis. Lorsque les valeurs ne peuvent pas être lues,
+l'apprentissage ne se met pas en pause.
 
 Le handler vérifie cela avant chaque calcul
 (`SmartPIHandler._update_boiler_learning_pause()` règle
-`SmartPI.set_boiler_learning_paused()`). La pause fonctionne comme la pause de
-l'utilisateur (`set_smartpi_learning`) sans la modifier : les observations en
-cours sont abandonnées, et le prochain épisode de l'apprentissage commence au
-plus tôt à la pause ou à la reprise, donc SmartPI n'apprend pas pendant le
-temps mort de la pièce après la pause (3.2).
-Pour le retard de réponse, la pause est une discontinuité : l'épisode se termine
-au dernier instant observé, et le suivant commence après la reprise (3.7).
-Pour la détection du temps mort, un changement de la pause efface aussi son
-historique de température, comme la pause de l'utilisateur. La pause ne change
-que pendant que SmartPI demande ou au moment où il s'arrête, de sorte que la
-tendance avant le démarrage suivant (3.6) est toujours prise sur toute la
-période sans chauffe qui suit.
-L'apprentissage reprend dès le premier calcul où le seuil est atteint ou où
-SmartPI cesse de demander. La régulation ne change pas : SmartPI voit la pièce refroidir et
-continue de demander. Contrairement à la pause de l'utilisateur, la pause de la
-chaudière ne redémarre pas l'épisode de chauffe de la régulation : sa fenêtre de
-temps mort, pendant laquelle le régulateur tient son intégrale, compte toujours
-depuis le début de la chauffe, de sorte que la commande et l'intégrale sont les
-mêmes que sans la pause. La pause vaut aussi pendant une calibration (4.6). Elle
-apparaît dans le diagnostic sous `learning.boiler_paused`, publié dès qu'il
-change, et chaque changement est journalisé. Au niveau debug
-(`custom_components.vtherm_smartpi.handler`), chaque vérification écrit une
-ligne, « SmartPI boiler pause evaluation: », avec son heure murale et son
-heure monotone (une horloge qui ne saute jamais, pour les écarts entre
-vérifications), ce qui a lancé le calcul (`periodic`, le calcul propre de
-SmartPI chaque minute ; `force`, un changement de consigne ou de mode ;
-`cycle`, le cycle de Versatile Thermostat ; `other`, par exemple une nouvelle
-température de la pièce), la phase de SmartPI, la puissance engagée, le nombre
-d'équipements et la puissance de Versatile Thermostat avec leurs seuils, le
-seuil tel que lu pour la pause, depuis combien de temps SmartPI demande sous
-le seuil sans interruption (`below_for`, en s), la pause avant et après la
-vérification, et la décision. Elle montre quels calculs ont décidé une
-pause. La ligne ne change rien à la pause.
+`SmartPI.set_boiler_learning_paused()`). L'apprentissage reprend dès le premier
+calcul où le seuil est atteint ou où SmartPI cesse de demander. La pause
+abandonne les observations en cours, comme la pause de l'utilisateur
+(`set_smartpi_learning`), sans modifier ce réglage : le prochain épisode de
+l'apprentissage commence au plus tôt à la pause ou à la reprise, donc SmartPI
+n'apprend pas pendant le temps mort de la pièce qui suit (3.2), et le retard de
+réponse voit une discontinuité (3.7). Un changement de la pause efface aussi
+l'historique de température de la détection du temps mort ; il n'a lieu que
+pendant que SmartPI demande ou au moment où il s'arrête, de sorte que la
+tendance avant le démarrage suivant (3.6) vient toujours de toute la période
+sans chauffe qui suit. Pendant une calibration (4.6), la pause arrête aussi la
+mesure du temps mort.
+
+La pause ne change rien d'autre que l'apprentissage. Contrairement à la pause
+de l'utilisateur, elle ne redémarre pas l'épisode de chauffe de la régulation :
+la fenêtre de temps mort pendant laquelle le régulateur tient son intégrale
+compte toujours depuis le début de la chauffe, de sorte que la commande et
+l'intégrale sont les mêmes que sans la pause. La pause apparaît dans le
+diagnostic sous `learning.boiler_paused`, publié dès qu'il change, et chaque
+changement est journalisé au niveau info (« SmartPI learning paused (central
+boiler threshold) »).
 
 Sources :
 
@@ -981,13 +967,6 @@ retirées des motifs ; les événements des pools sont préfixés par `pool:`).
 chaque pool et le pas de capteur utilisé pour leur incertitude ; ces valeurs
 sont propres à la session Home Assistant courante. Quand le jumeau thermique est exploitable, ses champs
 publics sont exposés sous `analysis.twin`.
-`analysis.deadtime.heat_episode_start` et `cool_episode_start` donnent le début
-de l'épisode de chauffe ou de refroidissement en cours de l'apprentissage, le
-moment à partir duquel compte la fenêtre de temps mort de l'apprentissage (3.2),
-en heure ISO UTC ; `null` hors épisode. C'est le début de la chauffe ou du
-refroidissement, mais pas avant le dernier changement de la pause
-d'apprentissage sous le seuil de la chaudière centrale (3.8) ; l'épisode de la
-régulation (`control.in_deadtime_window`) ne redémarre pas à cette pause.
 
 `feedforward.fftrim.command_ownership` indique si le scheduler émet des reçus
 et expose le dernier état de rattachement, son motif de rejet, l’identifiant de

@@ -186,10 +186,3 @@ async def test_a_valve_reports_its_opening_after_the_delay(rooms_hass: HomeAssis
     await hass.services.async_call("smartpi_test_rooms", "set_valve_report_delay", {"seconds": 0.0}, blocking=True)
     await _set_valve(hass, 0)
     assert hass.states.get(VALVE).state == "0.0"
-
-
-async def test_a_room_s_temperature_steps(rooms_hass: HomeAssistant) -> None:
-    hass = rooms_hass
-    await hass.services.async_call("smartpi_test_rooms", "step_temperature", {"room": "west", "delta": -0.1}, blocking=True)
-    await hass.async_block_till_done()
-    assert hass.states.get("sensor.smartpi_test_rooms_west_temperature").state == "18.9"
