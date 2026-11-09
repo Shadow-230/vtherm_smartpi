@@ -20,9 +20,11 @@ the power) and reads the valve's own state too (``valve``).
 What a step expects follows from the role (``Bench.reaches``): the thermostats calling at full
 power, the devices they count, their powers, the threshold.
 
-**The timing of a step** (``Wait``): SmartPI pauses once it has called below the threshold
+**The timing of a step** (``Wait``): SmartPI pauses once it has called with VTherm's boiler off
 without a break for a calculation period (``PAUSE_CONFIRM_S``), at its first calculation after
-it. A change of a thermostat's own setpoint or mode makes a calculation at once: its pause comes
+it. Below the threshold the boiler is off; with an activation delay it stays off for that delay
+after the threshold is reached, so a calling thermostat pauses meanwhile and resumes once the
+boiler is on. A change of a thermostat's own setpoint or mode makes a calculation at once: its pause comes
 a calculation period and a part of the next one later, its resume at once. A change from outside
 (East, the threshold) reaches it at its next calculation: a pause two calculations later, a
 resume one. A closed window: VTherm's delay of 30 s, then two calculations.
@@ -93,7 +95,7 @@ def times(wait: Wait, n: int) -> Wait:
     return Wait(n * wait.typical_s, n * wait.maximum_s)
 
 
-# SmartPI pauses once it has called below the threshold without a break for a calculation period, less
+# SmartPI pauses once it has called with the boiler off without a break for a calculation period, less
 # 1 s for the timer (boiler_call.BOILER_PAUSE_CONFIRM_S), at its first calculation after that.
 PAUSE_CONFIRM_S = RECALC_S - 1.0
 # The thermostat's own change: below from its setpoint's own calculation, paused at the first periodic
@@ -124,6 +126,12 @@ AFTER_RESTART = Wait(30.0, 300.0)  # SmartPI's diagnostics back after a restart
 
 def boiler_starts(role: Role) -> Wait:
     return BOILER_STARTS_LATE if role.boiler_delay_s else BOILER_STARTS
+
+
+def resume_when_the_boiler_starts(role: Role) -> Wait:
+    """A paused thermostat resumes at its next calculation once VTherm's boiler is on: with an
+    activation delay, that delay after the threshold is reached."""
+    return Wait(role.boiler_delay_s + RESUME_EXTERNAL.typical_s, role.boiler_delay_s + RESUME_EXTERNAL.maximum_s)
 
 
 class Context:
@@ -431,6 +439,18 @@ class Bench:
     def paused_is(self, climate: str, value: bool) -> Callable[[dict[str, Any]], bool]:
         return lambda s: of(s, climate, "paused") is value
 
+    def resumed_after_a_pause(self, climate: str) -> Callable[[dict[str, Any]], bool]:
+        """Holds once the thermostat, paused at some reading, is no longer paused."""
+        seen = {"paused": False}
+
+        def holds(s: dict[str, Any]) -> bool:
+            if of(s, climate, "paused") is True:
+                seen["paused"] = True
+                return False
+            return seen["paused"] and of(s, climate, "paused") is False
+
+        return holds
+
     # --- the checks after every step
 
     async def after(self, step: str) -> dict[str, Any]:
@@ -471,7 +491,10 @@ class Bench:
         everything the role makes of it is waited for at once, each against its own wait: VTherm's
         boiler, each counted thermostat's pause or resume (a change of ``own``'s own setpoint or
         mode, or from outside), and the step's own ``goals``; a thermostat that starts calling
-        with the threshold reached is watched for a pause it must not take. Then ``after``."""
+        with the threshold reached is watched for a pause it must not take. With an activation
+        delay the boiler stays off for that delay once the threshold is reached: every calling
+        thermostat is then paused (or pauses) while the boiler waits, and resumes once it is on,
+        not before. Then ``after``."""
         reached_before = self.reaches()
         paused_before = {c: self.due_paused(c) for c in COUNTED}
         calling_before = set(self.calling)
@@ -484,8 +507,15 @@ class Bench:
                 wanted["VTherm's boiler on"] = (lambda s: s["boiler"] == "on", boiler_starts(self.role))
             else:
                 wanted["VTherm's boiler off"] = (lambda s: s["boiler"] == "off", BOILER_STOPS)
+        delayed_start = self.reaches() and not reached_before and self.role.boiler_delay_s >= 2 * RECALC_S
         for climate in COUNTED:
             due = self.due_paused(climate)
+            if delayed_start and climate in self.calling:
+                name = NAMES[climate]
+                if not paused_before[climate]:
+                    wanted[f"{name} paused while the boiler waits"] = (self.paused_is(climate, True), Wait(PAUSE_ON_SETPOINT.typical_s, self.role.boiler_delay_s + MARGIN_S))
+                wanted[f"{name} resumed once the boiler is on"] = (self.resumed_after_a_pause(climate), resume_when_the_boiler_starts(self.role))
+                continue
             if due == paused_before[climate]:
                 continue
             if climate in (waits or {}):
@@ -496,7 +526,15 @@ class Bench:
                 wait = PAUSE_EXTERNAL if due else RESUME_EXTERNAL
             wanted[f"{NAMES[climate]} {'paused' if due else 'resumed'}"] = (self.paused_is(climate, due), wait)
         took = await self.reach(wanted, started)
-        if own in COUNTED and own in self.calling and own not in calling_before and not self.due_paused(own):
+        if delayed_start:
+            on = took.get("VTherm's boiler on")
+            for climate in sorted(self.calling & set(COUNTED)):
+                back = took.get(f"{NAMES[climate]} resumed once the boiler is on")
+                self.check(
+                    on is not None and back is not None and back >= on - POLL_S,
+                    f"{NAMES[climate]} resumed after VTherm's boiler started ({seconds(back)} s, the boiler at {seconds(on)} s)",
+                )
+        elif own in COUNTED and own in self.calling and own not in calling_before and not self.due_paused(own):
             await self.no_pause([own], NO_PAUSE.maximum_s, f"{NAMES[own]} starts calling with the threshold reached")
         await self.after(step)
         return took
@@ -544,11 +582,11 @@ class Bench:
 
     async def west_calls(self) -> dict[str, float | None]:
         """West calls, its valve fully open. Starting from not calling, its pause (if due) comes once it
-        has called below the threshold for a calculation period, never before."""
+        has called with the boiler off for a calculation period, never before."""
         took = await self.change("West calls", lambda: self.calls_at(WEST, CALLING), own=WEST)
         paused = took.get("West paused")
         if paused is not None:
-            self.check(paused >= PAUSE_CONFIRM_S, f"West's pause after a calculation period below the threshold at least (after {paused:.1f} s)")
+            self.check(paused >= PAUSE_CONFIRM_S, f"West's pause after a calculation period with the boiler off at least (after {paused:.1f} s)")
         return took
 
     async def west_stops(self) -> dict[str, float | None]:
