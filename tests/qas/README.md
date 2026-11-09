@@ -257,8 +257,8 @@ for a background command. On the author's release: runs there too (section 5).
 
 ## 5. The reference runs on the author's release
 
-BR1 and BR2 run the same case on this version and on the author's release 0.6.2 (`110675d`, tag
-0.6.2, in `qas`'s history; `pack.AUTHOR_RELEASE`), which has no learning pause. They show what the pause protects: West's
+BR1 and BR2 run the same case on this version and on the author's release 0.6.3 (`f7ee1cb`, tag
+0.6.3, in `qas`'s history; `pack.AUTHOR_RELEASE`), which has no learning pause. They show what the pause protects: West's
 heating dead time, from which SmartPI computes its gain (`documentation/en/technical_doc.md`, 3.8).
 
 **A run.**
