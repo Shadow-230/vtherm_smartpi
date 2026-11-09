@@ -139,6 +139,64 @@ def test_a_resume_while_heating_arms_no_dead_time_detection() -> None:
     assert smartpi.dt_est.state == "WAITING_HEAT_RESPONSE"
 
 
+def _heat_then_stop_then_start(est, *, pre_c_per_h: float, off_min: float, pause=None) -> None:
+    """A room heated for an hour (fed to ``est`` until ``pause(True)``, as during a pause SmartPI
+    feeds no dead-time detection), stopped at 0 s (``pause(False)``: the pause ends as the room stops
+    calling), then free-running for ``off_min`` with a trend of ``pre_c_per_h``, then started at
+    full power: its response comes 300 s later at 3 degC/h. Fed every 60 s, read to 0.01 degC,
+    through the regulation's filter, until the detection ends."""
+    from custom_components.vtherm_smartpi.smartpi.tint_filter import AdaptiveTintFilter
+
+    filt = AdaptiveTintFilter("test")
+    start = off_min * 60.0
+    now = -3600.0
+    while now <= start + 7200.0:
+        if pause is not None and now == -1800.0:
+            pause(True)
+        if pause is not None and now == 0.0:
+            pause(False)
+        if now < 0.0:
+            power, temp = 1.0, 20.0 + 1.0 * now / 3600.0
+        else:
+            power = 1.0 if now >= start else 0.0
+            temp = 20.0 + pre_c_per_h * now / 3600.0 + 3.0 * max(0.0, now - start - 300.0) / 3600.0
+        raw = round(temp, 2)
+        lp, _ = filt.update(raw, 10_000.0 + now)
+        if pause is None or not (-1800.0 <= now < 0.0):
+            est.update(10_000.0 + now, lp, power, hvac_mode=VThermHvacMode_HEAT, tin_raw=raw)
+        if now >= start and est.state != "WAITING_HEAT_RESPONSE":
+            return
+        now += 60.0
+
+
+@pytest.mark.parametrize(("pre_c_per_h", "off_min"), [(0.0, 60.0), (0.2, 60.0), (-0.3, 60.0), (0.2, 10.0)])
+def test_a_pause_leaves_the_next_start_s_dead_time_as_without_it(pre_c_per_h, off_min) -> None:
+    """The dead time is measured against the room's trend before the start (since 0.6.3, from the
+    period without heating). A change of the pause clears the detection's temperature history, as
+    the user's pause does; the pause changes only while SmartPI calls or as it stops, so the trend
+    is still taken from the whole period without heating: the next start's outcome, dead time and
+    trend are those of the same room without the pause (warming, flat, cooling, and an off period
+    too short for a trend)."""
+    from custom_components.vtherm_smartpi.smartpi.deadtime_estimator import DeadTimeEstimator
+
+    paused = _smartpi()
+
+    def pause(on: bool) -> None:
+        if not on:
+            paused._committed_on_percent = 0.0  # the room has stopped calling: its 0 % is committed
+        paused.set_boiler_learning_paused(on)
+
+    _heat_then_stop_then_start(paused.dt_est, pre_c_per_h=pre_c_per_h, off_min=off_min, pause=pause)
+    normal = DeadTimeEstimator()
+    _heat_then_stop_then_start(normal, pre_c_per_h=pre_c_per_h, off_min=off_min)
+
+    assert paused.dt_est.last_outcome["heat"] == normal.last_outcome["heat"] == "detected"
+    assert paused.dt_est._history_heat == normal._history_heat
+    assert paused.dt_est._trend_slope == pytest.approx(normal._trend_slope)
+    if pre_c_per_h > 0.0 and off_min >= 30.0:
+        assert normal._trend_slope * 3600.0 == pytest.approx(pre_c_per_h, abs=0.05)
+
+
 def test_no_learning_during_the_pause(monkeypatch) -> None:
     """Neither the room model nor the dead time is learned."""
     smartpi = _smartpi()
