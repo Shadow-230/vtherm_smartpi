@@ -366,6 +366,102 @@ The lag is learned on constant-power episodes, which the hysteresis bootstrap
 provides. In PWM regulation the duty cycle changes from cycle to cycle, so an
 installation already out of the bootstrap rarely provides one.
 
+### 3.8 Learning pause while the central boiler is off
+
+Versatile Thermostat's central boiler heats the rooms of the thermostats it
+counts only while it is on. Versatile Thermostat turns it on when the number of
+active devices (valve heads or switches), or their total power, reaches a
+threshold, after an optional activation delay, and off at once below it. While
+a counted thermostat calls for heat and the boiler is off, the room gets no
+heat and cools although the command says it heats. Learning from that time
+would count the wait for the boiler as the room's dead time (3.6). SmartPI
+computes its gain from the dead time, $K_p = 1/(|a|(\lambda + L))$ (4.1), so a
+dead time four times too long gives a gain about four times smaller and a much
+slower regulation. This matters most while SmartPI learns from its default
+values (3.1).
+
+Learning (the `a`/`b` windows (3.2), the response-lag measurement (3.7) and
+the dead-time detection (3.6), also during a calibration (4.6)) therefore
+pauses once all of these have held, without a break, for one period of
+SmartPI's calculation:
+
+- Versatile Thermostat counts the thermostat for its central boiler
+  (`is_used_by_central_boiler`),
+- SmartPI calls for heat (committed power above 0),
+- Versatile Thermostat's central boiler is off (its binary sensor
+  `central_boiler_state`, read by `boiler_call.py`; a state that cannot be read
+  does not pause).
+
+The period (`BOILER_PAUSE_CONFIRM_S`: 60 s, less 1 s for the clock's jitter)
+covers a room's own start: Versatile Thermostat turns the boiler on only once it
+counts the thermostat's device, after the device reports its new state, seconds
+later with a real valve head, and a check in that time must not pause. The value
+follows SmartPI's calculation period, not a publication.
+
+The handler checks this before each calculation
+(`SmartPIHandler._update_boiler_learning_pause()` sets
+`SmartPI.set_boiler_learning_paused()`). Learning resumes at the first
+calculation where the boiler is on or SmartPI stops calling. A change of the
+pause drops the observations in flight, as the user's pause
+(`set_smartpi_learning`) does, without changing that setting: learning's next
+episode starts at the change at the earliest, so SmartPI does not learn during
+the room's dead time after the boiler starts (3.2). A change also clears the
+dead-time detection's temperature history; it happens only while SmartPI calls
+or as it stops, so the trend before the next start (3.6) still comes from the
+whole period without heating that follows.
+
+The pause changes nothing but learning. Unlike the user's pause, it does not
+restart the regulation's heating episode: the dead-time window in which the
+controller holds its integral counts from the start of the heating, and the
+command and the integral are the same as without the pause. The pause is shown
+as `learning.boiler_paused` in the diagnostics, published at once when it
+changes, and each change is logged ("SmartPI learning paused (central boiler
+off)").
+
+Sources:
+
+- Learn only while the heating moves the temperature. An estimator assumes
+  that the change of the output is caused by the control signal. When another
+  cause dominates, the estimates "will not converge to their true values", and
+  adaptation should be "interrupted as quickly as possible" (reference 4, §5,
+  p. 1175). This is the paper's main conclusion: adapt only when the changes
+  of the measurement are caused by the control signal (§10, p. 1179). A boiler
+  that does not heat is such another cause.
+- The start matters most. An adaptive controller first learns the time scale
+  of the process, its dead time and time constant, and the rest depends on it
+  (reference 4, §3, p. 1172–1173). An error made then is carried on.
+- A slow regulation learns ever more slowly. When the estimates give a very
+  slow regulation, the temperature moves little, and the adaptation becomes
+  "very slow" (reference 4, §9, p. 1179).
+- A dead time that is too long does not make the regulation unstable; it makes
+  it slow. A closed-loop time constant equal to the dead time is a good
+  compromise between speed and robustness (reference 6, p. 296); with three
+  to four dead times, SmartPI is already on the gentle side.
+- After a pause, start from fresh data. For a saturated signal, the
+  estimation is interrupted and "kept off for a while" afterwards (reference 4,
+  §7, p. 1178); when it starts again, its signals "should be initialized by
+  actual values" (§8, p. 1178).
+- An adaptive controller must find out why the control changed before it
+  retunes: poor tuning is only one cause (reference 5, §6.7, p. 262 and
+  p. 269).
+
+Limits:
+
+- SmartPI follows Versatile Thermostat's command to the boiler, not the burner:
+  a boiler that does not fire for another reason (a fault, hot water) is not
+  seen.
+- With an activation delay longer than a calculation period, a room whose own
+  start turns the boiler on pauses until the boiler starts: that start gives no
+  dead-time measurement.
+- After a restart of Home Assistant, Versatile Thermostat shows the boiler off
+  until it has counted the thermostats again and, with an activation delay,
+  until the delay has passed: learning may pause for that time.
+- After the installation or a reset, the first learning takes longer: SmartPI
+  learns only while the boiler heats. In a room that starts heating mostly while
+  the boiler is off, for example when the boiler stays off for hours, SmartPI
+  may stay long in its first phase (3.1): it learns the dead time only from a
+  heating start made while the boiler is on.
+
 ---
 
 ## 4. Smart-PI control
@@ -1056,3 +1152,6 @@ The matrix drives the gain updates and thermal learning only. A regime transitio
 1. **Astrom K.J. and Hagglund T.**, work on PID regulation and FOPDT model usage.
 2. **Sundaresan K.R. and Krishnaswamy P.R.**, estimation of delay and time-constant parameters.
 3. **OLS** regression with Student t-test for slope validation.
+4. **Hagglund T. and Astrom K.J.**, Supervision of adaptive control algorithms, *Automatica* 36(8), 2000, 1171–1180: learning pause while the central boiler is off (3.8).
+5. **Astrom K.J. and Hagglund T.**, *PID Controllers: Theory, Design, and Tuning*, 2nd ed., Instrument Society of America, 1995: learning pause while the central boiler is off (3.8).
+6. **Skogestad S.**, Simple analytic rules for model reduction and PID controller tuning, *Journal of Process Control* 13, 2003, 291–309: learning pause while the central boiler is off (3.8).

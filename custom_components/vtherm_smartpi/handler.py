@@ -45,6 +45,7 @@ from .const import (
 from .hvac_mode import VThermHvacMode_OFF, VThermHvacMode_HEAT, VThermHvacMode_COOL
 from .commons import write_event_log
 from .valve_config_check import apply_valve_config_check, clear_valve_config_issues
+from .boiler_call import BOILER_PAUSE_CONFIRM_S, central_boiler_on
 from .smartpi.valve_curve import ValveCurveParams
 
 if TYPE_CHECKING:
@@ -71,6 +72,9 @@ class SmartPIHandler:
         self._last_publish_signature = None
         self._pending_publish_signature = None
         self._allow_pwm_cycle_force: bool = False
+        # Since when SmartPI has called with the central boiler off, without a break (monotonic
+        # time), None while it does not.
+        self._boiler_off_since: float | None = None
         self._valve_linearization_configured: bool = False
         self._valve_curve_params: ValveCurveParams | None = None
 
@@ -396,6 +400,7 @@ class SmartPIHandler:
             )
             safety = getattr(getattr(t, "safety_manager", None), "is_safety_detected", False)
             algo.vt_safety_override = safety is True
+            self._update_boiler_learning_pause(algo)
             t.prop_algorithm.calculate(
                 target_temp=t.target_temperature,
                 current_temp=t.current_temperature,
@@ -530,6 +535,39 @@ class SmartPIHandler:
 
         if self._should_publish_intermediate:
             async_dispatcher_send(t.hass, diag_update_signal(t.unique_id))
+
+    def _update_boiler_learning_pause(self, algo: SmartPI) -> None:
+        """Pause SmartPI's learning while it calls for heat and the central boiler is off, or
+        resume it.
+
+        The pause starts once this has held without a break for ``BOILER_PAUSE_CONFIRM_S``:
+        when a thermostat's own start turns the boiler on, Versatile Thermostat does so only
+        once the thermostat's device reports it. Learning resumes at once. A change is
+        published at once.
+        """
+        now = time.monotonic()
+        if not self._calls_with_boiler_off(algo):
+            self._boiler_off_since = None
+        elif self._boiler_off_since is None:
+            self._boiler_off_since = now
+        paused = self._boiler_off_since is not None and (
+            algo.boiler_learning_paused or now - self._boiler_off_since >= BOILER_PAUSE_CONFIRM_S
+        )
+        if paused != algo.boiler_learning_paused:
+            algo.set_boiler_learning_paused(paused)
+            self._should_publish_intermediate = True
+
+    def _calls_with_boiler_off(self, algo: SmartPI) -> bool:
+        """True while SmartPI calls for heat and Versatile Thermostat's central boiler, which
+        heats this thermostat, is off. Not for a thermostat the boiler does not heat, nor when
+        the boiler's state cannot be read."""
+        t = self._thermostat
+        if getattr(t, "is_used_by_central_boiler", False) is not True:
+            return False
+        power = algo.committed_on_percent
+        if not isinstance(power, (int, float)) or power <= 0.0:
+            return False
+        return central_boiler_on(t.hass) is False
 
     async def on_state_changed(self, changed: bool):
         """Handle state changes."""

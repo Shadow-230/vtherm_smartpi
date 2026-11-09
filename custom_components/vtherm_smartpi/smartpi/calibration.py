@@ -243,6 +243,7 @@ class CalibrationManager:
         dt_est: "DeadTimeEstimator",
         max_on_percent: float | None,
         twin_diag: dict | None = None,
+        boiler_paused: bool = False,
         filtered_temp: float | None = None,
     ) -> CalibrationResult:
         """
@@ -258,6 +259,8 @@ class CalibrationManager:
             max_on_percent: Maximum on_percent allowed
             twin_diag: Latest thermal twin diagnostics, used to end the cycle
                 with UNREACHABLE when a threshold cannot be reached
+            boiler_paused: True while learning pauses because the central
+                boiler is off; the dead-time estimator is then not fed
 
         Returns:
             CalibrationResult with on_percent (or None if not calibrating)
@@ -351,11 +354,12 @@ class CalibrationManager:
         if max_on_percent is not None and on_percent > max_on_percent:
             on_percent = max_on_percent
 
-        # Feed Estimator (Critical for detection!)
+        # Feed Estimator (Critical for detection!), unless the central boiler is
+        # off: the room then gets no heat whatever the command.
         # The detection runs on the filtered temperature, as in regulation: a
         # raw reading flickering by one sensor step would detect a response at
         # the power step. The raw reading feeds the slope history.
-        if current_temp is not None:
+        if current_temp is not None and not boiler_paused:
             dt_est.update(
                 now=time.monotonic(),
                 tin=current_temp if filtered_temp is None else filtered_temp,

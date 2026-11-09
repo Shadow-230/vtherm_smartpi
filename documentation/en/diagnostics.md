@@ -54,7 +54,7 @@ The `live` block is organized by responsibility:
 | `power` | Current and next-cycle power, PI/FF split, limits and applied power |
 | `temperature` | Indoor/outdoor temperatures, errors and integral state |
 | `model` | A/B model, confidence, time constant and dead times |
-| `learning` | Learning stage, bootstrap progress, accepted updates and drift state |
+| `learning` | Learning stage, bootstrap progress, accepted updates and drift state; `enabled` (the user's setting) and `boiler_paused` (pause while the central boiler is off) |
 | `governance` | Thermal regime and model-update decision |
 | `feedforward` | FF3 status, dead-band source and canonical FFTrim diagnostics |
 | `setpoint` | Filtered setpoint, trajectory and boost summary |
