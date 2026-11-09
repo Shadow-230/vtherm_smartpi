@@ -545,12 +545,14 @@ class SmartPI:
         """Learning runs unless the user paused it or the central boiler does not heat."""
         return self._learning_enabled and not self._boiler_learning_paused
 
-    def set_boiler_learning_paused(self, paused: bool) -> None:
+    def set_boiler_learning_paused(self, paused: bool, boiler_started: bool = False) -> None:
         """Pause or resume learning while SmartPI calls for heat and the central boiler is off.
 
         The room then cools although the command says it heats, and learning from that time
         would be wrong. The observations in flight are dropped, and learning's next episode starts
-        now at the earliest; the regulation, its dead-time window included, is not touched.
+        now at the earliest; the regulation, its dead-time window included, is not touched. A
+        resume because the boiler has just started (``boiler_started``) is the start of the room's
+        heat: the dead-time detection is fed as at a start from 0 (``_heat_starts_now``).
         """
         paused = bool(paused)
         if paused == self._boiler_learning_paused:
@@ -560,10 +562,30 @@ class SmartPI:
         self._reset_learning_window()
         self.dt_est.reset_observation(self._committed_on_percent)
         self._learning_restart_ts = time.monotonic()
+        if not paused and boiler_started:
+            self._heat_starts_now()
         _LOGGER.info(
             "%s - SmartPI learning %s (central boiler off)",
             self._name,
             "paused" if paused else "resumed",
+        )
+
+    def _heat_starts_now(self) -> None:
+        """The boiler starts while SmartPI calls: the room's heat starts now. The dead-time
+        estimator is fed as at a start from 0 at this moment, on SmartPI's last filtered
+        temperature, so that its own rules decide whether a detection arms; its time counts from
+        the boiler's start, not from the call that waited for it. Not while learning is off or a
+        calibration feeds the estimator."""
+        tin = self.tint_filter.t_int_lp
+        power = self._committed_on_percent
+        if tin is None or power <= 0.0 or not self._learning_active or self.calibration_mgr.is_calibrating:
+            return
+        self.dt_est.reset_observation(0.0)
+        self.dt_est.update(
+            now=time.monotonic(),
+            tin=tin,
+            u_applied=power,
+            hvac_mode=self._last_hvac_mode or VThermHvacMode_HEAT,
         )
 
     def _learning_episode_start(self, regulation_start: float | None) -> float | None:
