@@ -243,7 +243,7 @@ class CalibrationManager:
         dt_est: "DeadTimeEstimator",
         max_on_percent: float | None,
         twin_diag: dict | None = None,
-        learning_active: bool = True,
+        boiler_paused: bool = False,
         filtered_temp: float | None = None,
     ) -> CalibrationResult:
         """
@@ -259,8 +259,8 @@ class CalibrationManager:
             max_on_percent: Maximum on_percent allowed
             twin_diag: Latest thermal twin diagnostics, used to end the cycle
                 with UNREACHABLE when a threshold cannot be reached
-            learning_active: False while SmartPI's learning is paused; the
-                dead-time estimator is then not fed
+            boiler_paused: True while SmartPI pauses its learning below the
+                central boiler threshold; the dead-time estimator is then not fed
 
         Returns:
             CalibrationResult with on_percent (or None if not calibrating)
@@ -354,11 +354,11 @@ class CalibrationManager:
         if max_on_percent is not None and on_percent > max_on_percent:
             on_percent = max_on_percent
 
-        # Feed Estimator (Critical for detection!), unless learning is paused.
+        # Feed Estimator (Critical for detection!), unless learning pauses below the boiler threshold.
         # The detection runs on the filtered temperature, as in regulation: a
         # raw reading flickering by one sensor step would detect a response at
         # the power step. The raw reading feeds the slope history.
-        if current_temp is not None and learning_active:
+        if current_temp is not None and not boiler_paused:
             dt_est.update(
                 now=time.monotonic(),
                 tin=current_temp if filtered_temp is None else filtered_temp,

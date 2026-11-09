@@ -1243,7 +1243,7 @@ class SmartPI:
             dt_est=self.dt_est,
             max_on_percent=self._linear_max_on(),
             twin_diag=self._last_twin_diag,
-            learning_active=self._learning_active,
+            boiler_paused=self._boiler_learning_paused,
             filtered_temp=filtered_temp,
         )
 

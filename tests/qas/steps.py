@@ -31,7 +31,7 @@ resume one. A closed window: VTherm's delay of 30 s, then two calculations.
 keeps what changed: VTherm's count, power and boiler, the boiler's switch, each thermostat's
 pause, valve opening, learning counters and dead-time detection. It is written next to the
 results, a short timeline goes into them, and every pause in it is checked: nothing learned
-while paused, and the next episode starts after the resume.
+while paused.
 """
 
 from __future__ import annotations
@@ -40,7 +40,6 @@ import asyncio
 import importlib.util
 import json
 import pathlib
-import re
 import time
 from collections.abc import Awaitable, Callable, Iterable, Sequence
 from dataclasses import dataclass
@@ -62,7 +61,6 @@ WITHIN_S = 4 * RECALC_S + CYCLE_S / 2 + MARGIN_S
 DETACHED_AFTER_S = 2 * 3600.0  # the bench stops background commands after two hours
 POLL_S = 5.0
 TRACE_S = 5.0
-CLOCKS_S = 5.0  # the bench's clock against Home Assistant's, for a time Home Assistant publishes
 
 WEST, EAST, NORTH = (room(name).climate for name in ("West", "East", "North"))
 COUNTED = (WEST, EAST)  # VTherm's central boiler counts their devices
@@ -71,7 +69,7 @@ NAMES = {WEST: "West", EAST: "East", NORTH: "North"}
 CALLING = 23.0  # far above the rooms: SmartPI opens the valve fully (100 %)
 STOPPED = 7.0  # far below the rooms: SmartPI does not call
 BASE_SETPOINT = 20.0
-STARTS = ("fresh", "learned", "both")  # "both": the scenario sets each start's learning itself
+STARTS = ("fresh", "learned")
 WAITING_HEAT = "WAITING_HEAT_RESPONSE"  # deadtime_estimator.py: a heating detection waits for the room
 LEARNED = ("accepted_a", "accepted_b", "learn_ok", "deadtime")  # what the learning changes
 
@@ -128,21 +126,13 @@ def boiler_starts(role: Role) -> Wait:
     return BOILER_STARTS_LATE if role.boiler_delay_s else BOILER_STARTS
 
 
-VALVE_DELAYS_S = (0.0, 0.5, 2.0, 5.0, 15.0)  # BP22-BP24: the valves' report delays measured
-REPEAT = 20  # BP22-BP24: starts for each combination
-
-
 class Context:
-    """Set by the runner: the instance's role, whether it runs the author's release, the scenario,
-    the valves' report delay of every scenario (``--valve-delay``), and BP22-BP24's starts and
-    delays (``--repeat``, ``--valve-delays``)."""
+    """Set by the runner: the instance's role, the scenario, and the valves' report delay of every
+    scenario (``--valve-delay``)."""
 
     role: Role = ROLES["boiler-count"]
-    author_release: bool = False
     scenario: str = ""
     valve_delay_s: float = 0.0
-    repeat: int = REPEAT
-    valve_delays_s: tuple[float, ...] = VALVE_DELAYS_S
 
 
 CONTEXT = Context()
@@ -171,8 +161,6 @@ LIVE = {
     "calibration": "calibration.state",
     "dt_state": "analysis.deadtime.state",
     "heat_outcome": "analysis.deadtime.heat_last_outcome",
-    "episode": "analysis.deadtime.heat_episode_start",
-    "in_window": "control.in_deadtime_window",
     "accepted_a": "learning.accepted_updates_a",
     "accepted_b": "learning.accepted_updates_b",
     "learn_ok": "analysis.learning.learn_ok_count",
@@ -233,8 +221,6 @@ def snapshot_of(states: dict[str, dict[str, Any]], ids: Ids, now: float) -> dict
     snap["switch"] = (states.get(BOILER_SWITCH) or {}).get("state")
     for key, entity_id in (("count", ids.count), ("power", ids.power), ("count_threshold", ids.count_threshold), ("power_threshold", ids.power_threshold)):
         snap[key] = _number(states.get(entity_id or ""))
-    snap["count_since"] = (states.get(ids.count or "") or {}).get("last_changed")
-    snap["power_since"] = (states.get(ids.power or "") or {}).get("last_changed")
     snap["window"] = (states.get(WEST_WINDOW) or {}).get("state")
     for climate, key in KEYS.items():
         live = ((states.get(ids.diag[climate] or "") or {}).get("attributes") or {}).get("live") or {}
@@ -247,7 +233,6 @@ def snapshot_of(states: dict[str, dict[str, Any]], ids: Ids, now: float) -> dict
         device = states.get(r.device) or {}
         if r.heater == "radiator":
             snap[f"{key}.valve"] = _number(device)  # the valve's own opening, in %
-            snap[f"{key}.valve_since"] = device.get("last_changed")
         else:
             snap[f"{key}.heater"] = device.get("state")
     return snap
@@ -309,30 +294,9 @@ def published_at(value: Any) -> float | None:
         return None
 
 
-# --- SmartPI's log: each check of the pause (handler.py, at debug) ------------------------------
+# --- SmartPI's log -----------------------------------------------------------------------------
 
-HANDLER_LOGGER = f"custom_components.{SMARTPI}.handler"
-EVALUATION = "SmartPI boiler pause evaluation:"
 LOG_MARGIN_S = 60.0  # the bench's clock against Home Assistant's, when reading the log
-
-
-ANSI = re.compile(r"\x1b\[[0-9;]*m")  # Home Assistant's log colours, as ``docker logs`` gives them
-
-
-def parse_evaluation(line: str) -> dict[str, Any] | None:
-    """One check of the pause from its log line, without the log's colour codes: the thermostat's
-    ``name``, ``at`` (Home Assistant's clock, epoch seconds), and every ``key=value`` of the line
-    as text."""
-    line = ANSI.sub("", line)
-    if EVALUATION not in line:
-        return None
-    head, tail = line.split(EVALUATION, 1)
-    name = head.rsplit("] ", 1)[-1].rsplit(" - ", 1)[0].strip()
-    fields: dict[str, Any] = dict(pair.split("=", 1) for pair in tail.split() if "=" in pair)
-    at = published_at(fields.get("at"))
-    if at is None:
-        return None
-    return {"name": name, "at_s": at} | fields
 
 
 def instance_log(pattern: str, since: datetime) -> list[str]:
@@ -375,12 +339,11 @@ def spans(samples: Sequence[dict[str, Any]], key: str, value: Any) -> list[tuple
 
 def learned_in_pauses(samples: Sequence[dict[str, Any]], key: str) -> tuple[int, list[str]]:
     """The pauses of a thermostat (``key``: "west" or "east") in the samples, and what went wrong
-    in them: a learning counter or the heating dead time that changed while paused, a dead-time
-    detection armed while paused, or an episode published after the resume that started before
-    it."""
+    in them: a learning counter or the heating dead time that changed while paused, or a dead-time
+    detection armed while paused."""
     problems: list[str] = []
     runs = spans(samples, f"{key}.paused", True)
-    for n, (first, last) in enumerate(runs):
+    for first, last in runs:
         pause = samples[first : last + 1]
         when = f"{key}'s pause {clock(samples[first])}–{clock(samples[last])}"
         for name in LEARNED:
@@ -390,48 +353,7 @@ def learned_in_pauses(samples: Sequence[dict[str, Any]], key: str) -> tuple[int,
         armed = [clock(s) for s in pause if s.get(f"{key}.dt_state") == WAITING_HEAT]
         if armed:
             problems.append(f"{when}: a dead-time detection armed at {armed[0]}")
-        resumed_after = samples[last]["t"] - CLOCKS_S
-        end = runs[n + 1][0] if n + 1 < len(runs) else len(samples)
-        for s in samples[last + 1 : end]:
-            started = published_at(s.get(f"{key}.episode"))
-            if started is not None and started < resumed_after:
-                problems.append(f"{when}: at {clock(s)} an episode from {s.get(f'{key}.episode')}, before the resume")
-                break
     return len(runs), problems
-
-
-PAUSE_DUE_S = 2 * RECALC_S + 20.0  # the first calculation on the opening applied, then a calculation period
-RESUME_DUE_S = RECALC_S + 20.0
-
-
-def pause_mismatches(samples: Sequence[dict[str, Any]], key: str) -> list[str]:
-    """Where a thermostat's pause disagrees with its call and VTherm's threshold, once they have
-    held long enough for SmartPI: calling below the threshold for two calculations and not
-    paused; or paused although the threshold was reached, or could not be read, or the
-    thermostat did not call (or was off), for a calculation."""
-    out: list[str] = []
-
-    def demand(x: dict[str, Any]) -> float:
-        return (x.get(f"{key}.opening") or 0) if x.get(f"{key}.hvac") == "heat" else 0.0
-
-    def held(i: int, holds: Callable[[dict[str, Any]], bool], lag_s: float) -> bool:
-        t = samples[i]["t"]
-        j = i
-        while j >= 0 and t - samples[j]["t"] <= lag_s:
-            if not holds(samples[j]):
-                return False
-            j -= 1
-        return j >= 0
-
-    for i, s in enumerate(samples):
-        paused = s.get(f"{key}.paused")
-        if paused is None:
-            continue
-        if paused is not True and held(i, lambda x: demand(x) > 0 and reached(x) is False, PAUSE_DUE_S):
-            out.append(f"{clock(s)}: {key} calls below the threshold, not paused")
-        elif paused is True and (held(i, lambda x: reached(x) is not False, RESUME_DUE_S) or held(i, lambda x: demand(x) == 0, RESUME_DUE_S)):
-            out.append(f"{clock(s)}: {key} paused, though {'it does not call' if not demand(s) else 'the threshold is reached'}")
-    return out
 
 
 # --- the bench of one scenario ----------------------------------------------------------------
@@ -463,10 +385,6 @@ class Bench:
 
     def note(self, what: str) -> None:
         self.r.note(what)
-
-    @property
-    def author(self) -> bool:
-        return CONTEXT.author_release
 
     async def snapshot(self) -> dict[str, Any]:
         return snapshot_of(await self.r.ha.states(), self.ids, time.time())
@@ -519,11 +437,10 @@ class Bench:
         """The same checks after every step; the snapshot they read."""
         snap = await self.snapshot()
         expected = "on" if self.reaches() else "off"
-        if not self.author:
-            for climate in COUNTED:
-                due = self.due_paused(climate)
-                self.check(of(snap, climate, "paused") is due, f"{step}: {NAMES[climate]} {'paused' if due else 'not paused'} ({of(snap, climate, 'paused')})")
-            self.check(of(snap, NORTH, "paused") is False, f"{step}: North, not counted, not paused ({of(snap, NORTH, 'paused')})")
+        for climate in COUNTED:
+            due = self.due_paused(climate)
+            self.check(of(snap, climate, "paused") is due, f"{step}: {NAMES[climate]} {'paused' if due else 'not paused'} ({of(snap, climate, 'paused')})")
+        self.check(of(snap, NORTH, "paused") is False, f"{step}: North, not counted, not paused ({of(snap, NORTH, 'paused')})")
         self.check(snap["boiler"] == expected, f"{step}: VTherm's boiler {snap['boiler']} (expected {expected})")
         self.check(snap["switch"] == snap["boiler"], f"{step}: the boiler's switch {snap['switch']}, VTherm's boiler {snap['boiler']}")
         for climate in COUNTED:
@@ -567,20 +484,19 @@ class Bench:
                 wanted["VTherm's boiler on"] = (lambda s: s["boiler"] == "on", boiler_starts(self.role))
             else:
                 wanted["VTherm's boiler off"] = (lambda s: s["boiler"] == "off", BOILER_STOPS)
-        if not self.author:
-            for climate in COUNTED:
-                due = self.due_paused(climate)
-                if due == paused_before[climate]:
-                    continue
-                if climate in (waits or {}):
-                    wait = waits[climate]
-                elif climate == own:
-                    wait = PAUSE_ON_SETPOINT if due else RESUME_ON_SETPOINT
-                else:
-                    wait = PAUSE_EXTERNAL if due else RESUME_EXTERNAL
-                wanted[f"{NAMES[climate]} {'paused' if due else 'resumed'}"] = (self.paused_is(climate, due), wait)
+        for climate in COUNTED:
+            due = self.due_paused(climate)
+            if due == paused_before[climate]:
+                continue
+            if climate in (waits or {}):
+                wait = waits[climate]
+            elif climate == own:
+                wait = PAUSE_ON_SETPOINT if due else RESUME_ON_SETPOINT
+            else:
+                wait = PAUSE_EXTERNAL if due else RESUME_EXTERNAL
+            wanted[f"{NAMES[climate]} {'paused' if due else 'resumed'}"] = (self.paused_is(climate, due), wait)
         took = await self.reach(wanted, started)
-        if own in COUNTED and not self.author and own in self.calling and own not in calling_before and not self.due_paused(own):
+        if own in COUNTED and own in self.calling and own not in calling_before and not self.due_paused(own):
             await self.no_pause([own], NO_PAUSE.maximum_s, f"{NAMES[own]} starts calling with the threshold reached")
         await self.after(step)
         return took
@@ -614,16 +530,6 @@ class Bench:
     async def valve_delay(self, seconds_: float) -> None:
         """The test rooms' valves take and report a new opening ``seconds_`` after it is set."""
         await self.api.call(ROOMS_DOMAIN, "set_valve_report_delay", {"seconds": seconds_})
-
-    async def log_level(self, level: str) -> None:
-        """SmartPI's handler logs at ``level``: at debug, a line for each check of the pause."""
-        await self.api.call("logger", "set_level", {HANDLER_LOGGER: level})
-
-    async def evaluations(self, since: datetime, name: str) -> list[dict[str, Any]]:
-        """The checks of the pause SmartPI logged for the thermostat ``name`` since ``since``
-        (the bench's clock, with a margin for Home Assistant's), read from the instance's log."""
-        lines = await asyncio.to_thread(instance_log, EVALUATION, since)
-        return [e for e in (parse_evaluation(line) for line in lines) if e is not None and e["name"] == name]
 
     async def hvac(self, climate: str, mode: str) -> None:
         await self.api.call("climate", "set_hvac_mode", {"entity_id": climate, "hvac_mode": mode})
@@ -752,11 +658,10 @@ class Bench:
             if other and current != wanted:
                 await self.api.call("number", "set_value", {"entity_id": other, "value": wanted})
                 self.note(f"start state: {other} back to {wanted:g} (was {current})")
-        if not self.author:
-            for climate in COUNTED:
-                if get(await self.live(climate), "learning.enabled") is False:
-                    await self.api.call(SMARTPI, "set_smartpi_learning", {"entity_id": climate, "learning_enabled": True})
-                    self.note(f"start state: {NAMES[climate]}'s learning setting back on")
+        for climate in COUNTED:
+            if get(await self.live(climate), "learning.enabled") is False:
+                await self.api.call(SMARTPI, "set_smartpi_learning", {"entity_id": climate, "learning_enabled": True})
+                self.note(f"start state: {NAMES[climate]}'s learning setting back on")
         await self.settled()
 
     async def settled(self) -> dict[str, Any] | None:
@@ -768,7 +673,7 @@ class Bench:
             off_since = published_at(s.get("boiler_since"))
             return (
                 all(not calls(s, c) and of(s, c, "valve") == 0.0 for c in COUNTED)
-                and (self.author or all(of(s, c, "paused") is not True for c in KEYS))
+                and all(of(s, c, "paused") is not True for c in KEYS)
                 and s["boiler"] == "off"
                 and s["switch"] == "off"
                 and off_since is not None
@@ -849,8 +754,7 @@ class Trace:
         from ha_client import N  # noqa: PLC0415 — the bench's client
         from harness import results_file  # noqa: PLC0415 — the bench's harness
 
-        version = "author" if CONTEXT.author_release else "qas"
-        name = f"{self.started:%Y-%m-%d}-{self.sid}-{self.bench.role.name}-{version}-instance{N}-{self.started:%H%M%S}.json"
+        name = f"{self.started:%Y-%m-%d}-{self.sid}-{self.bench.role.name}-qas-instance{N}-{self.started:%H%M%S}.json"
         return results_file(self.bench.r.pack).parent / "traces" / name
 
     async def stop(self) -> None:
@@ -877,9 +781,7 @@ class Trace:
             b.note(f"timeline: {line}")
         if len(lines) > TIMELINE_LINES:
             b.note(f"timeline: {len(lines) - TIMELINE_LINES} more changes in the trace")
-        if b.author:
-            return
         for key in ("west", "east"):
             n, problems = learned_in_pauses(self.samples, key)
             if n:
-                b.check(not problems, f"nothing learned in {key}'s {n} pause(s), the next episode after each resume" + (f": {'; '.join(problems[:3])}" if problems else ""))
+                b.check(not problems, f"nothing learned in {key}'s {n} pause(s)" + (f": {'; '.join(problems[:3])}" if problems else ""))

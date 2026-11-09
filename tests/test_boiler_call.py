@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import logging
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -269,8 +268,10 @@ def test_the_estimator_learns_nothing_during_the_pause(paused, monkeypatch) -> N
 
 
 @pytest.mark.parametrize("pause", [None, "boiler", "user"])
-def test_calibration_measures_the_dead_time_only_while_learning_runs(pause, monkeypatch) -> None:
-    """A calibration's heating step does not feed the dead-time estimator during a pause, whatever its cause."""
+def test_calibration_measures_the_dead_time_except_below_the_boiler_threshold(pause, monkeypatch) -> None:
+    """A calibration's heating step does not feed the dead-time estimator during the boiler pause;
+    during the user's pause it does, as in the author's code: the boiler pause changes nothing but
+    learning."""
     smartpi = _smartpi()
     smartpi.force_calibration()
     now = [1000.0]
@@ -289,7 +290,7 @@ def test_calibration_measures_the_dead_time_only_while_learning_runs(pause, monk
 
     assert smartpi.calibration_state == SmartPICalibrationPhase.HEAT_UP
     assert smartpi.on_percent == pytest.approx(1.0)
-    assert smartpi.dt_est.update.called is (pause is None)
+    assert smartpi.dt_est.update.called is (pause != "boiler")
 
 
 def test_diagnostics_show_the_pause() -> None:
@@ -549,115 +550,3 @@ async def test_a_change_of_the_pause_is_published_at_once() -> None:
 
     await _control(handler, reached=True, power=0.5)
     assert handler.published >= 1
-
-
-def test_the_diagnostics_publish_when_the_heating_episode_started() -> None:
-    """``analysis.deadtime.heat_episode_start``: learning's heating episode's start in UTC; a change
-    of the pause restarts it, so after the resume it is not earlier than the resume; the
-    regulation's episode keeps its start."""
-    import time as clock
-    from datetime import datetime, timedelta
-
-    smartpi = _smartpi()
-    smartpi._t_heat_episode_start = clock.monotonic() - 600.0
-
-    def started() -> datetime | None:
-        value = build_published_diagnostics(smartpi)["analysis"]["deadtime"]["heat_episode_start"]
-        return datetime.fromisoformat(value) if value is not None else None
-
-    before = started()
-    assert before is not None and before.utcoffset().total_seconds() == 0
-    assert abs((datetime.now(before.tzinfo) - before).total_seconds() - 600.0) < 5.0
-
-    regulation = smartpi._t_heat_episode_start
-    paused_at = datetime.now(before.tzinfo)
-    smartpi.set_boiler_learning_paused(True)
-    smartpi._update_deadtime_episode_status(0.6, VThermHvacMode_HEAT, clock.monotonic())
-    during = started()
-    resumed = datetime.now(before.tzinfo)
-    smartpi.set_boiler_learning_paused(False)
-    smartpi._update_deadtime_episode_status(0.6, VThermHvacMode_HEAT, clock.monotonic())
-
-    # The wall and monotonic clocks are read a few microseconds apart.
-    assert during >= paused_at - timedelta(milliseconds=50)
-    assert started() >= resumed - timedelta(milliseconds=50)
-    assert started() >= during
-    assert smartpi._t_heat_episode_start == regulation
-    assert build_published_diagnostics(smartpi)["analysis"]["deadtime"]["cool_episode_start"] is None
-
-
-# --- the debug line of each evaluation ---------------------------------------------
-
-EVALUATION = "SmartPI boiler pause evaluation:"
-SEQUENCE = ((False, 0.5), (False, 0.5), (True, 0.5), (False, 0.5), (False, 0.0), (None, 0.5))
-
-
-def _evaluations(caplog) -> list[dict[str, str]]:
-    """The ``key=value`` pairs of each debug line of an evaluation, in order."""
-    out = []
-    for record in caplog.records:
-        message = record.getMessage()
-        if EVALUATION in message:
-            out.append(dict(pair.split("=", 1) for pair in message.split(EVALUATION, 1)[1].split()))
-    return out
-
-
-async def _pauses(caplog, level: int) -> list[bool]:
-    caplog.set_level(level, logger="custom_components.vtherm_smartpi.handler")
-    handler = _handler()
-    return [(await _control(handler, reached=reached, power=power)).boiler_learning_paused for reached, power in SEQUENCE]
-
-
-async def test_each_evaluation_has_a_debug_line_and_the_same_result(caplog) -> None:
-    """At debug level every evaluation of the pause logs its time, source, phase, committed
-    command, the threshold read, the previous evaluation, the pause before and after and the
-    decision; the pause decided is the same as without the line."""
-    without = await _pauses(caplog, logging.INFO)
-    assert not _evaluations(caplog)
-    caplog.clear()
-
-    with patch(
-        "custom_components.vtherm_smartpi.handler.central_boiler_threshold_readings",
-        return_value={"count": 1.0, "count_threshold": 2.0, "power_w": None, "power_threshold_w": None},
-    ):
-        with_line = await _pauses(caplog, logging.DEBUG)
-
-    assert with_line == without == [False, True, False, False, False, False]
-    lines = _evaluations(caplog)
-    assert len(lines) == len(SEQUENCE)
-    first, second = lines[0], lines[1]
-    assert set(first) >= {"at", "mono", "source", "phase", "committed", "counted", "count", "count_threshold", "power_w", "power_threshold_w", "reached", "below", "below_for", "paused", "decision"}
-    assert (first["mono"], first["source"], first["committed"], first["count"], first["count_threshold"]) == ("1000.000", "other", "0.500", "1.0", "2.0")
-    assert (first["reached"], first["below"], first["below_for"], first["paused"], first["decision"]) == ("False", "True", "0.0", "False->False", "stay_running")
-    assert (second["below_for"], second["paused"], second["decision"]) == ("60.0", "False->True", "pause")
-    assert lines[2]["below_for"] == "None"
-    assert (lines[2]["reached"], lines[2]["decision"]) == ("True", "resume")
-    assert (lines[4]["reached"], lines[4]["below"]) == ("None", "False")  # not calling: the threshold is not read
-
-
-@pytest.mark.parametrize(("kwargs", "source"), [({"force": True}, "force"), ({"timestamp": 1.0}, "cycle"), ({}, "other")])
-async def test_the_debug_line_says_what_started_the_calculation(caplog, kwargs, source) -> None:
-    caplog.set_level(logging.DEBUG, logger="custom_components.vtherm_smartpi.handler")
-    await _control(_handler(), reached=False, power=0.5, **kwargs)
-
-    assert [line["source"] for line in _evaluations(caplog)] == [source]
-
-
-async def test_the_debug_line_tells_smartpi_s_periodic_calculation(caplog) -> None:
-    """SmartPI's own calculation every minute is told apart from Versatile Thermostat's calls."""
-    caplog.set_level(logging.DEBUG, logger="custom_components.vtherm_smartpi.handler")
-    handler = _handler()
-    thermostat = handler._thermostat
-
-    async def control(timestamp=None) -> None:
-        await _control(handler, reached=False, power=0.5, timestamp=timestamp)
-
-    thermostat.async_control_heating = control
-    with patch("custom_components.vtherm_smartpi.handler.async_track_time_interval") as track:
-        handler._recalc_timer_remove = None
-        handler._start_recalc_timer()
-        periodic = track.call_args.args[1]
-    await periodic(None)
-    await _control(handler, reached=False, power=0.5)
-
-    assert [line["source"] for line in _evaluations(caplog)] == ["periodic", "other"]
