@@ -456,8 +456,6 @@ Utilisez ce service pour mettre en pause ou reprendre l'apprentissage thermique 
 
 Pendant la pause, la régulation continue avec le modèle déjà appris, mais SmartPI ne collecte plus d'observations A/B ni de temps mort. La pause n'efface ni les paramètres appris ni l'historique des temps morts. SmartPI repart avec des fenêtres d'observation vierges à chaque changement de ce réglage, qui est conservé après un redémarrage de Home Assistant.
 
-SmartPI met aussi son apprentissage en pause de lui-même dès qu'il a demandé de la chaleur pendant une minute (une période de calcul) sans que le seuil de la chaudière centrale réglé dans Versatile Thermostat soit atteint, pour un thermostat que Versatile Thermostat compte pour sa chaudière centrale : la chaudière ne chauffe pas alors. Cette pause fonctionne de la même façon pour l'apprentissage, y compris pendant une calibration, ne change rien à la régulation, ne modifie pas le réglage `learning_enabled`, et se termine lorsque le seuil est atteint ou que SmartPI cesse de demander. Elle apparaît sous `live.learning.boiler_paused` dans les attributs du capteur de diagnostic. Voir [documentation technique, 3.8](technical_doc.md#38-pause-dapprentissage-sous-le-seuil-de-la-chaudière-centrale).
-
 Le réglage courant est disponible dans `specific_states.smartpi_learning_enabled` sur l'entité climate et dans `live.learning.enabled` dans les attributs du capteur de diagnostic.
 
 ### `reset_smartpi_learning`

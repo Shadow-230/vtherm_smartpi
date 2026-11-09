@@ -45,7 +45,6 @@ from .const import (
 from .hvac_mode import VThermHvacMode_OFF, VThermHvacMode_HEAT, VThermHvacMode_COOL
 from .commons import write_event_log
 from .valve_config_check import apply_valve_config_check, clear_valve_config_issues
-from .boiler_call import BOILER_PAUSE_CONFIRM_S, central_boiler_threshold_reached
 from .smartpi.valve_curve import ValveCurveParams
 
 if TYPE_CHECKING:
@@ -72,9 +71,6 @@ class SmartPIHandler:
         self._last_publish_signature = None
         self._pending_publish_signature = None
         self._allow_pwm_cycle_force: bool = False
-        # When SmartPI started calling below the central boiler threshold without a break
-        # (monotonic time), None when it does not.
-        self._below_boiler_threshold_since: float | None = None
         self._valve_linearization_configured: bool = False
         self._valve_curve_params: ValveCurveParams | None = None
 
@@ -400,7 +396,6 @@ class SmartPIHandler:
             )
             safety = getattr(getattr(t, "safety_manager", None), "is_safety_detected", False)
             algo.vt_safety_override = safety is True
-            self._update_boiler_learning_pause(algo)
             t.prop_algorithm.calculate(
                 target_temp=t.target_temperature,
                 current_temp=t.current_temperature,
@@ -535,43 +530,6 @@ class SmartPIHandler:
 
         if self._should_publish_intermediate:
             async_dispatcher_send(t.hass, diag_update_signal(t.unique_id))
-
-    def _update_boiler_learning_pause(self, algo: SmartPI) -> None:
-        """Pause SmartPI's learning below the central boiler threshold, or resume it.
-
-        The pause starts at the first evaluation at which SmartPI has called below
-        the threshold without a break for ``BOILER_PAUSE_CONFIRM_S``: when a
-        thermostat's own start completes the threshold, Versatile Thermostat
-        counts its device only once the device reports it, and evaluations in
-        that window must not pause. Reaching the threshold, not calling or a
-        threshold that cannot be read breaks the run. Learning resumes at once.
-        A change is published at once, and logged by ``set_boiler_learning_paused``.
-        """
-        now = time.monotonic()
-        was_paused = algo.boiler_learning_paused
-        below = self._below_boiler_threshold(algo)
-        if not below:
-            self._below_boiler_threshold_since = None
-        elif self._below_boiler_threshold_since is None:
-            self._below_boiler_threshold_since = now
-        paused = below and (was_paused or now - self._below_boiler_threshold_since >= BOILER_PAUSE_CONFIRM_S)
-        if paused != was_paused:
-            algo.set_boiler_learning_paused(paused)
-            self._should_publish_intermediate = True
-
-    def _below_boiler_threshold(self, algo: SmartPI) -> bool:
-        """True while SmartPI calls for heat below the central boiler threshold.
-
-        Only for a thermostat that Versatile Thermostat counts for its central
-        boiler: the boiler does not heat for it until the threshold is reached.
-        """
-        t = self._thermostat
-        if getattr(t, "is_used_by_central_boiler", False) is not True:
-            return False
-        power = algo.committed_on_percent
-        if not isinstance(power, (int, float)) or power <= 0.0:
-            return False
-        return central_boiler_threshold_reached(t.hass) is False
 
     async def on_state_changed(self, changed: bool):
         """Handle state changes."""

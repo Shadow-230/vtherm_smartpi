@@ -278,9 +278,6 @@ class SmartPI:
 
         # Learning start timestamp
         self._learning_enabled: bool = True
-        # Learning also pauses while SmartPI calls for heat below Versatile
-        # Thermostat's central boiler threshold (set by the handler).
-        self._boiler_learning_paused: bool = False
         self._learning_start_date: Optional[datetime] = datetime.now()
         self._session_learn_ok_count_base: int = 0
         self._session_learn_skip_count_base: int = 0
@@ -307,9 +304,6 @@ class SmartPI:
         self._last_twin_diag: dict = {}
         self._t_heat_episode_start: float | None = None
         self._t_cool_episode_start: float | None = None
-        # When the boiler pause last changed (monotonic time): learning's episode starts after it
-        # (``_learning_episode_start``), the regulation's above do not.
-        self._learning_restart_ts: float | None = None
         self._deadtime_skip_count_a: int = 0
         self._deadtime_skip_count_b: int = 0
 
@@ -413,7 +407,6 @@ class SmartPI:
         self.dt_est.reset()
         self._t_heat_episode_start = None
         self._t_cool_episode_start = None
-        self._learning_restart_ts = None
         self._deadtime_skip_count_a = 0
         self._deadtime_skip_count_b = 0
 
@@ -518,16 +511,6 @@ class SmartPI:
         """Return whether thermal model learning is enabled."""
         return self._learning_enabled
 
-    @property
-    def boiler_learning_paused(self) -> bool:
-        """Return whether learning pauses below the central boiler threshold."""
-        return self._boiler_learning_paused
-
-    @property
-    def _learning_active(self) -> bool:
-        """Learning runs unless the user paused it or the central boiler does not heat."""
-        return self._learning_enabled and not self._boiler_learning_paused
-
     def set_learning_enabled(self, enabled: bool) -> None:
         """Enable or pause learning and invalidate in-flight observations."""
         enabled = bool(enabled)
@@ -535,8 +518,8 @@ class SmartPI:
             return
 
         self._learning_enabled = enabled
-        self._restart_learning_observations()
-        # The user's pause also restarts the regulation's episode, as it always did.
+        self._reset_learning_window()
+        self.dt_est.reset_observation(self._committed_on_percent)
         self._t_heat_episode_start = None
         self._t_cool_episode_start = None
         _LOGGER.info(
@@ -544,51 +527,6 @@ class SmartPI:
             self._name,
             "enabled" if enabled else "paused",
         )
-
-    def set_boiler_learning_paused(self, paused: bool) -> None:
-        """Pause or resume learning below the central boiler threshold.
-
-        While SmartPI calls for heat below Versatile Thermostat's central boiler
-        threshold, the boiler does not heat: the room cools although the command
-        says it heats, and learning from that time would be wrong. Only learning
-        restarts its episode: the regulation's dead-time window, in which the
-        controller holds its integral, stays as without the pause.
-        """
-        paused = bool(paused)
-        if paused == self._boiler_learning_paused:
-            return
-
-        self._boiler_learning_paused = paused
-        self._restart_learning_observations()
-        _LOGGER.info(
-            "%s - SmartPI learning %s (central boiler threshold)",
-            self._name,
-            "paused" if paused else "resumed",
-        )
-
-    def _restart_learning_observations(self) -> None:
-        """Drop the observations in flight; learning's next episode starts now at the earliest."""
-        self._reset_learning_window()
-        self.dt_est.reset_observation(self._committed_on_percent)
-        self._learning_restart_ts = time.monotonic()
-
-    def _learning_episode_start(self, regulation_start: float | None) -> float | None:
-        """Learning's episode start: the regulation's, but not before the last restart of
-        learning's observations (a change of the pause). Learning's dead-time window counts from
-        it; the regulation's counts from the regulation's start, as without the pause."""
-        if regulation_start is None or self._learning_restart_ts is None:
-            return regulation_start
-        return max(regulation_start, self._learning_restart_ts)
-
-    @property
-    def heat_learning_episode_start(self) -> float | None:
-        """The start of learning's heating episode (monotonic time), None outside one."""
-        return self._learning_episode_start(self._t_heat_episode_start)
-
-    @property
-    def cool_learning_episode_start(self) -> float | None:
-        """The start of learning's cooling episode (monotonic time), None outside one."""
-        return self._learning_episode_start(self._t_cool_episode_start)
 
     def _update_integral_guard(
         self,
@@ -652,7 +590,7 @@ class SmartPI:
         """
         now = time.monotonic()
 
-        if not self._learning_active:
+        if not self._learning_enabled:
             return
 
         if a_learning_block_reason is None and setpoint_changed:
@@ -671,8 +609,8 @@ class SmartPI:
             now=now,
             in_deadband=self.deadband_mgr.in_deadband,
             in_near_band=self.deadband_mgr.in_near_band,
-            t_heat_episode_start=self.heat_learning_episode_start,
-            t_cool_episode_start=self.cool_learning_episode_start,
+            t_heat_episode_start=self._t_heat_episode_start,
+            t_cool_episode_start=self._t_cool_episode_start,
             deadtime_skip_count_a=self._deadtime_skip_count_a,
             deadtime_skip_count_b=self._deadtime_skip_count_b,
             is_calibrating=self.calibration_mgr.is_calibrating,
@@ -1243,7 +1181,6 @@ class SmartPI:
             dt_est=self.dt_est,
             max_on_percent=self._linear_max_on(),
             twin_diag=self._last_twin_diag,
-            boiler_paused=self._boiler_learning_paused,
             filtered_temp=filtered_temp,
         )
 
@@ -1469,7 +1406,6 @@ class SmartPI:
         self._last_u_limited = 0.0
         self._t_heat_episode_start = None
         self._t_cool_episode_start = None
-        self._learning_restart_ts = None
         self._output_initialized = True
         self._last_calculate_time = None
         self._current_cycle_start_monotonic = None
@@ -2112,7 +2048,7 @@ class SmartPI:
 
         # --- 4. Learning & Calibration ---
         if (
-            self._learning_active
+            self._learning_enabled
             and self.phase != SmartPIPhase.HYSTERESIS
             and not self.calibration_mgr.is_calibrating
         ):
@@ -2201,7 +2137,7 @@ class SmartPI:
             # so commit the bang-bang output now for deadtime tracking.
             self._commit_current_linear_output()
             self._update_deadtime_episode_status(self._committed_on_percent, hvac_mode, now)
-            if self._learning_active:
+            if self._learning_enabled:
                 self.dt_est.update(
                     now=now,
                     tin=t_int_lp,

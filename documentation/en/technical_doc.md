@@ -127,8 +127,6 @@ The code no longer uses a `WINDOW_MIN_MINUTES` constant. Learning now relies on 
   blocked by this setpoint gate,
 - blocks bootstrap collection until the required dead times are reliable,
 - applies a post-resume pause (`LEARNING_PAUSE_RESUME_MIN = 20`),
-- pauses, with the dead-time detection, while SmartPI calls for heat below
-  Versatile Thermostat's central boiler threshold (3.8),
 - anchors the window start after the dead-time end when needed,
 - delays the window start until the response transient has decayed
   (`skip: response transient (a|b)`): once the response lag is published (3.7),
@@ -367,103 +365,6 @@ and `a` waits for this model, `learning.bootstrap_status` reads
 The lag is learned on constant-power episodes, which the hysteresis bootstrap
 provides. In PWM regulation the duty cycle changes from cycle to cycle, so an
 installation already out of the bootstrap rarely provides one.
-
-### 3.8 Learning pause below the central boiler threshold
-
-Versatile Thermostat's central boiler starts only when the number of active
-devices (valve heads or switches) of the thermostats it counts, or their total
-power, reaches a threshold. Below it, a thermostat
-that calls for heat gets none: the room cools although the command says it
-heats. Learning from that time would count the wait for the boiler as the
-room's dead time (3.6). SmartPI computes its gain from the dead time: in
-$K_p = 1/(|a|(\lambda + L))$ (4.1), $\lambda$ is three times the dead time $L$
-(four with a valve) once $L$ is longer than a few minutes, so a dead time four
-times too long gives a gain about four times smaller, and the regulation
-reacts much more slowly. This matters most while SmartPI learns from its
-default values, after the installation or a reset (3.1). The `a`/`b` windows
-of that time see no heat either; part of them is already rejected by the
-window checks (3.2), and the pause drops them all.
-
-Learning (the `a`/`b` windows, the response-lag measurement (3.7) and the
-dead-time detection) therefore pauses
-while all of these hold:
-
-- Versatile Thermostat counts the thermostat for its central boiler
-  (`is_used_by_central_boiler`),
-- SmartPI calls for heat (committed power above 0),
-- the threshold has not been reached, without a break, for one period of
-  SmartPI's calculation (`BOILER_PAUSE_CONFIRM_S`: 60 s, less 1 s for the
-  clock's jitter); the pause starts at the next calculation. When a
-  thermostat's own start completes the threshold, Versatile Thermostat counts
-  its device only once the device reports it, after seconds with a real valve
-  head, and a check in that time must not pause. The value follows the
-  calculation period and the test bench's measurements, not a publication.
-
-`boiler_call.py` reads the threshold from Versatile Thermostat's entities
-(`nb_device_active_boiler` against `boiler_activation_threshold`,
-`total_power_active_boiler` against `boiler_power_activation_threshold`) with
-Versatile Thermostat's rule: one threshold above 0 that is reached is enough;
-kW are converted. When the values cannot be read, learning does not pause.
-
-The handler checks this before each calculation
-(`SmartPIHandler._update_boiler_learning_pause()` sets
-`SmartPI.set_boiler_learning_paused()`). Learning resumes at the first
-calculation where the threshold is reached or SmartPI stops calling. The pause
-drops the observations in flight, as the user's pause
-(`set_smartpi_learning`) does, without changing that setting: learning's next
-episode starts at the pause or the resume at the earliest, so SmartPI does not
-learn during the room's dead time after it (3.2), and the response lag sees a
-discontinuity (3.7). A change of the pause also clears the dead-time
-detection's temperature history; it happens only while SmartPI calls or as it
-stops, so the trend before the next start (3.6) still comes from the whole
-period without heating that follows. During a calibration (4.6) the pause also
-stops the dead-time measurement.
-
-The pause changes nothing but learning. Unlike the user's pause, it does not
-restart the regulation's heating episode: the dead-time window in which the
-controller holds its integral still counts from the start of the heating, so
-the command and the integral are the same as without the pause. The pause is
-shown in the diagnostics as `learning.boiler_paused`, published at once when it
-changes, and each change is logged at info ("SmartPI learning paused (central
-boiler threshold)").
-
-Sources:
-
-- Learn only while the heating moves the temperature. An estimator assumes
-  that the change of the output is caused by the control signal. When another
-  cause dominates, the estimates "will not converge to their true values", and
-  adaptation should be "interrupted as quickly as possible" (reference 4, §5,
-  p. 1175). This is the paper's main conclusion: adapt only when the changes
-  of the measurement are caused by the control signal (§10, p. 1179). A boiler
-  that does not heat is such another cause.
-- The start matters most. An adaptive controller first learns the time scale
-  of the process, its dead time and time constant, and the rest depends on it
-  (reference 4, §3, p. 1172–1173). An error made then is carried on.
-- A slow regulation learns ever more slowly. When the estimates give a very
-  slow regulation, the temperature moves little, and the adaptation becomes
-  "very slow" (reference 4, §9, p. 1179).
-- A dead time that is too long does not make the regulation unstable; it makes
-  it slow. A closed-loop time constant equal to the dead time is a good
-  compromise between speed and robustness (reference 6, p. 296); with three
-  to four dead times, SmartPI is already on the gentle side.
-- After a pause, start from fresh data. For a saturated signal, the
-  estimation is interrupted and "kept off for a while" afterwards (reference 4,
-  §7, p. 1178); when it starts again, its signals "should be initialized by
-  actual values" (§8, p. 1178).
-- An adaptive controller must find out why the control changed before it
-  retunes: poor tuning is only one cause (reference 5, §6.7, p. 262 and
-  p. 269).
-
-Limits:
-
-- SmartPI follows the threshold, not the boiler: when the threshold is reached,
-  learning resumes even if the boiler starts a little later.
-- A boiler that stops for another reason is not seen.
-- After the installation or a reset, the first learning takes longer: SmartPI
-  learns only while the boiler heats. In a room that starts heating mostly while
-  the boiler is off, for example when the boiler stays off for hours, SmartPI
-  may stay long in its first phase (3.1): it learns the dead time only from a
-  heating start made while the threshold is reached.
 
 ---
 
@@ -797,10 +698,6 @@ The forced cycle is managed by `CalibrationManager`:
 - `HEAT_UP`,
 - `COOL_DOWN_FINAL` back to `sp`.
 
-The phases feed the dead-time estimator, except while learning is paused (the
-user's setting, or below the central boiler threshold, 3.8): the phases then
-run as usual, without measuring.
-
 Before and during each phase the manager checks, with the thermal twin, that the threshold of the phase can be reached. The measured temperature comes first: once it has reached the threshold of the phase, the phase moves on and the twin is not consulted. A passive phase converges to `T_steady_passive`; an active phase driven at the allowed power `u_max` (`max_on_percent` in linear space) converges to `T_steady_passive + u_max·(T_steady_max − T_steady_passive)`, the 1R1C equilibrium being linear in power (`T_steady_max` when `u_max` is 1 or the passive equilibrium is not valid); the threshold is reachable when that equilibrium lies beyond it by `CALIBRATION_REACHABILITY_MARGIN_C = 0.5°C` (HEAT: passive `COOL_DOWN` and `COOL_DOWN_FINAL`, active `HEAT_UP`; COOL: active `COOL_DOWN` and `COOL_DOWN_FINAL`, passive `HEAT_UP`). The check only applies while the twin is usable (`status` ok, `model_reliable`, past its warm-up, valid equilibrium, and `cooling_model_available` in COOL). When the threshold is not reachable the cycle ends at once with the result `Unreachable`, distinct from `Cancelled` (HVAC OFF, timeout of `CALIBRATION_TIMEOUT_MIN = 600` minutes, reset): `last_calibration_time` is not set, `AutoCalibTrigger` consumes no retry and publishes `smartpi_autocalib_unreachable`, and the next attempt waits `AUTOCALIB_COOLDOWN_H` hours (`autocalib.next_check_ts`). The result is not a published diagnostic: `calibration.state` carries the phase only.
 
 `CalibrationManager.take_completed_result()` returns, once, the result of a run that ended (`Success`, `Cancelled`, `Unreachable`), so that the handler reports every run to `AutoCalibTrigger`, including one that ends in the tick that started it.
@@ -816,7 +713,6 @@ Before and during each phase the manager checks, with the thermal twin, that the
 | `algo.py`                 | `SmartPI`        | algorithm facade, full orchestration                                     |
 | `handler.py`              | `SmartPIHandler` | Home Assistant bridge: periodic timer, services, attributes              |
 | `state_store.py`          | `SmartPIStateStore` | Home Assistant `Store` persistence of the algorithm state             |
-| `boiler_call.py`          | —                | reading of Versatile Thermostat's central boiler threshold               |
 
 ### 5.2 `smartpi/` modules effectively used
 
@@ -1160,6 +1056,3 @@ The matrix drives the gain updates and thermal learning only. A regime transitio
 1. **Astrom K.J. and Hagglund T.**, work on PID regulation and FOPDT model usage.
 2. **Sundaresan K.R. and Krishnaswamy P.R.**, estimation of delay and time-constant parameters.
 3. **OLS** regression with Student t-test for slope validation.
-4. **Hagglund T. and Astrom K.J.**, Supervision of adaptive control algorithms, *Automatica* 36(8), 2000, 1171–1180: learning pause below the central boiler threshold (3.8).
-5. **Astrom K.J. and Hagglund T.**, *PID Controllers: Theory, Design, and Tuning*, 2nd ed., Instrument Society of America, 1995: learning pause below the central boiler threshold (3.8).
-6. **Skogestad S.**, Simple analytic rules for model reduction and PID controller tuning, *Journal of Process Control* 13, 2003, 291–309: learning pause below the central boiler threshold (3.8).
