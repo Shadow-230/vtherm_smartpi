@@ -259,8 +259,8 @@ class CalibrationManager:
             max_on_percent: Maximum on_percent allowed
             twin_diag: Latest thermal twin diagnostics, used to end the cycle
                 with UNREACHABLE when a threshold cannot be reached
-            boiler_paused: True while SmartPI pauses its learning below the
-                central boiler threshold; the dead-time estimator is then not fed
+            boiler_paused: True while learning pauses because the central
+                boiler is off; the dead-time estimator is then not fed
 
         Returns:
             CalibrationResult with on_percent (or None if not calibrating)
@@ -354,7 +354,8 @@ class CalibrationManager:
         if max_on_percent is not None and on_percent > max_on_percent:
             on_percent = max_on_percent
 
-        # Feed Estimator (Critical for detection!), unless learning pauses below the boiler threshold.
+        # Feed Estimator (Critical for detection!), unless the central boiler is
+        # off: the room then gets no heat whatever the command.
         # The detection runs on the filtered temperature, as in regulation: a
         # raw reading flickering by one sensor step would detect a response at
         # the power step. The raw reading feeds the slope history.

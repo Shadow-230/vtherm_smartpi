@@ -4,24 +4,20 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
-- Learning: SmartPI pauses its learning (room model, response lag and dead
-  time) while it calls for heat below Versatile Thermostat's central boiler
-  threshold, for a thermostat that Versatile Thermostat counts for its central
-  boiler: the boiler does not heat then, and the room cools although the
-  command says it heats. Without the pause, SmartPI would count the wait for
-  the boiler as the room's dead time, from which it computes its gain, and
-  would regulate much more slowly; this matters most while it learns from its
-  default values. The pause starts once SmartPI has called below the threshold
-  for one calculation period (60 s), so that a room whose own start completes
-  the threshold, counted by Versatile Thermostat only once its valve reports,
-  does not pause. Learning resumes when the threshold is reached or SmartPI
-  stops calling; a calibration does not measure the dead time during the
-  pause. The pause changes nothing but learning: the regulation (command and
-  integral) is the same as without it, and the user's `set_smartpi_learning`
-  setting is unchanged. With the pause, the first learning after the
-  installation or a reset takes longer, as SmartPI learns only while the
-  boiler heats. It is shown as `learning.boiler_paused` in the diagnostics. No
-  new setting. See `documentation/en/technical_doc.md`, 3.8.
+- Learning: SmartPI does not learn heating while it calls for heat and
+  Versatile Thermostat's central boiler is off, for a thermostat that Versatile
+  Thermostat counts for its central boiler: the room then gets no heat and cools
+  although the command says it heats. Without the pause, SmartPI would count the
+  wait for the boiler as the room's dead time, from which it computes its gain,
+  and would regulate much more slowly; this matters most while it learns from
+  its default values. The pause (room model, response lag and dead time, also
+  during a calibration) starts once this has lasted one calculation period
+  (60 s), so that a room whose own start turns the boiler on does not pause, and
+  ends when the boiler is on or SmartPI stops calling. It changes nothing but
+  learning: the regulation (command and integral) is the same as without it,
+  and the user's `set_smartpi_learning` setting is unchanged. It is shown as
+  `learning.boiler_paused` in the diagnostics. No new setting. See
+  `documentation/en/technical_doc.md`, 3.8.
 
 ## [0.6.3]
 

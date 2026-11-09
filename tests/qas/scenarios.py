@@ -64,6 +64,7 @@ from steps import (
     instance_log,
     of,
     published_at,
+    resume_when_the_boiler_starts,
     seconds,
     times,
     total,
@@ -88,7 +89,10 @@ def west_alone(role: Role) -> Wait:
 
 
 def east_joins(role: Role) -> Wait:
-    """East calls with West paused: West resumes, the boiler starts; East watched for a pause."""
+    """East calls with West paused: the boiler starts and West resumes once it is on; East is
+    watched for a pause (with an activation delay, both are paused until the boiler is on)."""
+    if role.boiler_delay_s:
+        return longest(resume_when_the_boiler_starts(role), boiler_starts(role))
     return total(longest(RESUME_EXTERNAL, boiler_starts(role)), NO_PAUSE)
 
 
@@ -103,8 +107,9 @@ def west_leaves(role: Role, learned: bool = False) -> Wait:
 
 
 def both_start(role: Role) -> Wait:
-    """West and East start together: the boiler starts, both watched for five calculations."""
-    return total(boiler_starts(role), Wait(5 * RECALC_S, 5 * RECALC_S))
+    """West and East start together: the boiler starts (with an activation delay, both are paused
+    until it is on), then both are watched for five calculations."""
+    return total(longest(boiler_starts(role), resume_when_the_boiler_starts(role) if role.boiler_delay_s else boiler_starts(role)), Wait(5 * RECALC_S, 5 * RECALC_S))
 
 
 # --- the registry -----------------------------------------------------------------------------
@@ -229,14 +234,14 @@ async def BP0(b: Bench) -> None:
 
 @scenario("BP1", THREE, lambda role: total(west_alone(role), HOLD), END_TO_END, minimum=True)
 async def BP1(b: Bench) -> None:
-    """The start state → West calls alone, below the threshold → West pauses once it has called below the threshold for a calculation period (60 s), not before; VTherm's boiler stays off; East and North (not counted) do not pause; West's valve stays open."""
+    """The start state → West calls alone, below the threshold, the boiler off → West pauses once it has called with the boiler off for a calculation period (60 s), not before; VTherm's boiler stays off; East and North (not counted) do not pause; West's valve stays open."""
     await b.west_calls()
     await b.hold()
 
 
 @scenario("BP2", THREE, lambda role: total(west_alone(role), east_joins(role)), END_TO_END, minimum=True, boiler_at_end=True)
 async def BP2(b: Bench) -> None:
-    """West calls alone and pauses → East calls too, the threshold is reached → West resumes at its next calculation, VTherm's boiler starts (with an activation delay, 120 s later), East does not pause."""
+    """West calls alone and pauses → East calls too, the threshold is reached → VTherm's boiler starts (with an activation delay, 120 s later) and West resumes at its next calculation once it is on, not before; East does not pause (with the delay, it pauses too while the boiler waits)."""
     await b.west_calls()
     await b.east_calls()
 
@@ -340,7 +345,7 @@ PAUSED_READINGS = Wait(10 * RECALC_S, 10 * RECALC_S)  # BP7: five readings, two 
     boiler_at_end=True,
 )
 async def BP7(b: Bench) -> None:
-    """West learned, its setpoint 1 degC above its room → a forced calibration heats below the threshold → learning pauses: the dead-time detection stays idle and the learned heating dead time unchanged; once East calls, learning resumes."""
+    """West learned, its setpoint 1 degC above its room → a forced calibration heats with the boiler off → learning pauses: the dead-time detection stays idle and the learned heating dead time unchanged; once East calls and the boiler is on, learning resumes."""
     snap = await b.snapshot()
     b.check(of(snap, WEST, "phase") == "Stable", f"West learned: phase {of(snap, WEST, 'phase')}, a {of(snap, WEST, 'a')}")
     learned = of(snap, WEST, "deadtime")
@@ -352,7 +357,7 @@ async def BP7(b: Bench) -> None:
         b.check(took is not None, f"the calibration's heating step after {seconds(took)} s")
         b.calling.add(WEST)  # the heating step opens the valve fully
         took, _ = await b.until(b.paused_is(WEST, True), WITHIN_S)
-        b.check(took is not None, f"heating alone below the threshold: paused after {seconds(took)} s")
+        b.check(took is not None, f"heating alone with the boiler off: paused after {seconds(took)} s")
         for _ in range(5):
             snap = await b.snapshot()
             b.check(
@@ -369,7 +374,7 @@ async def BP7(b: Bench) -> None:
 
 @scenario("BP8", THREE, both_start, END_TO_END, minimum=True, boiler_at_end=True)
 async def BP8(b: Bench) -> None:
-    """The start state → West and East start calling together → VTherm's boiler starts (with an activation delay, 120 s later) and neither pauses, though VTherm counts their devices a moment after SmartPI first reads the threshold."""
+    """The start state → West and East start calling together → VTherm's boiler starts and neither pauses, though VTherm counts their devices a moment after SmartPI first reads the boiler's state; with an activation delay (120 s) the boiler stays off meanwhile, both pause and resume once it is on."""
 
     async def both() -> None:
         await b.calls_at(WEST, CALLING)
@@ -424,7 +429,7 @@ def lowered(role: Role) -> float:
     PAUSE_TESTS,
 )
 async def BP10(b: Bench) -> None:
-    """West calls alone and pauses → VTherm's threshold lowered to 1 device (or 500 W), then back → lowered, West resumes at its next calculation and the boiler starts (with an activation delay, 120 s later), though only West calls; back, West pauses again two calculations later and the boiler stops at once."""
+    """West calls alone and pauses → VTherm's threshold lowered to 1 device (or 500 W), then back → lowered, the boiler starts (with an activation delay, 120 s later), though only West calls, and West resumes at its next calculation once it is on; back, West pauses again two calculations later and the boiler stops at once."""
     await b.west_calls()
     _, original = await b.threshold_entity()
     try:
@@ -475,7 +480,7 @@ def learning_of(snap: dict[str, Any], climate: str) -> dict[str, Any]:
     start="learned",
 )
 async def BP13(b: Bench) -> None:
-    """West 300 W and East 900 W learned, a power threshold of 600 W → A West calls (300 W), A′ 20 minutes, B East calls (1200 W), C East stops (300 W), D West stops → A: the boiler stays off and West pauses after a calculation period below the threshold; A′: the pause holds without a break, the boiler never starts, the room cools and nothing is learned; B: the boiler starts (with a delay, 120 s later), West resumes at its next calculation, East never pauses; C: the boiler goes off at once, West pauses two calculations later, and nothing from the gap between them is learned; D: the pause ends."""
+    """West 300 W and East 900 W learned, a power threshold of 600 W → A West calls (300 W), A′ 20 minutes, B East calls (1200 W), C East stops (300 W), D West stops → A: the boiler stays off and West pauses after a calculation period with the boiler off; A′: the pause holds without a break, the boiler never starts, the room cools and nothing is learned; B: the boiler starts (with a delay, 120 s later) and West resumes at its next calculation once it is on; East does not pause (with the delay, it pauses too while the boiler waits); C: the boiler goes off at once, West pauses two calculations later, and nothing from the gap between them is learned; D: the pause ends."""
     await b.west_calls()
     start = await b.snapshot()
     b.note("— A′ West paused for 20 minutes")
@@ -555,7 +560,7 @@ async def BP17(b: Bench) -> None:
 
 @scenario("BP18", THREE, both_start, END_TO_END, boiler_at_end=True)
 async def BP18(b: Bench) -> None:
-    """The start state → East calls, then West, and West's setpoint changes again at once (two of West's calculations a moment apart at the boiler's start) → neither pauses and the boiler starts (with an activation delay, 120 s later), though the pause's confirmation counts two calculations whatever the time between them."""
+    """The start state → East calls, then West, and West's setpoint changes again at once (two of West's calculations a moment apart at the boiler's start) → neither pauses and the boiler starts, though two of West's calculations come a moment apart with the boiler still off; with an activation delay (120 s) both pause while the boiler waits and resume once it is on."""
     marks: list[float] = []
 
     async def quick() -> None:
@@ -589,7 +594,7 @@ def boiler_back(seen: Sequence[dict[str, Any]], since: float) -> float | None:
     boiler_at_end=True,
 )
 async def BP20(b: Bench) -> None:
-    """West and East learned, both calling, the boiler on, nothing paused → Home Assistant restarts → once SmartPI runs again, neither pauses while VTherm counts their devices again and the boiler comes back (with an activation delay, 120 s later); a, b and the dead times are kept."""
+    """West and East learned, both calling, the boiler on, nothing paused → Home Assistant restarts → once SmartPI runs again, VTherm counts their devices again and the boiler comes back; neither pauses, but with an activation delay VTherm shows the boiler off for 120 s, both pause meanwhile and resume once it is back; a, b and the dead times are kept."""
 
     async def both() -> None:
         await b.calls_at(WEST, CALLING)
@@ -600,11 +605,15 @@ async def BP20(b: Bench) -> None:
     await b.restart()
     since = time.time()
     seen = await b.watch(5 * RECALC_S)  # covers the boiler's return too: its limit is within 300 s
-    found = [f"{NAMES[c]} at {clock(s)}" for s in seen for c in COUNTED if of(s, c, "paused") is True]
-    b.check(not found, f"no pause after the restart for {5 * RECALC_S:.0f} s ({', '.join(found[:5]) or 'none seen'})")
     back = boiler_back(seen, since)
     wait = boiler_starts(b.role)
     b.check(back is not None and back <= wait.maximum_s, f"VTherm's boiler on again after {seconds(back)} s (typical {wait.typical_s:.0f} s)")
+    settled_after = (back or 0.0) + RESUME_EXTERNAL.maximum_s if b.role.boiler_delay_s else 0.0
+    found = [f"{NAMES[c]} at {clock(s)}" for s in seen for c in COUNTED if of(s, c, "paused") is True and s["t"] - since > settled_after]
+    b.check(not found, f"no pause after the restart once the boiler is back, from {settled_after:.0f} s ({', '.join(found[:5]) or 'none seen'})")
+    if b.role.boiler_delay_s:
+        paused = [f"{NAMES[c]} at {clock(s)}" for s in seen for c in COUNTED if of(s, c, "paused") is True]
+        b.note(f"paused while VTherm showed the boiler off after the restart: {', '.join(paused[:6]) or 'never'}")
     snap = await b.after("after the restart")
     for climate in COUNTED:
         now = kept(snap, climate)
@@ -646,7 +655,7 @@ def own_start(role: Role) -> Wait:
     boiler_at_end=True,
 )
 async def BP25(b: Bench) -> None:
-    """Fresh, the valves reporting their opening 15 s after it is set, East calling alone below the threshold → West starts and completes the threshold, 20 times, each from the start state → West never pauses: SmartPI's log has no "West - SmartPI learning paused" line, though VTherm counts West only once its valve reports."""
+    """Fresh, the valves reporting their opening 15 s after it is set, East calling alone below the threshold, the boiler off → West starts and completes the threshold, 20 times, each from the start state → West never pauses: SmartPI's log has no "West - SmartPI learning paused" line, though VTherm counts West only once its valve reports."""
     since = datetime.now(UTC)
     done = 0
     try:

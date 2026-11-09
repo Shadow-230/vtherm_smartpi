@@ -1,8 +1,8 @@
 # QAS test pack — SmartPI on a test Home Assistant
 
 The pack the bench (`ha-testbed`, its `docs/test-pack.md`) uses to test SmartPI on test Home
-Assistant instances. It tests SmartPI's learning pause below Versatile Thermostat's central
-boiler threshold (`documentation/en/technical_doc.md`, 3.8). Nothing here is named `test_*.py`:
+Assistant instances. It tests SmartPI's learning pause while Versatile Thermostat's central
+boiler is off (`documentation/en/technical_doc.md`, 3.8). Nothing here is named `test_*.py`:
 CI does not collect it. Its checks without the bench are `tests/test_qas_files.py`,
 `tests/test_qas_rooms.py` and, locally (`SMARTPI_QAS_LOCAL=1`), `tests/test_qas_instance.py`.
 
@@ -107,7 +107,8 @@ SmartPI runs with its "SmartPI defaults" entry only.
 **What the roles test.** The device count, the power and the activation delay each decide in
 their own way when the boiler heats, so the pause's steps (BP1–BP3, BP5–BP11, BP18, BP20) run on
 `boiler-count`, `boiler-power` and `boiler-delay`, each with what that role makes of a step: with
-the delay, West resumes when the threshold is reached and the boiler starts 120 s later. The
+the delay, the boiler starts 120 s after the threshold is reached and stays off meanwhile, so a
+calling thermostat pauses during that time and resumes once the boiler is on. The
 power levels of `boiler-levels` let the power alone decide: West's 300 W alone stays below 600 W,
 East's 900 W alone or both reach it (BP13). With the power, VTherm counts each device's power
 times its valve opening for the next cycle, so a partly open valve counts as that share of the
@@ -139,7 +140,8 @@ on, its window, the threshold, a restart. It waits for what the role makes of it
 each against its own time, and then checks the same things every time: West's and East's
 pause, North never paused, VTherm's boiler and the boiler's switch, West's and East's valve
 opening, and VTherm's count and power against the valve openings. A thermostat that starts
-calling with the threshold reached is watched for a pause it must not take.
+calling with the threshold reached is watched for a pause it must not take; with an activation
+delay, every calling thermostat must pause while the boiler waits and resume only once it is on.
 
 **The trace.** While a scenario runs (all but BP25), every 5 s
 one reading of the instance keeps what changed: VTherm's count, power and boiler, the boiler's
@@ -153,15 +155,16 @@ detection is armed.
 
 **The times** are in real time, the sum of each scenario's waits (`steps.py`, `Wait`), for each of
 its roles; every wait ends as soon as its condition holds. SmartPI calculates every 60 s:
-- SmartPI pauses once it has called below the threshold without a break for a calculation period
-  (60 s, less 1 s for the timer), at its first calculation after that;
+- SmartPI pauses once it has called with VTherm's boiler off without a break for a calculation
+  period (60 s, less 1 s for the timer), at its first calculation after that;
 - a change of a thermostat's own setpoint or mode makes a calculation at once: from not calling,
-  it is below the threshold from that calculation, and its pause comes at the first periodic
+  it calls with the boiler off from that calculation, and its pause comes at the first periodic
   calculation a period later, 60–120 s after the setpoint, 90 s on average, as the setpoint falls
   at any moment of the 60 s; a resume it causes comes at once, but a learned thermostat that stops
   calling resumes at its next calculation (48–56 s on the bench), as its 0 % counts only from then;
-- a change from outside (East, the threshold, the boiler) reaches it at its next calculation: it is
-  below from then, so a pause comes two calculations later, a resume one;
+- a change from outside (East, the threshold, the boiler) reaches it at its next calculation: a
+  pause comes two calculations later, a resume one after the boiler is on (with an activation
+  delay, 120 s after the threshold is reached);
 - a closed window: VTherm's delay of 30 s, then two calculations (150 s on the bench, 11 of 11);
 - the start state after the scenario, which the runner reaches before the next one: VTherm's
   boiler off for the role's delay plus 30 s when the scenario ends with the boiler on (150 s with
@@ -175,10 +178,11 @@ In the columns:
   for the start state when the boiler was just on. Plan detached runs and reminders from it;
 - **time depends on**: what changes a scenario's time beyond SmartPI's timing.
 
-**A thermostat's own start** (BP25). SmartPI pauses only once it has called below the threshold
-for a calculation period (`documentation/en/technical_doc.md`, 3.8). At West's own start, which
-completes the threshold, VTherm counts West only once its valve reports the new opening, after
-seconds with a real valve head: a check of the pause in that time must not pause. BP25 sets the
+**A thermostat's own start** (BP25). SmartPI pauses only once it has called with VTherm's boiler
+off for a calculation period (`documentation/en/technical_doc.md`, 3.8). At West's own start,
+which completes the threshold, VTherm counts West, and turns the boiler on, only once its valve
+reports the new opening, after seconds with a real valve head: a check of the pause in that time
+must not pause. BP25 sets the
 valves' report delay to 15 s and starts West 20 times from the start state, with East calling
 alone below the threshold. It passes when every start took place and SmartPI's log, read through
 the bench as its harness reads a failure's evidence, has no "West - SmartPI learning paused"
@@ -191,22 +195,22 @@ for a background command.
 | ID | Start state | Event | Expected result | Roles | Learning at start | Typical | Maximum | Time depends on | Detached | M | Counterpart without the bench |
 |---|---|---|---|---|---|---|---|---|---|---|---|
 | BP0 | After the preparation's restart | the instance is read | every SmartPI and VTherm entry is loaded, the only SmartPI entry is its defaults, SmartPI reports no repair, neither integration logs a warning or an error but VTherm's one-time notice that SmartPI was not registered yet, VTherm's central boiler agrees with the test rooms' boiler switch, and each thermostat has SmartPI's diagnostics with learning.enabled on and learning.boiler_paused published. | all | fresh | < 1 min – 2 min | 35 min | — | no | yes | test_qas_instance.py, test_published_diagnostics_schema.py |
-| BP1 | The start state | West calls alone, below the threshold | West pauses once it has called below the threshold for a calculation period (60 s), not before; VTherm's boiler stays off; East and North (not counted) do not pause; West's valve stays open. | `boiler-count`, `boiler-power`, `boiler-delay` | fresh | 4 min | 32 min | — | no | yes | test_boiler_call.py, test_qas_instance.py |
-| BP2 | West calls alone and pauses | East calls too, the threshold is reached | West resumes at its next calculation, VTherm's boiler starts (with an activation delay, 120 s later), East does not pause. | `boiler-count`, `boiler-power`, `boiler-delay` | fresh | 5 min – 8 min | 40 min | — | no | yes | test_boiler_call.py, test_qas_instance.py |
+| BP1 | The start state | West calls alone, below the threshold, the boiler off | West pauses once it has called with the boiler off for a calculation period (60 s), not before; VTherm's boiler stays off; East and North (not counted) do not pause; West's valve stays open. | `boiler-count`, `boiler-power`, `boiler-delay` | fresh | 4 min | 32 min | — | no | yes | test_boiler_call.py, test_qas_instance.py |
+| BP2 | West calls alone and pauses | East calls too, the threshold is reached | VTherm's boiler starts (with an activation delay, 120 s later) and West resumes at its next calculation once it is on, not before; East does not pause (with the delay, it pauses too while the boiler waits). | `boiler-count`, `boiler-power`, `boiler-delay` | fresh | 5 min – 7 min | 40 min | — | no | yes | test_boiler_call.py, test_qas_instance.py |
 | BP3 | West calls alone and pauses | West stops calling | West resumes at once, though the threshold is still not reached; the boiler stays off. | `boiler-count`, `boiler-power`, `boiler-delay` | fresh | 2 min | 38 min | — | no | yes | test_boiler_call.py |
 | BP4 | VTherm's active-device and power sensors disabled, so the threshold cannot be read | West calls alone | West does not pause while its valve is open; once the sensors are back, it pauses. | `boiler-count` | fresh | 12 min | 44 min | — | no | no | test_boiler_call.py |
-| BP5 | The user's learning paused (set_smartpi_learning off) | West calls alone, then East too | West's boiler pause starts and ends as without it, learning.enabled stays off throughout; the user's setting is put back. | `boiler-count`, `boiler-power`, `boiler-delay` | fresh | 5 min – 8 min | 44 min | — | no | no | test_boiler_call.py |
-| BP6 | West and East call, the boiler on | East stops, the demand drops below the threshold with West heating | VTherm's boiler and its switch go off at once (also with an activation delay), West pauses two calculations later; West stopping then resumes it. | `boiler-count`, `boiler-power`, `boiler-delay` | fresh | 7 min – 8 min | 57 min | — | no | no | test_boiler_call.py |
-| BP7 | West learned, its setpoint 1 degC above its room | a forced calibration heats below the threshold | learning pauses: the dead-time detection stays idle and the learned heating dead time unchanged; once East calls, learning resumes. | `boiler-count`, `boiler-power`, `boiler-delay` | learned | 15 min – 18 min | 112 min | typical when West starts below the calibration's low threshold (setpoint - 0.3 degC), as its setpoint is set 1 degC above the room | no | no | test_boiler_call.py |
-| BP8 | The start state | West and East start calling together | VTherm's boiler starts (with an activation delay, 120 s later) and neither pauses, though VTherm counts their devices a moment after SmartPI first reads the threshold. | `boiler-count`, `boiler-power`, `boiler-delay` | fresh | 6 min – 10 min | 27 min – 29 min | — | no | yes | test_boiler_call.py, test_qas_instance.py |
+| BP5 | The user's learning paused (set_smartpi_learning off) | West calls alone, then East too | West's boiler pause starts and ends as without it, learning.enabled stays off throughout; the user's setting is put back. | `boiler-count`, `boiler-power`, `boiler-delay` | fresh | 5 min – 7 min | 44 min | — | no | no | test_boiler_call.py |
+| BP6 | West and East call, the boiler on | East stops, the demand drops below the threshold with West heating | VTherm's boiler and its switch go off at once (also with an activation delay), West pauses two calculations later; West stopping then resumes it. | `boiler-count`, `boiler-power`, `boiler-delay` | fresh | 6 min – 7 min | 57 min | — | no | no | test_boiler_call.py |
+| BP7 | West learned, its setpoint 1 degC above its room | a forced calibration heats with the boiler off | learning pauses: the dead-time detection stays idle and the learned heating dead time unchanged; once East calls and the boiler is on, learning resumes. | `boiler-count`, `boiler-power`, `boiler-delay` | learned | 15 min – 17 min | 112 min | typical when West starts below the calibration's low threshold (setpoint - 0.3 degC), as its setpoint is set 1 degC above the room | no | no | test_boiler_call.py |
+| BP8 | The start state | West and East start calling together | VTherm's boiler starts and neither pauses, though VTherm counts their devices a moment after SmartPI first reads the boiler's state; with an activation delay (120 s) the boiler stays off meanwhile, both pause and resume once it is on. | `boiler-count`, `boiler-power`, `boiler-delay` | fresh | 6 min – 10 min | 27 min – 36 min | — | no | yes | test_boiler_call.py, test_qas_instance.py |
 | BP9 | West learned, calling alone and paused | Home Assistant restarts | once SmartPI runs again, the pause returns within two calculations; nothing is learned in between (accepted updates unchanged, dead-time detection idle); a, b and the dead time are kept. | `boiler-count`, `boiler-power`, `boiler-delay` | learned | 5 min | 52 min | — | no | no | test_boiler_call.py |
-| BP10 | West calls alone and pauses | VTherm's threshold lowered to 1 device (or 500 W), then back | lowered, West resumes at its next calculation and the boiler starts (with an activation delay, 120 s later), though only West calls; back, West pauses again two calculations later and the boiler stops at once. | `boiler-count`, `boiler-power`, `boiler-delay` | fresh | 4 min – 6 min | 46 min | — | no | no | test_boiler_call.py |
+| BP10 | West calls alone and pauses | VTherm's threshold lowered to 1 device (or 500 W), then back | lowered, the boiler starts (with an activation delay, 120 s later), though only West calls, and West resumes at its next calculation once it is on; back, West pauses again two calculations later and the boiler stops at once. | `boiler-count`, `boiler-power`, `boiler-delay` | fresh | 4 min – 6 min | 46 min | — | no | no | test_boiler_call.py |
 | BP11 | West calls alone and pauses | West turned off and on, then its window opened and closed | off, its pause ends within a calculation (SmartPI does not call); heating again, the pause returns after a calculation period below the threshold; window open, VTherm turns West off after 30 s and the pause ends; window closed, West heats again and pauses two calculations later. | `boiler-count`, `boiler-power`, `boiler-delay` | fresh | 6 min | 58 min | — | no | no | test_boiler_call.py |
-| BP13 | West 300 W and East 900 W learned, a power threshold of 600 W | A West calls (300 W), A′ 20 minutes, B East calls (1200 W), C East stops (300 W), D West stops | A: the boiler stays off and West pauses after a calculation period below the threshold; A′: the pause holds without a break, the boiler never starts, the room cools and nothing is learned; B: the boiler starts (with a delay, 120 s later), West resumes at its next calculation, East never pauses; C: the boiler goes off at once, West pauses two calculations later, and nothing from the gap between them is learned; D: the pause ends. | `boiler-levels`, `boiler-levels-delay` | learned | 28 min – 29 min | 77 min | — | no | no | test_boiler_call.py, test_qas_instance.py |
+| BP13 | West 300 W and East 900 W learned, a power threshold of 600 W | A West calls (300 W), A′ 20 minutes, B East calls (1200 W), C East stops (300 W), D West stops | A: the boiler stays off and West pauses after a calculation period with the boiler off; A′: the pause holds without a break, the boiler never starts, the room cools and nothing is learned; B: the boiler starts (with a delay, 120 s later) and West resumes at its next calculation once it is on; East does not pause (with the delay, it pauses too while the boiler waits); C: the boiler goes off at once, West pauses two calculations later, and nothing from the gap between them is learned; D: the pause ends. | `boiler-levels`, `boiler-levels-delay` | learned | 28 min | 77 min | — | no | no | test_boiler_call.py, test_qas_instance.py |
 | BP17 | West and East learned, West calling alone and paused | East switched on and off at the threshold, every calculation for 10 minutes, then every 10 s for 5 minutes, then off | no window that short reaches West's or East's learning (accepted updates and the heating dead times unchanged); it records the switches of the pause and of the boiler; West ends paused. | `boiler-count`, `boiler-power` | learned | 18 min | 55 min | — | no | no | test_boiler_call.py |
-| BP18 | The start state | East calls, then West, and West's setpoint changes again at once (two of West's calculations a moment apart at the boiler's start) | neither pauses and the boiler starts (with an activation delay, 120 s later), though the pause's confirmation counts two calculations whatever the time between them. | `boiler-count`, `boiler-power`, `boiler-delay` | fresh | 6 min – 10 min | 27 min – 29 min | — | no | no | test_boiler_call.py, test_qas_instance.py |
-| BP20 | West and East learned, both calling, the boiler on, nothing paused | Home Assistant restarts | once SmartPI runs again, neither pauses while VTherm counts their devices again and the boiler comes back (with an activation delay, 120 s later); a, b and the dead times are kept. | `boiler-count`, `boiler-power`, `boiler-delay` | learned | 6 min – 10 min | 42 min – 44 min | — | no | no | test_boiler_call.py |
-| BP25 | Fresh, the valves reporting their opening 15 s after it is set, East calling alone below the threshold | West starts and completes the threshold, 20 times, each from the start state | West never pauses: SmartPI's log has no "West - SmartPI learning paused" line, though VTherm counts West only once its valve reports. | `boiler-count` | fresh | 60 min | 10.8 h | — | yes | no | test_boiler_call.py |
+| BP18 | The start state | East calls, then West, and West's setpoint changes again at once (two of West's calculations a moment apart at the boiler's start) | neither pauses and the boiler starts, though two of West's calculations come a moment apart with the boiler still off; with an activation delay (120 s) both pause while the boiler waits and resume once it is on. | `boiler-count`, `boiler-power`, `boiler-delay` | fresh | 6 min – 10 min | 27 min – 36 min | — | no | no | test_boiler_call.py, test_qas_instance.py |
+| BP20 | West and East learned, both calling, the boiler on, nothing paused | Home Assistant restarts | once SmartPI runs again, VTherm counts their devices again and the boiler comes back; neither pauses, but with an activation delay VTherm shows the boiler off for 120 s, both pause meanwhile and resume once it is back; a, b and the dead times are kept. | `boiler-count`, `boiler-power`, `boiler-delay` | learned | 6 min – 10 min | 42 min – 44 min | — | no | no | test_boiler_call.py |
+| BP25 | Fresh, the valves reporting their opening 15 s after it is set, East calling alone below the threshold, the boiler off | West starts and completes the threshold, 20 times, each from the start state | West never pauses: SmartPI's log has no "West - SmartPI learning paused" line, though VTherm counts West only once its valve reports. | `boiler-count` | fresh | 60 min | 10.8 h | — | yes | no | test_boiler_call.py |
 <!-- end of catalogue -->
 
 ## 5. Known points
