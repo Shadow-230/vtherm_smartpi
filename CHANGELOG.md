@@ -8,19 +8,25 @@ All notable changes to this project will be documented in this file.
   central boiler threshold logs one line ("SmartPI boiler pause evaluation:")
   with its wall-clock and monotonic time, what started the calculation, the
   phase, the committed power, Versatile Thermostat's count and power with
-  their thresholds, the threshold as read, the previous check, the pause
-  before and after the check, and the decision. The pause itself is
-  unchanged.
+  their thresholds, the threshold as read, how long SmartPI has called below
+  the threshold without a break, the pause before and after the check, and
+  the decision. The line changes nothing in the pause.
 - Diagnostics: `analysis.deadtime.heat_episode_start` and `cool_episode_start`
-  publish the start of the current heating or cooling episode (ISO time, UTC),
-  from which the dead-time window counts; `null` outside an episode.
-- Learning: the pause below the central boiler threshold starts only when the
-  threshold is not reached at two consecutive calculations. When a thermostat
-  starts calling, Versatile Thermostat counts its device a moment after
-  SmartPI reads the threshold, so each boiler start paused learning for one
-  calculation and dropped its observations twice. Learning still resumes at
-  once. A change of `learning.boiler_paused` is now published at once, not
-  with the next change of an input.
+  publish the start of learning's current heating or cooling episode (ISO
+  time, UTC), from which learning's dead-time window counts; `null` outside an
+  episode.
+- Learning: the pause below the central boiler threshold starts only once
+  SmartPI has called below the threshold without a break for one period of its
+  calculation (60 s). When a thermostat's own start completes the threshold,
+  Versatile Thermostat counts its device only once the device reports it, a
+  moment later, or seconds later with a real valve head; without that wait
+  each boiler start paused learning for about a minute and dropped its
+  observations twice. Learning still resumes at once. The pause restarts only
+  learning's episode, not the regulation's: after the resume the controller
+  does not hold its integral for another dead time, and the command and the
+  integral are the same as without the pause. A change of
+  `learning.boiler_paused` is now published at once, not with the next change
+  of an input.
 - Learning: a calibration no longer feeds the dead-time estimator while
   learning is paused, by the user's `set_smartpi_learning` or below the
   central boiler threshold; its phases run as before. Until now a calibration

@@ -14,6 +14,19 @@ from typing import Any
 
 from homeassistant.helpers import entity_registry as er
 
+from .smartpi.const import SMARTPI_RECALC_INTERVAL_SEC
+
+# The pause starts once SmartPI has called below the threshold without a break for one period of
+# its periodic calculation. When a thermostat's own start completes the threshold, Versatile
+# Thermostat counts its device only once the device reports it: a few milliseconds after the
+# setpoint with a simulated valve (2-22 ms on the test bench), seconds with a real valve head.
+# Checks inside that window must not pause. One whole period is far longer than that window, and
+# two periodic calculations a period apart still confirm a pause: their gap differs from the
+# period by milliseconds, hence the margin of 1 s. The value follows SmartPI's calculation period
+# and the bench's measurements, not a publication.
+BOILER_PAUSE_TIMER_MARGIN_S = 1.0
+BOILER_PAUSE_CONFIRM_S = SMARTPI_RECALC_INTERVAL_SEC - BOILER_PAUSE_TIMER_MARGIN_S
+
 # Versatile Thermostat's central boiler entities, by unique ID.
 VT_DOMAIN = "versatile_thermostat"
 VT_ACTIVE_COUNT_UNIQUE_ID = "nb_device_active_boiler"

@@ -258,7 +258,7 @@ async def BP0(b: Bench) -> None:
 
 @scenario("BP1", THREE, lambda role: total(west_alone(role), HOLD), END_TO_END, minimum=True)
 async def BP1(b: Bench) -> None:
-    """The start state → West calls alone, below the threshold → West pauses at its next calculation, not at its setpoint's own; VTherm's boiler stays off; East and North (not counted) do not pause; West's valve stays open."""
+    """The start state → West calls alone, below the threshold → West pauses once it has called below the threshold for a calculation period (60 s), not before; VTherm's boiler stays off; East and North (not counted) do not pause; West's valve stays open."""
     await b.west_calls()
     await b.hold()
 
@@ -361,12 +361,12 @@ NEW_EPISODE = Wait(CYCLE_S / 2, CYCLE_S + MARGIN_S)  # the next cycle's start
 
 
 async def new_episode_after(b: Bench, climate: str, since: float, label: str) -> dict[str, Any]:
-    """The thermostat's next heating starts a new dead-time window after ``since``."""
-    took, snap = await b.until(
-        lambda s: (published_at(of(s, climate, "episode")) or 0.0) >= since and of(s, climate, "in_window") is True,
-        NEW_EPISODE.maximum_s,
-    )
-    b.check(took is not None, f"{label}: the next heating starts a new dead-time window, episode start {of(snap, climate, 'episode')}, after {datetime.fromtimestamp(since, UTC):%H:%M:%S}")
+    """Learning's next heating episode (``analysis.deadtime.heat_episode_start``) starts after
+    ``since``; the regulation's dead-time window (``control.in_deadtime_window``) does not restart
+    with it, and is only noted."""
+    took, snap = await b.until(lambda s: (published_at(of(s, climate, "episode")) or 0.0) >= since, NEW_EPISODE.maximum_s)
+    b.check(took is not None, f"{label}: learning's next heating episode starts {of(snap, climate, 'episode')}, after {datetime.fromtimestamp(since, UTC):%H:%M:%S}")
+    b.note(f"{label}: the regulation's dead-time window {of(snap, climate, 'in_window')}")
     return snap
 
 
@@ -380,7 +380,7 @@ async def new_episode_after(b: Bench, climate: str, since: float, label: str) ->
     boiler_at_end=True,
 )
 async def BP7(b: Bench) -> None:
-    """West learned, its setpoint 1 degC above its room → a forced calibration heats below the threshold → learning pauses: the dead-time detection stays idle and the learned heating dead time unchanged; once East calls, learning resumes and the next heating starts a new dead-time window, its episode starting after the resume."""
+    """West learned, its setpoint 1 degC above its room → a forced calibration heats below the threshold → learning pauses: the dead-time detection stays idle and the learned heating dead time unchanged; once East calls, learning resumes and its next heating episode starts after the resume, while the regulation's dead-time window does not restart."""
     snap = await b.snapshot()
     b.check(of(snap, WEST, "phase") == "Stable", f"West learned: phase {of(snap, WEST, 'phase')}, a {of(snap, WEST, 'a')}")
     learned = of(snap, WEST, "deadtime")
@@ -486,7 +486,7 @@ async def BP10(b: Bench) -> None:
     PAUSE_TESTS,
 )
 async def BP11(b: Bench) -> None:
-    """West calls alone and pauses → West turned off and on, then its window opened and closed → off, its pause ends within a calculation (SmartPI does not call); heating again, the pause returns a calculation later; window open, VTherm turns West off after 30 s and the pause ends; window closed, West heats again and pauses two calculations later."""
+    """West calls alone and pauses → West turned off and on, then its window opened and closed → off, its pause ends within a calculation (SmartPI does not call); heating again, the pause returns after a calculation period below the threshold; window open, VTherm turns West off after 30 s and the pause ends; window closed, West heats again and pauses two calculations later."""
     await b.west_calls()
     try:
         took = await b.west_off()
@@ -658,7 +658,7 @@ def learning_of(snap: dict[str, Any], climate: str) -> dict[str, Any]:
     start="learned",
 )
 async def BP13(b: Bench) -> None:
-    """West 300 W and East 900 W learned, a power threshold of 600 W → A West calls (300 W), A′ 20 minutes, B East calls (1200 W), C East stops (300 W), D West stops → A: the boiler stays off and West pauses at its next calculation; A′: the pause holds without a break, the boiler never starts, the room cools and nothing is learned; B: the boiler starts (with a delay, 120 s later), West resumes at its next calculation, East never pauses; C: the boiler goes off at once, West pauses two calculations later, and nothing from the gap between them is learned; D: the pause ends."""
+    """West 300 W and East 900 W learned, a power threshold of 600 W → A West calls (300 W), A′ 20 minutes, B East calls (1200 W), C East stops (300 W), D West stops → A: the boiler stays off and West pauses after a calculation period below the threshold; A′: the pause holds without a break, the boiler never starts, the room cools and nothing is learned; B: the boiler starts (with a delay, 120 s later), West resumes at its next calculation, East never pauses; C: the boiler goes off at once, West pauses two calculations later, and nothing from the gap between them is learned; D: the pause ends."""
     await b.west_calls()
     start = await b.snapshot()
     b.note("— A′ West paused for 20 minutes")
@@ -1047,10 +1047,12 @@ async def BP21(b: Bench) -> None:
 # --- BP22-BP24: a thermostat's own start that completes the threshold ------------------------
 #
 # A race at a thermostat's own start (README.md, section 4): SmartPI checks the pause before each
-# calculation, on its committed command and on VTherm's count, and pauses at the second check
-# below the threshold, whatever the time between the two. At West's own start, which completes
-# the threshold, VTherm counts West only once its valve reports the new opening; a second check
-# before that pauses learning although the boiler is about to start. Each start is measured from
+# calculation, on its committed command and on VTherm's count. At West's own start, which completes
+# the threshold, VTherm counts West only once its valve reports the new opening. Until qas b7772d8
+# SmartPI paused at the second check below the threshold, whatever the time between the two, so a
+# second check before VTherm counted West paused learning although the boiler was about to start;
+# since then it pauses only once it has called below the threshold for a calculation period, and
+# such a check must not pause. Each start is measured from
 # the start state, East calling alone (paused), with the valves reporting their opening after a
 # delay (``smartpi_test_rooms.set_valve_report_delay``), from SmartPI's debug line of each check
 # (handler.py) and the times of VTherm's count, power and boiler.
@@ -1443,7 +1445,7 @@ async def _reference_run(b: Bench, sid: str, east: Callable[[float], float]) -> 
             calling_readings += 1
         else:
             calling_readings = 0
-        # West calling alone for three readings (its pause comes at the second calculation), East
+        # West calling alone for three readings (its pause comes a calculation period later), East
         # stopped for longer than VTherm takes to stop the boiler.
         if calling_readings >= 3 and east_stopped_at is not None and elapsed - east_stopped_at > WITHIN_S:
             alone["readings"] += 1

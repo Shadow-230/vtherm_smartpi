@@ -20,10 +20,12 @@ the power) and reads the valve's own state too (``valve``).
 What a step expects follows from the role (``Bench.reaches``): the thermostats calling at full
 power, the devices they count, their powers, the threshold.
 
-**The timing of a step** (``Wait``): a change of a thermostat's own setpoint or mode makes a
-calculation at once; its pause comes one calculation later, its resume at once. A change from
-outside (East, the threshold) reaches it at its next calculation: a pause two calculations
-later, a resume one. A closed window: VTherm's delay of 30 s, then two calculations.
+**The timing of a step** (``Wait``): SmartPI pauses once it has called below the threshold
+without a break for a calculation period (``PAUSE_CONFIRM_S``), at its first calculation after
+it. A change of a thermostat's own setpoint or mode makes a calculation at once: its pause comes
+a calculation period and a part of the next one later, its resume at once. A change from outside
+(East, the threshold) reaches it at its next calculation: a pause two calculations later, a
+resume one. A closed window: VTherm's delay of 30 s, then two calculations.
 
 **The trace.** While a scenario runs, every ``TRACE_S`` the trace reads the instance once and
 keeps what changed: VTherm's count, power and boiler, the boiler's switch, each thermostat's
@@ -38,6 +40,7 @@ import asyncio
 import importlib.util
 import json
 import pathlib
+import re
 import time
 from collections.abc import Awaitable, Callable, Iterable, Sequence
 from dataclasses import dataclass
@@ -92,14 +95,17 @@ def times(wait: Wait, n: int) -> Wait:
     return Wait(n * wait.typical_s, n * wait.maximum_s)
 
 
-# The thermostat's own change: its pause comes at its next calculation, half a calculation later on
-# average, as the setpoint falls at any moment of SmartPI's 60-s period (BP3: 15-16 s on the bench).
-PAUSE_ON_SETPOINT = Wait(RECALC_S / 2, WITHIN_S)
+# SmartPI pauses once it has called below the threshold without a break for a calculation period, less
+# 1 s for the timer (boiler_call.BOILER_PAUSE_CONFIRM_S), at its first calculation after that.
+PAUSE_CONFIRM_S = RECALC_S - 1.0
+# The thermostat's own change: below from its setpoint's own calculation, paused at the first periodic
+# calculation a period later: 60-120 s, 90 s on average, as the setpoint falls at any moment of the 60 s.
+PAUSE_ON_SETPOINT = Wait(1.5 * RECALC_S, WITHIN_S)
 RESUME_ON_SETPOINT = Wait(0.0, WITHIN_S)  # at once
 # A learned thermostat (past SmartPI's first phase) that stops calling commits its 0 % only after the
 # calculation of its setpoint: its resume comes at SmartPI's next calculation (48-56 s on the bench).
 RESUME_ON_STOP_LEARNED = Wait(RECALC_S, WITHIN_S)
-PAUSE_EXTERNAL = Wait(2 * RECALC_S, WITHIN_S)  # a change from outside: two calculations
+PAUSE_EXTERNAL = Wait(2 * RECALC_S, WITHIN_S)  # a change from outside: below from its next calculation, paused a period later
 RESUME_EXTERNAL = Wait(RECALC_S, WITHIN_S)  # one calculation
 WINDOW_DELAY_S = 30.0  # VTherm's default delay before it acts on an opened or closed window
 WINDOW_OPENS = Wait(WINDOW_DELAY_S, WINDOW_DELAY_S + MARGIN_S)  # VTherm turns West off: resume at once
@@ -310,9 +316,14 @@ EVALUATION = "SmartPI boiler pause evaluation:"
 LOG_MARGIN_S = 60.0  # the bench's clock against Home Assistant's, when reading the log
 
 
+ANSI = re.compile(r"\x1b\[[0-9;]*m")  # Home Assistant's log colours, as ``docker logs`` gives them
+
+
 def parse_evaluation(line: str) -> dict[str, Any] | None:
-    """One check of the pause from its log line: the thermostat's ``name``, ``at`` (Home
-    Assistant's clock, epoch seconds), and every ``key=value`` of the line as text."""
+    """One check of the pause from its log line, without the log's colour codes: the thermostat's
+    ``name``, ``at`` (Home Assistant's clock, epoch seconds), and every ``key=value`` of the line
+    as text."""
+    line = ANSI.sub("", line)
     if EVALUATION not in line:
         return None
     head, tail = line.split(EVALUATION, 1)
@@ -389,7 +400,7 @@ def learned_in_pauses(samples: Sequence[dict[str, Any]], key: str) -> tuple[int,
     return len(runs), problems
 
 
-PAUSE_DUE_S = 2 * RECALC_S + 20.0  # two calculations, the second on the opening already applied
+PAUSE_DUE_S = 2 * RECALC_S + 20.0  # the first calculation on the opening applied, then a calculation period
 RESUME_DUE_S = RECALC_S + 20.0
 
 
@@ -626,12 +637,12 @@ class Bench:
             self.calling.discard(climate)
 
     async def west_calls(self) -> dict[str, float | None]:
-        """West calls, its valve fully open. Starting from not calling, its pause (if due) comes at its
-        next calculation, never at the one its setpoint makes."""
+        """West calls, its valve fully open. Starting from not calling, its pause (if due) comes once it
+        has called below the threshold for a calculation period, never before."""
         took = await self.change("West calls", lambda: self.calls_at(WEST, CALLING), own=WEST)
         paused = took.get("West paused")
         if paused is not None:
-            self.check(paused > 1.0, f"West's pause not at the calculation of its own setpoint (after {paused:.1f} s)")
+            self.check(paused >= PAUSE_CONFIRM_S, f"West's pause after a calculation period below the threshold at least (after {paused:.1f} s)")
         return took
 
     async def west_stops(self) -> dict[str, float | None]:

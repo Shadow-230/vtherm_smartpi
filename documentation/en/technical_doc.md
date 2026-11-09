@@ -380,10 +380,17 @@ while all of these hold:
 - Versatile Thermostat counts the thermostat for its central boiler
   (`is_used_by_central_boiler`),
 - SmartPI calls for heat (committed power above 0),
-- the threshold is not reached, at two consecutive calculations: when a
-  thermostat starts calling, Versatile Thermostat counts its device a moment
-  after SmartPI reads the threshold, so a boiler that starts would otherwise
-  pause learning for one calculation. `boiler_call.py` reads it from Versatile
+- the threshold has not been reached for one period of SmartPI's calculation
+  without a break (60 s, less 1 s for the clock's jitter,
+  `BOILER_PAUSE_CONFIRM_S`); the pause starts at the first calculation after
+  that. When a thermostat's own start completes the threshold, Versatile
+  Thermostat counts its device only once the device reports it: within
+  milliseconds with a simulated valve, after seconds with a real valve head.
+  Checks in that window must not pause, and one whole period is much longer
+  than the window. Reaching the threshold, not calling, or a threshold that
+  cannot be read breaks the run. The value follows SmartPI's calculation
+  period and the test bench's measurements, not a publication.
+  `boiler_call.py` reads the threshold from Versatile
   Thermostat's entities (`nb_device_active_boiler` against
   `boiler_activation_threshold`, `total_power_active_boiler` against
   `boiler_power_activation_threshold`) with Versatile Thermostat's rule: one
@@ -394,12 +401,16 @@ The handler checks this before each calculation
 (`SmartPIHandler._update_boiler_learning_pause()` sets
 `SmartPI.set_boiler_learning_paused()`). The pause works like the user's pause
 (`set_smartpi_learning`) without changing it: the observations in flight are
-dropped, and the next heating is a new episode, so SmartPI does not learn
-during the room's dead time after the pause (3.2). For the response lag the
-pause is a discontinuity: the episode ends at the last observed instant, and the
-next one starts after the resume (3.7). Learning resumes at the first
-calculation where the threshold is reached or SmartPI stops calling. Regulation is unchanged:
-SmartPI sees the room cool and keeps calling. The pause also holds during a
+dropped, and learning's next episode starts at the pause or the resume at the
+earliest, so SmartPI does not learn during the room's dead time after the pause
+(3.2). For the response lag the pause is a discontinuity: the episode ends at
+the last observed instant, and the next one starts after the resume (3.7).
+Learning resumes at the first calculation where the threshold is reached or
+SmartPI stops calling. Regulation is unchanged: SmartPI sees the room cool and
+keeps calling. Unlike the user's pause, the boiler pause does not restart the
+regulation's heating episode: its dead-time window, in which the controller
+holds its integral, still counts from the start of the heating, so the command
+and the integral are the same as without the pause. The pause also holds during a
 calibration (4.6). It is shown in the diagnostics as `learning.boiler_paused`,
 published at once when it changes, and each change is logged. At debug level
 (`custom_components.vtherm_smartpi.handler`) every check writes one line,
@@ -409,8 +420,9 @@ started the calculation (`periodic`, SmartPI's own calculation every minute;
 `force`, a change of the setpoint or the mode; `cycle`, Versatile Thermostat's
 cycle; `other`, for example a new room temperature), SmartPI's phase, the
 committed power, Versatile Thermostat's count and power with their thresholds,
-the threshold as read for the pause, the previous check, the pause before and
-after the check, and the decision. It shows which calculations decided a
+the threshold as read for the pause, how long SmartPI has called below the
+threshold without a break (`below_for`, in s), the pause before and after the
+check, and the decision. It shows which calculations decided a
 pause. The line changes nothing in the pause.
 
 Sources:
@@ -995,10 +1007,12 @@ in each pool and the sensor resolution used for their uncertainty; these values
 are specific to the current Home Assistant session. When the thermal twin is
 usable, its public diagnostic fields are exposed under `analysis.twin`.
 `analysis.deadtime.heat_episode_start` and `cool_episode_start` give the start
-of the current heating or cooling episode, the moment the dead-time window
-(3.2) counts from, as an ISO time in UTC; `null` outside an episode. The
-learning pause below the central boiler threshold (3.8) ends the episode, so
-the next heating after it starts a new one.
+of learning's current heating or cooling episode, the moment learning's
+dead-time window (3.2) counts from, as an ISO time in UTC; `null` outside an
+episode. It is the start of the heating or cooling, but not earlier than the
+last change of the learning pause below the central boiler threshold (3.8); the
+regulation's episode (`control.in_deadtime_window`) does not restart at that
+pause.
 
 `feedforward.fftrim.command_ownership` exposes whether the scheduler emits
 receipts, the latest binding status and rejection reason, the request

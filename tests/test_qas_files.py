@@ -35,6 +35,7 @@ from scenarios import (  # noqa: E402
 from steps import (  # noqa: E402
     EAST,
     NORTH,
+    PAUSE_CONFIRM_S,
     PAUSE_ON_SETPOINT,
     RECALC_S,
     RESUME_ON_SETPOINT,
@@ -423,15 +424,15 @@ def test_bp14_s_threshold_is_above_west_s_steady_opening() -> None:
 
 
 def test_the_typical_times_of_the_own_setpoint_and_the_closing_start_state() -> None:
-    """A thermostat's own start pauses at its next calculation, half a calculation later on
-    average; a learned West that stops resumes a calculation later, a fresh one at once; the start
+    """A thermostat's own start pauses a calculation period after its setpoint's own calculation,
+    at the next periodic calculation, 1.5 calculations later on average; a learned West that stops resumes a calculation later, a fresh one at once; the start
     state after a scenario that ends with the boiler on waits for it off the role's delay plus
     30 s, and after one that ends with a learned West paused for its resume."""
-    assert PAUSE_ON_SETPOINT.typical_s == RECALC_S / 2
+    assert PAUSE_ON_SETPOINT.typical_s == 1.5 * RECALC_S
     count, delay = ROLES["boiler-count"], ROLES["boiler-delay"]
     assert west_leaves(count).typical_s == RESUME_ON_SETPOINT.typical_s == 0.0
     assert west_leaves(count, learned=True).typical_s == RECALC_S
-    assert SCENARIOS["BP3"].time_for(count).typical_s == RECALC_S / 2
+    assert SCENARIOS["BP3"].time_for(count).typical_s == 1.5 * RECALC_S
     for sid in ("BP0", "BP2", "BP5", "BP7", "BP8", "BP12", "BP18", "BP20", "BP21"):
         s = SCENARIOS[sid]
         for name in s.roles:
@@ -448,7 +449,7 @@ def _line(at: str, source: str, below: str, decision: str, name: str = "West") -
     return (
         f"2026-11-04 09:00:00.000 DEBUG (MainThread) [custom_components.vtherm_smartpi.handler] {name} - SmartPI boiler pause "
         f"evaluation: at={at} mono=12.000 source={source} phase=Hysteresis committed=1.000 counted=True count=1.0 "
-        f"count_threshold=2.0 power_w=2000.0 power_threshold_w=0.0 reached=False below={below} before=False paused=False->False decision={decision}"
+        f"count_threshold=2.0 power_w=2000.0 power_threshold_w=0.0 reached=False below={below} below_for=0.0 paused=False->False decision={decision}"
     )
 
 
@@ -458,6 +459,22 @@ def test_a_check_of_the_pause_is_read_from_its_log_line() -> None:
     assert (check["name"], check["source"], check["below"], check["decision"], check["count"]) == ("West", "force", "True", "stay_running", "1.0")
     assert check["at_s"] == pytest.approx(datetime(2026, 11, 4, 9, 0, 0, 250000, tzinfo=UTC).timestamp())
     assert parse_evaluation("2026-11-04 09:00:00.000 INFO [x] West - SmartPI learning paused (central boiler threshold)") is None
+
+
+def test_a_check_is_read_without_the_log_s_colours() -> None:
+    """``docker logs`` gives Home Assistant's coloured log: the colour codes around the line are
+    not part of its last field."""
+    line = "\x1b[36m" + _line("2026-11-04T09:00:00.250+00:00", "periodic", "True", "pause") + "\x1b[0m"
+    check = parse_evaluation(line)
+    assert (check["name"], check["source"], check["decision"]) == ("West", "periodic", "pause")
+    record = race_start([check], datetime(2026, 11, 4, 9, 0, 0, tzinfo=UTC).timestamp(), [])
+    assert record["false_pause"] is True
+
+
+def test_the_pack_s_pause_confirmation_is_smartpi_s() -> None:
+    from custom_components.vtherm_smartpi.boiler_call import BOILER_PAUSE_CONFIRM_S  # noqa: PLC0415
+
+    assert PAUSE_CONFIRM_S == BOILER_PAUSE_CONFIRM_S
 
 
 def _at(seconds: float) -> str:

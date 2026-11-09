@@ -11,6 +11,7 @@ from homeassistant.helpers import entity_registry as er
 import custom_components.vtherm_smartpi.algo as algo_module
 from custom_components.vtherm_smartpi.algo import SmartPI
 from custom_components.vtherm_smartpi.boiler_call import (
+    BOILER_PAUSE_CONFIRM_S,
     VT_ACTIVE_COUNT_UNIQUE_ID,
     VT_ACTIVE_POWER_UNIQUE_ID,
     VT_COUNT_THRESHOLD_UNIQUE_ID,
@@ -21,7 +22,7 @@ from custom_components.vtherm_smartpi.boiler_call import (
 from custom_components.vtherm_smartpi.handler import SmartPIHandler
 from custom_components.vtherm_smartpi.hvac_mode import VThermHvacMode_HEAT
 from custom_components.vtherm_smartpi.smartpi.ab_estimator import ABEstimator
-from custom_components.vtherm_smartpi.smartpi.const import SmartPICalibrationPhase
+from custom_components.vtherm_smartpi.smartpi.const import SMARTPI_RECALC_INTERVAL_SEC, SmartPICalibrationPhase
 from custom_components.vtherm_smartpi.smartpi.diagnostics import build_published_diagnostics
 from fakes.fake_thermostat_runtime import FakeThermostatRuntime
 from helpers import force_smartpi_stable_mode
@@ -107,16 +108,19 @@ def _calculate_twice(smartpi: SmartPI, monkeypatch) -> None:
         now[0] += 600.0
 
 
-def test_pause_drops_the_observations_in_flight() -> None:
+def test_pause_drops_the_observations_in_flight(monkeypatch) -> None:
+    """Learning's episode restarts at the pause; the regulation's episode does not."""
     smartpi = _smartpi()
     smartpi.learn_win._active = True
     smartpi._t_heat_episode_start = 100.0
+    monkeypatch.setattr(algo_module.time, "monotonic", lambda: 500.0)
 
     smartpi.set_boiler_learning_paused(True)
 
     assert smartpi.boiler_learning_paused is True
     assert smartpi.learn_win_active is False
-    assert smartpi._t_heat_episode_start is None
+    assert smartpi._t_heat_episode_start == 100.0
+    assert smartpi.heat_learning_episode_start == 500.0
     assert smartpi.dt_est.last_power == pytest.approx(0.6)
 
 
@@ -271,25 +275,31 @@ def test_the_user_setting_is_untouched() -> None:
 
 
 def test_after_the_pause_learning_waits_for_the_room_dead_time(monkeypatch) -> None:
-    """As after any start of heating, SmartPI does not learn during the room's dead time."""
+    """As after any start of heating, SmartPI does not learn during the room's dead time after the
+    resume; the regulation's dead-time window still counts from the heating's own start."""
     smartpi = _smartpi()
     smartpi.dt_est.deadtime_heat_s = 1200.0
     smartpi.dt_est.deadtime_heat_reliable = True
     smartpi._t_heat_episode_start = 100.0
+    now = [200.0]
+    monkeypatch.setattr(algo_module.time, "monotonic", lambda: now[0])
     smartpi.set_boiler_learning_paused(True)
     smartpi._update_deadtime_episode_status(0.6, VThermHvacMode_HEAT, 200.0)
 
+    now[0] = 5000.0
     smartpi.set_boiler_learning_paused(False)
     smartpi._update_deadtime_episode_status(0.6, VThermHvacMode_HEAT, 5000.0)
 
-    assert smartpi._t_heat_episode_start == 5000.0
-    monkeypatch.setattr(algo_module.time, "monotonic", lambda: 5600.0)
-    assert smartpi.in_deadtime_window is True
+    assert smartpi._t_heat_episode_start == 100.0
+    assert smartpi.heat_learning_episode_start == 5000.0
+    now[0] = 5600.0
+    assert smartpi.in_deadtime_window is False  # the regulation's window ended at 1300 s
     smartpi.update_learning(dt_min=10.0, current_temp=19.0, ext_temp=5.0, u_active=0.6, hvac_mode=VThermHvacMode_HEAT)
     assert smartpi.est.learn_last_reason == "skip: deadtime window"
 
-    monkeypatch.setattr(algo_module.time, "monotonic", lambda: 6300.0)
-    assert smartpi.in_deadtime_window is False
+    now[0] = 6300.0
+    smartpi.update_learning(dt_min=10.0, current_temp=19.0, ext_temp=5.0, u_active=0.6, hvac_mode=VThermHvacMode_HEAT)
+    assert smartpi.est.learn_last_reason != "skip: deadtime window"
 
 
 def test_regulation_is_unchanged(monkeypatch) -> None:
@@ -305,6 +315,43 @@ def test_regulation_is_unchanged(monkeypatch) -> None:
     assert paused.ctl.integral == pytest.approx(normal.ctl.integral)
 
 
+def test_a_pause_and_its_resume_leave_the_regulation_as_without_them(monkeypatch) -> None:
+    """The same inputs, once with a pause and its resume and once without: the command, the
+    integral and the regulation's dead-time window are the same at every calculation. The
+    controller holds its integral in the dead-time window that follows the start of heating; the
+    pause restarts only learning's episode, not that window. The valve applies each command at
+    once. The user's learning setting is off in both, so that learning changes no model either
+    way."""
+    deadtime_s = 780.0
+    runs = []
+    for pause_at, resume_at in ((3, 10), (None, None)):
+        smartpi = _smartpi()
+        smartpi.set_learning_enabled(False)
+        smartpi.dt_est.deadtime_heat_s = deadtime_s
+        smartpi.dt_est.deadtime_heat_reliable = True
+        now = [10_000.0]
+        monkeypatch.setattr(algo_module.time, "monotonic", lambda now=now: now[0])
+        steps = []
+        for i in range(30):
+            if i == pause_at:
+                smartpi.set_boiler_learning_paused(True)
+            if i == resume_at:
+                smartpi.set_boiler_learning_paused(False)
+            smartpi.calculate(
+                target_temp=20.0, current_temp=19.6 + 0.01 * i, ext_current_temp=5.0, slope=0.0, hvac_mode=VThermHvacMode_HEAT
+            )
+            smartpi.on_applied_power_updated(smartpi.on_percent, VThermHvacMode_HEAT)  # the valve applies it
+            steps.append((smartpi.on_percent, smartpi.ctl.integral, smartpi.in_deadtime_window))
+            now[0] += RECALC_S
+        runs.append(steps)
+
+    paused, normal = runs
+    for i, (a, b) in enumerate(zip(paused, normal, strict=True)):
+        assert a[0] == pytest.approx(b[0]) and a[1] == pytest.approx(b[1]) and a[2] == b[2], (i, a, b)
+    assert {window for _, _, window in normal} == {True, False}  # the window opened and closed
+    assert len({round(integral, 6) for _, integral, _ in normal}) > 1  # the integral moved
+
+
 # --- the handler ----------------------------------------------------------------
 
 
@@ -317,11 +364,18 @@ def _handler(counted: bool = True) -> SmartPIHandler:
     return handler
 
 
-async def _control(handler: SmartPIHandler, reached: bool | None, power: float, **kwargs) -> SmartPI:
-    """One calculation; returns the algorithm, with the diagnostics' publications in ``handler.published``."""
+RECALC_S = float(SMARTPI_RECALC_INTERVAL_SEC)
+
+
+async def _control(handler: SmartPIHandler, reached: bool | None, power: float, at: float | None = None, **kwargs) -> SmartPI:
+    """One calculation at ``at`` (the handler's monotonic time; by default one calculation period
+    after the previous one); returns the algorithm, with the diagnostics' publications in
+    ``handler.published``."""
     algo = handler._thermostat.prop_algorithm
     algo._committed_on_percent = power
+    handler.clock = at if at is not None else getattr(handler, "clock", 1000.0 - RECALC_S) + RECALC_S
     with (
+        patch("custom_components.vtherm_smartpi.handler.time.monotonic", return_value=handler.clock),
         patch("custom_components.vtherm_smartpi.handler.central_boiler_threshold_reached", return_value=reached),
         patch("custom_components.vtherm_smartpi.handler.async_dispatcher_send") as send,
         patch.object(handler, "_async_save", new_callable=AsyncMock),
@@ -332,16 +386,53 @@ async def _control(handler: SmartPIHandler, reached: bool | None, power: float, 
     return algo
 
 
-async def test_handler_pauses_learning_below_the_threshold_at_two_calculations() -> None:
-    """The first calculation below the threshold does not pause: at a boiler's start Versatile
-    Thermostat counts the new call a moment later. The second one does."""
+async def test_two_evaluations_below_milliseconds_apart_do_not_pause() -> None:
+    """At a thermostat's own start Versatile Thermostat counts the new call a moment later: two
+    evaluations below the threshold in that window do not pause."""
     handler = _handler()
 
-    algo = await _control(handler, reached=False, power=0.5)
-    assert algo.boiler_learning_paused is False
+    for at in (1000.0, 1000.002, 1000.5, 1015.0):
+        algo = await _control(handler, reached=False, power=0.5, at=at)
+        assert algo.boiler_learning_paused is False
 
-    algo = await _control(handler, reached=False, power=0.5)
+
+async def test_a_calculation_period_below_the_threshold_pauses() -> None:
+    """The pause starts at the first evaluation after one calculation period below the threshold
+    without a break (60 s, less 1 s for the timer)."""
+    handler = _handler()
+
+    await _control(handler, reached=False, power=0.5, at=1000.0)
+    algo = await _control(handler, reached=False, power=0.5, at=1000.0 + BOILER_PAUSE_CONFIRM_S - 0.1)
+    assert algo.boiler_learning_paused is False
+    algo = await _control(handler, reached=False, power=0.5, at=1000.0 + BOILER_PAUSE_CONFIRM_S)
     assert algo.boiler_learning_paused is True
+    assert BOILER_PAUSE_CONFIRM_S == RECALC_S - 1.0
+
+
+@pytest.mark.parametrize(("reached", "power"), [(True, 0.5), (False, 0.0), (None, 0.5)])
+async def test_a_break_restarts_the_time_below(reached, power) -> None:
+    """The threshold reached, no call or a threshold that cannot be read breaks the run: the time
+    below counts again from the next evaluation below."""
+    handler = _handler()
+
+    await _control(handler, reached=False, power=0.5, at=1000.0)
+    await _control(handler, reached=reached, power=power, at=1030.0)
+    algo = await _control(handler, reached=False, power=0.5, at=1060.0)
+    assert algo.boiler_learning_paused is False
+    algo = await _control(handler, reached=False, power=0.5, at=1060.0 + BOILER_PAUSE_CONFIRM_S - 0.1)
+    assert algo.boiler_learning_paused is False
+    algo = await _control(handler, reached=False, power=0.5, at=1060.0 + BOILER_PAUSE_CONFIRM_S)
+    assert algo.boiler_learning_paused is True
+
+
+async def test_an_own_start_that_completes_the_threshold_within_seconds_does_not_pause() -> None:
+    """West's own start: the setpoint's calculation, a new room temperature and the periodic
+    calculation while its valve has not reported (15 s), then Versatile Thermostat counts it."""
+    handler = _handler()
+
+    for at, reached in ((1000.0, False), (1000.5, False), (1010.0, False), (1015.2, True), (1060.0, True), (1120.0, True)):
+        algo = await _control(handler, reached=reached, power=1.0, at=at)
+        assert algo.boiler_learning_paused is False
 
 
 async def test_no_pause_when_the_boiler_starts() -> None:
@@ -403,8 +494,9 @@ async def test_a_change_of_the_pause_is_published_at_once() -> None:
 
 
 def test_the_diagnostics_publish_when_the_heating_episode_started() -> None:
-    """``analysis.deadtime.heat_episode_start``: the heating episode's start in UTC; the pause ends
-    the episode, and the first heating after the resume starts a new one, later than the resume."""
+    """``analysis.deadtime.heat_episode_start``: learning's heating episode's start in UTC; a change
+    of the pause restarts it, so after the resume it is not earlier than the resume; the
+    regulation's episode keeps its start."""
     import time as clock
     from datetime import datetime, timedelta
 
@@ -419,18 +511,20 @@ def test_the_diagnostics_publish_when_the_heating_episode_started() -> None:
     assert before is not None and before.utcoffset().total_seconds() == 0
     assert abs((datetime.now(before.tzinfo) - before).total_seconds() - 600.0) < 5.0
 
+    regulation = smartpi._t_heat_episode_start
+    paused_at = datetime.now(before.tzinfo)
     smartpi.set_boiler_learning_paused(True)
-    assert started() is None
     smartpi._update_deadtime_episode_status(0.6, VThermHvacMode_HEAT, clock.monotonic())
     during = started()
-    smartpi.set_boiler_learning_paused(False)
-    assert started() is None
     resumed = datetime.now(before.tzinfo)
+    smartpi.set_boiler_learning_paused(False)
     smartpi._update_deadtime_episode_status(0.6, VThermHvacMode_HEAT, clock.monotonic())
 
     # The wall and monotonic clocks are read a few microseconds apart.
+    assert during >= paused_at - timedelta(milliseconds=50)
     assert started() >= resumed - timedelta(milliseconds=50)
-    assert resumed > during
+    assert started() >= during
+    assert smartpi._t_heat_episode_start == regulation
     assert build_published_diagnostics(smartpi)["analysis"]["deadtime"]["cool_episode_start"] is None
 
 
@@ -474,10 +568,11 @@ async def test_each_evaluation_has_a_debug_line_and_the_same_result(caplog) -> N
     lines = _evaluations(caplog)
     assert len(lines) == len(SEQUENCE)
     first, second = lines[0], lines[1]
-    assert set(first) >= {"at", "mono", "source", "phase", "committed", "counted", "count", "count_threshold", "power_w", "power_threshold_w", "reached", "below", "before", "paused", "decision"}
-    assert (first["source"], first["committed"], first["count"], first["count_threshold"]) == ("other", "0.500", "1.0", "2.0")
-    assert (first["reached"], first["below"], first["before"], first["paused"], first["decision"]) == ("False", "True", "False", "False->False", "stay_running")
-    assert (second["before"], second["paused"], second["decision"]) == ("True", "False->True", "pause")
+    assert set(first) >= {"at", "mono", "source", "phase", "committed", "counted", "count", "count_threshold", "power_w", "power_threshold_w", "reached", "below", "below_for", "paused", "decision"}
+    assert (first["mono"], first["source"], first["committed"], first["count"], first["count_threshold"]) == ("1000.000", "other", "0.500", "1.0", "2.0")
+    assert (first["reached"], first["below"], first["below_for"], first["paused"], first["decision"]) == ("False", "True", "0.0", "False->False", "stay_running")
+    assert (second["below_for"], second["paused"], second["decision"]) == ("60.0", "False->True", "pause")
+    assert lines[2]["below_for"] == "None"
     assert (lines[2]["reached"], lines[2]["decision"]) == ("True", "resume")
     assert (lines[4]["reached"], lines[4]["below"]) == ("None", "False")  # not calling: the threshold is not read
 

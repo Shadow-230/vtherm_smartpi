@@ -46,7 +46,7 @@ from .const import (
 from .hvac_mode import VThermHvacMode_OFF, VThermHvacMode_HEAT, VThermHvacMode_COOL
 from .commons import write_event_log
 from .valve_config_check import apply_valve_config_check, clear_valve_config_issues
-from .boiler_call import central_boiler_threshold_readings, central_boiler_threshold_reached
+from .boiler_call import BOILER_PAUSE_CONFIRM_S, central_boiler_threshold_readings, central_boiler_threshold_reached
 from .smartpi.valve_curve import ValveCurveParams
 
 if TYPE_CHECKING:
@@ -73,8 +73,9 @@ class SmartPIHandler:
         self._last_publish_signature = None
         self._pending_publish_signature = None
         self._allow_pwm_cycle_force: bool = False
-        # Whether the central boiler threshold was not reached at the previous calculation.
-        self._below_boiler_threshold_before: bool = False
+        # When SmartPI started calling below the central boiler threshold without a break
+        # (monotonic time), None when it does not.
+        self._below_boiler_threshold_since: float | None = None
         # The threshold as last read for the pause (None when not read), and whether the
         # calculation running now is SmartPI's own periodic one: for the debug line only.
         self._boiler_threshold_reading: bool | None = None
@@ -556,32 +557,40 @@ class SmartPIHandler:
     def _update_boiler_learning_pause(self, algo: SmartPI, source: str = "other") -> None:
         """Pause SmartPI's learning below the central boiler threshold, or resume it.
 
-        The pause starts when the threshold is not reached at two consecutive
-        calculations: when a thermostat starts calling, Versatile Thermostat
-        counts its device a moment after SmartPI reads the threshold. Learning
-        resumes at once. A change is published at once. At debug level each
-        evaluation is logged (``_log_boiler_pause_evaluation``).
+        The pause starts at the first evaluation at which SmartPI has called below
+        the threshold without a break for ``BOILER_PAUSE_CONFIRM_S``: when a
+        thermostat's own start completes the threshold, Versatile Thermostat
+        counts its device only once the device reports it, and evaluations in
+        that window must not pause. Reaching the threshold, not calling or a
+        threshold that cannot be read breaks the run. Learning resumes at once.
+        A change is published at once. At debug level each evaluation is logged
+        (``_log_boiler_pause_evaluation``).
         """
         self._boiler_threshold_reading = None
-        before = self._below_boiler_threshold_before
+        now = time.monotonic()
         was_paused = algo.boiler_learning_paused
         below = self._below_boiler_threshold(algo)
-        paused = below and (before or was_paused)
-        self._below_boiler_threshold_before = below
+        if not below:
+            self._below_boiler_threshold_since = None
+        elif self._below_boiler_threshold_since is None:
+            self._below_boiler_threshold_since = now
+        below_for = now - self._below_boiler_threshold_since if below else None
+        paused = below and (was_paused or below_for >= BOILER_PAUSE_CONFIRM_S)
         if paused != was_paused:
             algo.set_boiler_learning_paused(paused)
             self._should_publish_intermediate = True
         if _LOGGER.isEnabledFor(logging.DEBUG):
-            self._log_boiler_pause_evaluation(algo, source, below, before, was_paused, paused)
+            self._log_boiler_pause_evaluation(algo, source, now, below, below_for, was_paused, paused)
 
     def _log_boiler_pause_evaluation(
-        self, algo: SmartPI, source: str, below: bool, before: bool, was_paused: bool, paused: bool
+        self, algo: SmartPI, source: str, now: float, below: bool, below_for: float | None, was_paused: bool, paused: bool
     ) -> None:
         """One debug line per evaluation of the pause, as ``key=value`` pairs: the wall
         time (UTC) and the monotonic time, what started the calculation, SmartPI's
         phase, the committed command, Versatile Thermostat's count and power with
-        their thresholds, the threshold as read for the pause, the previous
-        evaluation, the pause before and after, and the decision."""
+        their thresholds, the threshold as read for the pause, how long SmartPI has
+        called below it without a break (``below_for``, s), the pause before and
+        after, and the decision."""
         t = self._thermostat
         readings = central_boiler_threshold_readings(t.hass) or {}
         if paused == was_paused:
@@ -592,10 +601,10 @@ class SmartPIHandler:
         _LOGGER.debug(
             "%s - SmartPI boiler pause evaluation: at=%s mono=%.3f source=%s phase=%s committed=%.3f "
             "counted=%s count=%s count_threshold=%s power_w=%s power_threshold_w=%s reached=%s "
-            "below=%s before=%s paused=%s->%s decision=%s",
+            "below=%s below_for=%s paused=%s->%s decision=%s",
             t,
             dt_util.utcnow().isoformat(timespec="milliseconds"),
-            time.monotonic(),
+            now,
             source,
             phase,
             algo.committed_on_percent,
@@ -606,7 +615,7 @@ class SmartPIHandler:
             readings.get("power_threshold_w"),
             self._boiler_threshold_reading,
             below,
-            before,
+            None if below_for is None else round(below_for, 3),
             was_paused,
             paused,
             decision,
