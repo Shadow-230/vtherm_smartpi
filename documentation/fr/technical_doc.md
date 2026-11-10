@@ -342,20 +342,45 @@ Le handler vérifie cela avant chaque calcul et à chaque changement d'état de 
 chaudière, qu'il suit (`SmartPIHandler._update_boiler_learning_pause()` règle
 `SmartPI.set_boiler_learning_paused()`). L'apprentissage reprend au moment où
 la chaudière démarre, ou au premier calcul où SmartPI cesse de demander. Un
-changement de la pause abandonne les observations en cours, comme la pause de
-l'utilisateur (`set_smartpi_learning`), sans modifier ce réglage : le prochain
-épisode de l'apprentissage commence au plus tôt au changement, donc SmartPI
-n'apprend pas pendant le temps mort de la pièce après le démarrage de la
-chaudière (3.2). Lorsque la pause se termine parce que la chaudière démarre
-pendant que SmartPI demande, la chaleur de la pièce commence alors : la
-détection du temps mort est alimentée comme lors d'un démarrage depuis 0 à ce
-moment, sur la dernière température filtrée de SmartPI, et les règles propres de
-l'estimateur (3.6) décident si elle s'arme. Le temps mort de la pièce est alors
-compté depuis le démarrage de la chaudière, et non depuis la demande qui l'a
-attendue. Un changement efface aussi l'historique de température de la
-détection du temps mort ; il n'a lieu que pendant que SmartPI demande ou au
-moment où il s'arrête, de sorte que la tendance avant le démarrage suivant (3.6)
-vient toujours de toute la période sans chauffe qui suit.
+changement de la pause abandonne la fenêtre `a`/`b` et l'observation du retard
+de réponse en cours, comme la pause de l'utilisateur (`set_smartpi_learning`),
+sans modifier ce réglage : le prochain épisode de l'apprentissage commence au
+plus tôt au changement, donc SmartPI n'apprend pas pendant le temps mort de la
+pièce après le démarrage de la chaudière (3.2).
+
+La pause ne fait que suspendre l'apprentissage ; elle n'efface pas ce que sait
+la détection du temps mort (3.6). Au début de la pause, elle abandonne
+seulement une détection armée lors de la demande de la pièce (résultat
+`aborted`, comme lorsqu'un nouveau changement de puissance remplace une
+attente). L'estimateur garde l'instant du dernier arrêt de la chauffe et son
+historique de température, et il continue d'enregistrer la température pendant
+la pause : la pièce ne reçoit alors pas de chaleur, c'est donc du temps sans
+chauffe. Rien ne s'arme pendant la pause, puisque la puissance ne part pas de 0,
+et une calibration (4.6) n'alimente toujours pas la détection tant que la
+chaudière est arrêtée.
+
+Lorsque la pause se termine parce que la chaudière démarre pendant que SmartPI
+demande, la chaleur de la pièce commence alors. La détection est alimentée
+comme lors d'un démarrage depuis 0 à ce moment, sur la dernière température
+filtrée de SmartPI, et l'estimateur en juge selon ses propres règles (3.6),
+comme pour tout démarrage :
+
+- elle ne s'arme que si la chauffe est restée arrêtée au moins la durée minimale
+  (`min_off_time_seconds`, 600 s) depuis son dernier arrêt, et l'attente de la
+  chaudière compte dans cette durée. Une pièce qui redemande peu après sa
+  dernière chauffe, puis attend la chaudière, ne mesure rien ;
+- la tendance avant le démarrage vient de l'historique conservé pendant la
+  pause.
+
+Le temps mort de la pièce est alors compté depuis le démarrage de la chaudière,
+et non depuis la demande qui l'a attendue.
+
+Lorsque SmartPI cesse de demander pendant la pause, ou que la pause se termine
+parce qu'il a cessé, la chaleur de la pièce s'était déjà arrêtée plus tôt, avec
+la chaudière. L'estimateur enregistre l'arrêt, de sorte que la durée minimale
+sans chauffe compte à partir de là, mais il ne mesure pas la réponse passive de
+la pièce à cet arrêt (3.6) : la pièce refroidissait déjà, et ce temps mort
+serait trop court.
 
 La pause ne change rien d'autre que l'apprentissage. Contrairement à la pause
 de l'utilisateur, elle ne redémarre pas l'épisode de chauffe de la régulation :
@@ -402,9 +427,6 @@ Limites :
   d'une pièce (un délai d'activation de moins d'une minute), la pièce ne se met
   pas en pause, et le temps mort de ce démarrage inclut l'attente de la
   chaudière.
-- Une détection armée au démarrage de la chaudière ne retire aucune tendance
-  d'avant le démarrage (3.6) : l'historique de température n'est pas conservé
-  pendant la pause.
 - Après un redémarrage de Home Assistant, Versatile Thermostat montre la
   chaudière arrêtée jusqu'à ce qu'il ait de nouveau compté les thermostats et,
   avec un délai d'activation, jusqu'à la fin de ce délai : l'apprentissage peut

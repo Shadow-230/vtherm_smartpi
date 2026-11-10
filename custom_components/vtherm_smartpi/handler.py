@@ -565,7 +565,7 @@ class SmartPIHandler:
         )
         if paused == algo.boiler_learning_paused:
             return False
-        algo.set_boiler_learning_paused(paused, boiler_started=calls and boiler_on is True)
+        algo.set_boiler_learning_paused(paused, boiler_started=calls and boiler_on is True, current_temp=self._thermostat.current_temperature)
         self._should_publish_intermediate = True
         return True
 
