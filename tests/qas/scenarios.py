@@ -30,6 +30,7 @@ from steps import (
     BASE_SETPOINT,
     BOILER_STOPS,
     CALLING,
+    CLOCK_MARGIN_S,
     CONTEXT,
     COUNTED,
     DETACHED_AFTER_S,
@@ -39,6 +40,7 @@ from steps import (
     MARGIN_S,
     NAMES,
     NO_PAUSE,
+    PAUSE_AFTER_RESTART,
     PAUSE_EXTERNAL,
     PAUSE_ON_SETPOINT,
     POLL_S,
@@ -345,7 +347,7 @@ PAUSED_READINGS = Wait(10 * RECALC_S, 10 * RECALC_S)  # BP7: five readings, two 
     boiler_at_end=True,
 )
 async def BP7(b: Bench) -> None:
-    """West learned, its setpoint 1 degC above its room → a forced calibration heats with the boiler off → learning pauses: the dead-time detection stays idle and the learned heating dead time unchanged; once East calls and the boiler is on, learning resumes."""
+    """West learned, its setpoint 1 degC above its room → a forced calibration heats with the boiler off → learning pauses: the calibration arms no dead-time detection and the learned heating dead time stays unchanged; once East calls and the boiler is on, learning resumes."""
     snap = await b.snapshot()
     b.check(of(snap, WEST, "phase") == "Stable", f"West learned: phase {of(snap, WEST, 'phase')}, a {of(snap, WEST, 'a')}")
     learned = of(snap, WEST, "deadtime")
@@ -361,8 +363,8 @@ async def BP7(b: Bench) -> None:
         for _ in range(5):
             snap = await b.snapshot()
             b.check(
-                of(snap, WEST, "dt_state") == "OFF" and of(snap, WEST, "deadtime") == learned,
-                f"paused: dead-time detection {of(snap, WEST, 'dt_state')}, heating dead time {of(snap, WEST, 'deadtime')} s (learned {learned} s)",
+                of(snap, WEST, "dt_state") != WAITING_HEAT and of(snap, WEST, "deadtime") == learned,
+                f"paused: dead-time detection {of(snap, WEST, 'dt_state')} (not waiting for a response), heating dead time {of(snap, WEST, 'deadtime')} s (learned {learned} s)",
             )
             await asyncio.sleep(2 * RECALC_S)
         await b.east_calls()
@@ -391,13 +393,13 @@ def kept(snap: dict[str, Any], climate: str) -> dict[str, Any]:
 @scenario(
     "BP9",
     THREE,
-    lambda role: total(west_alone(role), RESTART, AFTER_RESTART, PAUSE_EXTERNAL),
+    lambda role: total(west_alone(role), RESTART, PAUSE_AFTER_RESTART),
     PAUSE_TESTS,
     start="learned",
     paused_at_end=True,
 )
 async def BP9(b: Bench) -> None:
-    """West learned, calling alone and paused → Home Assistant restarts → once SmartPI runs again, the pause returns within two calculations; nothing is learned in between (accepted updates unchanged, dead-time detection idle); a, b and the dead time are kept."""
+    """West learned, calling alone and paused → Home Assistant restarts → once SmartPI runs again, the pause returns within two calculations; nothing is learned in between (accepted updates unchanged, no dead-time detection armed); a, b and the dead time are kept."""
     await b.west_calls()
     before = kept(await b.snapshot(), WEST)
     await b.restart()
@@ -409,11 +411,12 @@ async def BP9(b: Bench) -> None:
 
     took, snap = await b.until(watch, PAUSE_EXTERNAL.maximum_s)
     b.check(took is not None, f"the pause returns after {seconds(took)} s")
+    armed = [clock(s) for s in seen if of(s, WEST, "dt_state") == WAITING_HEAT]
+    b.check(not armed, f"no dead-time detection armed after the restart ({', '.join(armed[:3]) or 'none seen'})")
     for name in ("accepted_a", "accepted_b"):
         values = {of(s, WEST, name) for s in seen if of(s, WEST, name) is not None}
         b.check(values == {before[name]}, f"{name}: {before[name]} before, {sorted(values, key=str)} since")
     b.check(kept(snap, WEST) == before, f"a, b and the dead time kept: {kept(snap, WEST)} (before {before})")
-    b.check(of(snap, WEST, "dt_state") == "OFF", f"dead-time detection: {of(snap, WEST, 'dt_state')}")
     await b.after("after the restart")
 
 
@@ -683,33 +686,78 @@ async def BP25(b: Bench) -> None:
     b.check(not lines, f"SmartPI's log: {len(lines)} lines {PAUSED_LINE!r}" + (f", the first: {lines[0][:160]}" if lines else ""))
 
 
-# --- BP26: a room's own start that waits for the boiler's activation delay -------------------
+# --- BP26, BP27: a room's own start that waits for the boiler's activation delay -------------
 #
 # West's own start completes the threshold; VTherm starts the boiler 120 s later. West pauses
-# while the boiler waits, resumes at its start, and SmartPI's heating dead-time detection counts
-# from the boiler's start, not from West's call: the 120 s of waiting are not the room's.
+# while the boiler waits and resumes at its start. The pause only pauses learning: SmartPI's
+# dead-time estimator then judges the boiler's start as a start of the heating at that moment,
+# by its own rules (documentation/en/technical_doc.md, 3.6 and 3.8). BP26: from a settled room,
+# the detection counts from the boiler's start, not from West's call (the 120 s of waiting are not
+# the room's). BP27: West called again shortly after its last heating, so the estimator measures
+# nothing, as it would not for a start that did not wait.
 
 DEADTIME_TRUE_S = (room("West").delay_min + room("West").lag_min) * 60.0  # the radiator's delay and lag
 DETECTION = Wait(DEADTIME_TRUE_S + RECALC_S, 3600.0)  # the room's response, then the detection's calculation
-CLOCK_MARGIN_S = 10.0  # the bench's reading against SmartPI's calculation and Home Assistant's clock
+DT_WAIT = Wait(3 * RECALC_S, 5 * RECALC_S + POLL_S)  # the detection's waiting time published: 81-180 s on the bench
+MIN_OFF_S = 600.0  # deadtime_estimator.py, min_off_time_seconds: the time without heat before a start is measured
+SENSOR_STEP_C = 0.1  # the test rooms' sensors
+HEAT_S = 5 * 60.0  # BP27: West heats with the boiler on
+REST_S = 5 * 60.0  # BP27: West calls again this long after it stopped
+NO_DETECTION_WATCH_S = 15 * 60.0  # BP27: West's diagnostics watched from the boiler's start
+
+
+WEST_SETTLES = Wait(MIN_OFF_S, 3600.0)  # BP26: 600 s from West's valve closing, then its room's fall
+
+
+def a_settled_west(peak: dict[str, float]) -> Callable[[dict[str, Any]], bool]:
+    """Holds once West's valve has been closed for 600 s, as SmartPI's estimator asks before it
+    measures a start (the fresh reset clears its own record of the stop), and its room is a sensor
+    step below the highest reading seen meanwhile (``peak``): a room still warming from its last
+    heating would rise early and shorten the dead time measured."""
+
+    def holds(s: dict[str, Any]) -> bool:
+        indoor = of(s, WEST, "indoor")
+        if not isinstance(indoor, (int, float)):
+            return False
+        peak["c"] = max(peak.get("c", indoor), indoor)
+        closed = published_at(of(s, WEST, "valve_since"))
+        return (
+            of(s, WEST, "valve") == 0.0
+            and closed is not None
+            and s["t"] - closed >= MIN_OFF_S
+            and round(peak["c"] - indoor, 2) >= SENSOR_STEP_C
+        )
+
+    return holds
 
 
 @scenario(
     "BP26",
     ("boiler-delay",),
-    lambda role: total(PAUSE_ON_SETPOINT, longest(resume_when_the_boiler_starts(role), boiler_starts(role)), Wait(2 * RECALC_S, 2 * RECALC_S + POLL_S), DETECTION),
+    lambda role: total(
+        WEST_SETTLES,
+        PAUSE_ON_SETPOINT,
+        longest(resume_when_the_boiler_starts(role), boiler_starts(role)),
+        Wait(DETECTION.typical_s, DT_WAIT.maximum_s + DETECTION.maximum_s),
+    ),
     PAUSE_TESTS,
+    depends="typical when West's room is already 0.1 degC below its highest reading 600 s after its valve closed; after a run that heated West, its room may still rise and then has to cool",
     boiler_at_end=True,
 )
 async def BP26(b: Bench) -> None:
-    """Fresh, an activation delay of 120 s, East calling alone below the threshold, the boiler off → West starts and completes the threshold; the boiler starts 120 s later → West pauses while the boiler waits and resumes within seconds of its start; SmartPI's heating dead-time detection counts from the boiler's start, not from West's call, and ends detected; the dead time it measured is recorded against the room's true 780 s and against 900 s (the true value plus the wait)."""
+    """Fresh, an activation delay of 120 s, West without heat for at least 600 s and its room 0.1 degC below its highest reading since, East calling alone below the threshold, the boiler off → West starts and completes the threshold; the boiler starts 120 s later → West pauses while the boiler waits and resumes at its start; SmartPI's heating dead-time detection counts from the boiler's start, not from West's call, and ends detected; the dead time it measured is recorded against the room's true 780 s and against 900 s (the true value plus the wait)."""
+    peak: dict[str, float] = {}
+    took, snap = await b.until(a_settled_west(peak), WEST_SETTLES.maximum_s, 10.0)
+    b.check(
+        took is not None,
+        f"West settled after {seconds(took)} s: its valve closed since {of(snap, WEST, 'valve_since')}, "
+        f"its room {of(snap, WEST, 'indoor')} degC, the highest {peak.get('c')} degC",
+    )
     await b.change("East calls alone", lambda: b.calls_at(EAST, CALLING), own=EAST)
-    took = await b.west_calls()
-    on, back = took.get("VTherm's boiler on"), took.get("West resumed once the boiler is on")
-    b.check(on is not None and back is not None and back - on <= POLL_S + CLOCK_MARGIN_S, f"West resumed {seconds(back and on and back - on)} s after the boiler started (within a reading)")
+    await b.west_calls()
     snap = await b.snapshot()
     started = published_at(snap.get("boiler_since"))
-    took, snap = await b.until(lambda s: of(s, WEST, "dt_state") == WAITING_HEAT and (of(s, WEST, "dt_wait") or 0) > 0, 2 * RECALC_S + POLL_S)
+    took, snap = await b.until(lambda s: of(s, WEST, "dt_state") == WAITING_HEAT and (of(s, WEST, "dt_wait") or 0) > 0, DT_WAIT.maximum_s)
     waited, since_start = of(snap, WEST, "dt_wait"), snap["t"] - (started or snap["t"])
     b.check(
         took is not None and waited is not None and waited <= since_start + CLOCK_MARGIN_S,
@@ -721,3 +769,45 @@ async def BP26(b: Bench) -> None:
     b.check(outcome == "detected", f"West's heating dead-time detection: {outcome} after {seconds(took)} s")
     if isinstance(dead, (int, float)):
         b.note(f"heating dead time {dead:.0f} s: {dead - DEADTIME_TRUE_S:+.0f} s from the room's true {DEADTIME_TRUE_S:.0f} s, {dead - DEADTIME_TRUE_S - b.role.boiler_delay_s:+.0f} s from {DEADTIME_TRUE_S + b.role.boiler_delay_s:.0f} s")
+
+
+@scenario(
+    "BP27",
+    ("boiler-delay",),
+    lambda role: total(
+        PAUSE_ON_SETPOINT,
+        longest(resume_when_the_boiler_starts(role), boiler_starts(role)),
+        Wait(HEAT_S, HEAT_S),
+        Wait(REST_S, max(REST_S, longest(BOILER_STOPS, PAUSE_EXTERNAL).maximum_s)),
+        longest(resume_when_the_boiler_starts(role), boiler_starts(role)),
+        Wait(NO_DETECTION_WATCH_S, NO_DETECTION_WATCH_S),
+    ),
+    PAUSE_TESTS,
+    boiler_at_end=True,
+)
+async def BP27(b: Bench) -> None:
+    """Fresh, an activation delay of 120 s, East calling alone below the threshold, the boiler off → West calls and heats for 5 minutes with the boiler on, stops, and calls again about 300 s later, completing the threshold; the boiler starts 120 s later → West pauses while the boiler waits and resumes at its start; West was without heat for less than 600 s before the boiler's start (the wait counts), so SmartPI's dead-time estimator measures nothing: for 15 minutes from the boiler's start West's detection never waits for a response, its outcome never turns detected and its heating dead time stays unchanged."""
+    await b.change("East calls alone", lambda: b.calls_at(EAST, CALLING), own=EAST)
+    await b.west_calls()
+    b.note(f"— West heats for {HEAT_S:.0f} s with the boiler on")
+    await asyncio.sleep(HEAT_S)
+    stopped = time.time()
+    await b.west_stops()
+    await asyncio.sleep(max(0.0, REST_S - (time.time() - stopped)))
+    before = await b.snapshot()
+    outcome, dead = of(before, WEST, "heat_outcome"), of(before, WEST, "deadtime")
+    b.note(f"before West calls again: dead-time detection {of(before, WEST, 'dt_state')}, outcome {outcome}, heating dead time {dead} s")
+    took = await b.west_calls()
+    on = took.get("VTherm's boiler on")
+    without_heat = None if on is None else b.started + on - stopped
+    b.check(
+        without_heat is not None and without_heat <= MIN_OFF_S - RECALC_S,
+        f"West without heat for {seconds(without_heat)} s before the boiler's start, the wait included: less than SmartPI's 600 s",
+    )
+    seen = await b.watch(NO_DETECTION_WATCH_S, 10.0)
+    armed = [clock(s) for s in seen if of(s, WEST, "dt_state") == WAITING_HEAT or (of(s, WEST, "dt_wait") or 0) > 0]
+    b.check(not armed, f"for {NO_DETECTION_WATCH_S / 60:.0f} minutes from the boiler's start West's detection never waits for a response ({', '.join(armed[:3]) or 'never'})")
+    detected = [clock(s) for s in seen if of(s, WEST, "heat_outcome") == "detected" and outcome != "detected"]
+    b.check(not detected, f"West's detection outcome never turns detected: {outcome} before, {sorted({str(of(s, WEST, 'heat_outcome')) for s in seen})} since")
+    changed = sorted({of(s, WEST, "deadtime") for s in seen} - {dead}, key=str)
+    b.check(not changed, f"West's heating dead time unchanged: {dead} s before, {changed or 'the same'} since")

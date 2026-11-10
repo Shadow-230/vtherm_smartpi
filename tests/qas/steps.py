@@ -42,6 +42,7 @@ import asyncio
 import importlib.util
 import json
 import pathlib
+import re
 import time
 from collections.abc import Awaitable, Callable, Iterable, Sequence
 from dataclasses import dataclass
@@ -98,9 +99,10 @@ def times(wait: Wait, n: int) -> Wait:
 # SmartPI pauses once it has called with the boiler off without a break for a calculation period, less
 # 1 s for the timer (boiler_call.BOILER_PAUSE_CONFIRM_S), at its first calculation after that.
 PAUSE_CONFIRM_S = RECALC_S - 1.0
-# The thermostat's own change: below from its setpoint's own calculation, paused at the first periodic
-# calculation a period later: 60-120 s, 90 s on average, as the setpoint falls at any moment of the 60 s.
-PAUSE_ON_SETPOINT = Wait(1.5 * RECALC_S, WITHIN_S)
+# The thermostat's own change: below from its setpoint's own calculation, paused at the first check a
+# period later, 60 s typically on the bench; at most two periods, when a check falls just short of the
+# period (East in BP6 on boiler-delay: 116 s), well within the limit.
+PAUSE_ON_SETPOINT = Wait(RECALC_S, WITHIN_S)
 RESUME_ON_SETPOINT = Wait(0.0, WITHIN_S)  # at once
 # A learned thermostat (past SmartPI's first phase) that stops calling commits its 0 % only after the
 # calculation of its setpoint: its resume comes at SmartPI's next calculation (48-56 s on the bench).
@@ -122,6 +124,9 @@ SETTLED_S = 30.0  # the boiler off at least this long, beyond the role's delay, 
 START_STATE = Wait(0.0, BOILER_DELAY_S + SETTLED_S + 2 * WITHIN_S)
 RESTART = Wait(20.0, 600.0)  # Home Assistant restarts: about 20 s on the bench
 AFTER_RESTART = Wait(30.0, 300.0)  # SmartPI's diagnostics back after a restart
+# A thermostat calling with the boiler off pauses again a calculation period after SmartPI runs again;
+# its diagnostics are back at once (0 s on the bench), so both are one wait.
+PAUSE_AFTER_RESTART = Wait(RECALC_S, AFTER_RESTART.maximum_s + PAUSE_EXTERNAL.maximum_s)
 
 
 def boiler_starts(role: Role) -> Wait:
@@ -242,6 +247,7 @@ def snapshot_of(states: dict[str, dict[str, Any]], ids: Ids, now: float) -> dict
         device = states.get(r.device) or {}
         if r.heater == "radiator":
             snap[f"{key}.valve"] = _number(device)  # the valve's own opening, in %
+            snap[f"{key}.valve_since"] = device.get("last_changed")
         else:
             snap[f"{key}.heater"] = device.get("state")
     return snap
@@ -306,6 +312,10 @@ def published_at(value: Any) -> float | None:
 # --- SmartPI's log -----------------------------------------------------------------------------
 
 LOG_MARGIN_S = 60.0  # the bench's clock against Home Assistant's, when reading the log
+CLOCK_MARGIN_S = 10.0  # the bench's reading against SmartPI's calculation and Home Assistant's clock
+BOILER_PAUSE_LINE = "(central boiler off)"  # algo.py, set_boiler_learning_paused: "<name> - SmartPI learning paused (...)"
+AT_ONCE_S = 1.0  # a resume logged at the boiler's start: within 0.001 s on the bench
+_LOGGED = re.compile(r"(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d+) .*?\] (.+?) - SmartPI learning (paused|resumed) \(central boiler off\)")
 
 
 def instance_log(pattern: str, since: datetime) -> list[str]:
@@ -317,6 +327,31 @@ def instance_log(pattern: str, since: datetime) -> list[str]:
     stamp = datetime.fromtimestamp(start, UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
     out = ssh(f"docker logs --since {stamp} {CONTAINER} 2>&1 | grep -a -F '{pattern}'", timeout=120)
     return out.splitlines()
+
+
+def logged_pauses(lines: Iterable[str], name: str) -> list[tuple[float, bool]]:
+    """A thermostat's pauses (True) and resumes (False) in SmartPI's info lines, with their times;
+    Home Assistant logs in UTC on the instances."""
+    out: list[tuple[float, bool]] = []
+    for line in lines:
+        found = _LOGGED.search(line)
+        if found and found.group(2) == name:
+            at = datetime.strptime(found.group(1), "%Y-%m-%d %H:%M:%S.%f").replace(tzinfo=UTC).timestamp()
+            out.append((at, found.group(3) == "paused"))
+    return sorted(out)
+
+
+def waited_for_the_boiler(events: Sequence[tuple[float, bool]], since: float, on_at: float | None) -> tuple[float | None, float | None]:
+    """A thermostat's pause while VTherm's boiler waited, and its resume, from its logged pauses
+    (``logged_pauses``): its last pause from ``since`` up to the boiler's start ``on_at``, and its
+    first resume after that pause (or after ``since``). A pause of a few seconds, shorter than a
+    reading, is seen too."""
+    if on_at is None:
+        return None, None
+    paused = [t for t, p in events if p and since <= t <= on_at]
+    after = paused[-1] if paused else since
+    resumed = [t for t, p in events if not p and t >= after]
+    return (paused[-1] if paused else None), (resumed[0] if resumed else None)
 
 
 # --- what a trace shows -----------------------------------------------------------------------
@@ -440,18 +475,6 @@ class Bench:
     def paused_is(self, climate: str, value: bool) -> Callable[[dict[str, Any]], bool]:
         return lambda s: of(s, climate, "paused") is value
 
-    def resumed_after_a_pause(self, climate: str) -> Callable[[dict[str, Any]], bool]:
-        """Holds once the thermostat, paused at some reading, is no longer paused."""
-        seen = {"paused": False}
-
-        def holds(s: dict[str, Any]) -> bool:
-            if of(s, climate, "paused") is True:
-                seen["paused"] = True
-                return False
-            return seen["paused"] and of(s, climate, "paused") is False
-
-        return holds
-
     # --- the checks after every step
 
     async def after(self, step: str) -> dict[str, Any]:
@@ -494,8 +517,8 @@ class Bench:
         mode, or from outside), and the step's own ``goals``; a thermostat that starts calling
         with the threshold reached is watched for a pause it must not take. With an activation
         delay the boiler stays off for that delay once the threshold is reached: every calling
-        thermostat is then paused (or pauses) while the boiler waits, and resumes once it is on,
-        not before. Then ``after``."""
+        thermostat is then paused (or pauses) while the boiler waits, and resumes at its start
+        (``waited``, from SmartPI's log). Then ``after``."""
         reached_before = self.reaches()
         paused_before = {c: self.due_paused(c) for c in COUNTED}
         calling_before = set(self.calling)
@@ -512,10 +535,6 @@ class Bench:
         for climate in COUNTED:
             due = self.due_paused(climate)
             if delayed_start and climate in self.calling:
-                name = NAMES[climate]
-                if not paused_before[climate]:
-                    wanted[f"{name} paused while the boiler waits"] = (self.paused_is(climate, True), Wait(PAUSE_ON_SETPOINT.typical_s, self.role.boiler_delay_s + MARGIN_S))
-                wanted[f"{name} resumed once the boiler is on"] = (self.resumed_after_a_pause(climate), resume_when_the_boiler_starts(self.role))
                 continue
             if due == paused_before[climate]:
                 continue
@@ -530,16 +549,38 @@ class Bench:
             wanted[f"{NAMES[climate]} {'paused' if due else 'resumed'}"] = (self.paused_is(climate, due), wait)
         took = await self.reach(wanted, started)
         if delayed_start:
-            on = took.get("VTherm's boiler on")
-            for climate in sorted(self.calling & set(COUNTED)):
-                back = took.get(f"{NAMES[climate]} resumed once the boiler is on")
-                self.check(
-                    on is not None and back is not None and back >= on - POLL_S,
-                    f"{NAMES[climate]} resumed after VTherm's boiler started ({seconds(back)} s, the boiler at {seconds(on)} s)",
-                )
+            took |= await self.waited(started, paused_before)
         elif own in COUNTED and own in self.calling and own not in calling_before and not self.due_paused(own):
             await self.no_pause([own], NO_PAUSE.maximum_s, f"{NAMES[own]} starts calling with the threshold reached")
         await self.after(step)
+        return took
+
+    async def waited(self, started: float, paused_before: dict[str, bool]) -> dict[str, float | None]:
+        """With an activation delay: each calling counted thermostat paused while VTherm's boiler
+        waited and resumed at its start, from SmartPI's info lines, as a pause can last seconds,
+        less than a reading (East's 3.9 s in BP6 on the bench). The seconds from ``started``, the
+        boiler's from its state's change."""
+        snap = await self.snapshot()
+        on_at = published_at(snap.get("boiler_since")) if snap.get("boiler") == "on" else None
+        lines = await asyncio.to_thread(instance_log, BOILER_PAUSE_LINE, datetime.fromtimestamp(started, UTC))
+        took: dict[str, float | None] = {"VTherm's boiler on": None if on_at is None else on_at - started}
+        for climate in sorted(self.calling & set(COUNTED)):
+            name = NAMES[climate]
+            paused_at, resumed_at = waited_for_the_boiler(logged_pauses(lines, name), started - CLOCK_MARGIN_S, on_at)
+            if not paused_before[climate]:
+                pause = None if paused_at is None else paused_at - started
+                took[f"{name} paused while the boiler waits"] = pause
+                self.check(
+                    pause is not None and pause <= self.role.boiler_delay_s + MARGIN_S,
+                    f"{name} paused while the boiler waits after {seconds(pause)} s, before its start "
+                    f"(typical {PAUSE_ON_SETPOINT.typical_s:.0f} s; SmartPI's log)",
+                )
+            back = None if resumed_at is None or on_at is None else resumed_at - on_at
+            took[f"{name} resumed once the boiler is on"] = None if resumed_at is None else resumed_at - started
+            self.check(
+                back is not None and abs(back) <= AT_ONCE_S,
+                f"{name} resumed at VTherm's boiler start ({'—' if back is None else f'{back:+.3f}'} s from it; SmartPI's log)",
+            )
         return took
 
     async def reach(self, goals: dict[str, tuple[Callable[[dict[str, Any]], bool], Wait]], since: float) -> dict[str, float | None]:

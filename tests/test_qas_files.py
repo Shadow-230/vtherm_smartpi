@@ -26,6 +26,7 @@ from scenarios import (  # noqa: E402
 )
 from steps import (  # noqa: E402
     EAST,
+    MARGIN_S,
     NORTH,
     PAUSE_CONFIRM_S,
     PAUSE_ON_SETPOINT,
@@ -39,10 +40,12 @@ from steps import (  # noqa: E402
     Ids,
     demand_agrees,
     learned_in_pauses,
+    logged_pauses,
     reached,
     snapshot_of,
     spans,
     transitions,
+    waited_for_the_boiler,
 )
 
 from custom_components.vtherm_smartpi.algo import SmartPI  # noqa: E402
@@ -271,16 +274,20 @@ def test_bp20_reads_the_boiler_s_return_from_its_watch() -> None:
 
 
 def test_the_typical_times_of_the_own_setpoint_and_the_closing_start_state() -> None:
-    """A thermostat's own start pauses a calculation period after its setpoint's own calculation,
-    at the next periodic calculation, 1.5 calculations later on average; a learned West that
-    stops resumes a calculation later, a fresh one at once; the start state after a scenario that
-    ends with the boiler on waits for it off the role's delay plus 30 s, and after one that ends
-    with a learned West paused for its resume."""
-    assert PAUSE_ON_SETPOINT.typical_s == 1.5 * RECALC_S
+    """A thermostat's own start pauses a calculation period after its setpoint's own calculation
+    (typically 60 s), at most two periods with a margin (East's 116 s in BP6 on the bench), also
+    while an activation delay keeps the boiler off; a learned West that stops resumes a calculation
+    later, a fresh one at once; after a restart the pause returns a calculation period after SmartPI
+    runs again; the start state after a scenario that ends with the boiler on waits for it off the
+    role's delay plus 30 s, and after one that ends with a learned West paused for its resume."""
     count, delay = ROLES["boiler-count"], ROLES["boiler-delay"]
+    assert PAUSE_ON_SETPOINT.typical_s == RECALC_S
+    assert PAUSE_ON_SETPOINT.maximum_s >= 2 * RECALC_S + MARGIN_S
+    assert delay.boiler_delay_s + MARGIN_S >= 2 * RECALC_S + MARGIN_S  # steps.Bench.waited
     assert west_leaves(count).typical_s == RESUME_ON_SETPOINT.typical_s == 0.0
     assert west_leaves(count, learned=True).typical_s == RECALC_S
-    assert SCENARIOS["BP3"].time_for(count).typical_s == 1.5 * RECALC_S
+    assert SCENARIOS["BP3"].time_for(count).typical_s == RECALC_S
+    assert SCENARIOS["BP9"].time(count).typical_s == RECALC_S + 20.0 + RECALC_S
     for sid in ("BP0", "BP2", "BP5", "BP7", "BP8", "BP18", "BP20", "BP25"):
         s = SCENARIOS[sid]
         for name in s.roles:
@@ -290,6 +297,70 @@ def test_the_typical_times_of_the_own_setpoint_and_the_closing_start_state() -> 
     assert SCENARIOS["BP1"].closing(delay).typical_s == 0.0
 
 
+
+
+# SmartPI's info lines as the bench's log gives them (2026-11-10, BP6 on boiler-delay): East's pause
+# of 3.9 s, shorter than a reading.
+_LOG = [
+    "2026-11-10 08:08:45.066 INFO (MainThread) [custom_components.vtherm_smartpi.algo] West - SmartPI learning paused (central boiler off)",
+    "2026-11-10 08:10:45.071 INFO (MainThread) [custom_components.vtherm_smartpi.algo] East - SmartPI learning paused (central boiler off)",
+    "2026-11-10 08:10:48.931 INFO (MainThread) [custom_components.vtherm_smartpi.algo] West - SmartPI learning resumed (central boiler off)",
+    "2026-11-10 08:10:48.931 INFO (MainThread) [custom_components.vtherm_smartpi.algo] East - SmartPI learning resumed (central boiler off)",
+    "2026-11-10 08:14:45.070 INFO (MainThread) [custom_components.vtherm_smartpi.algo] West - SmartPI learning paused (central boiler off)",
+]
+
+
+def _at(clock: str) -> float:
+    return datetime.fromisoformat(f"2026-11-10T{clock}+00:00").timestamp()
+
+
+def test_the_pauses_read_from_smartpi_s_log() -> None:
+    """Each thermostat's pauses and resumes from SmartPI's info lines, in UTC, to the millisecond."""
+    east = logged_pauses(_LOG, "East")
+    assert east == [(pytest.approx(_at("08:10:45.071")), True), (pytest.approx(_at("08:10:48.931")), False)]
+    assert [p for _, p in logged_pauses(_LOG, "West")] == [True, False, True]
+    assert logged_pauses(_LOG, "North") == []
+
+
+def test_a_pause_while_the_boiler_waits_and_its_resume_at_its_start() -> None:
+    """From the step's start up to the boiler's start: the last pause, then the first resume
+    after it; a thermostat already paused has only its resume; no boiler start, nothing."""
+    on_at = _at("08:10:48.931")
+    paused, resumed = waited_for_the_boiler(logged_pauses(_LOG, "East"), _at("08:08:48.9"), on_at)
+    assert (paused, resumed) == (pytest.approx(_at("08:10:45.071")), pytest.approx(on_at))
+    paused, resumed = waited_for_the_boiler(logged_pauses(_LOG, "West"), _at("08:10:00"), on_at)
+    assert (paused, resumed) == (None, pytest.approx(on_at))
+    assert waited_for_the_boiler(logged_pauses(_LOG, "West"), _at("08:08:00"), None) == (None, None)
+    # A pause after the boiler's start is not one while it waited.
+    assert waited_for_the_boiler(logged_pauses(_LOG, "West"), _at("08:11:00"), _at("08:12:00")) == (None, None)
+
+
+def test_bp26_starts_from_a_settled_west() -> None:
+    """BP26 starts once West's valve has been closed for SmartPI's 600 s and its room is a sensor
+    step below its highest reading since."""
+    from scenarios import MIN_OFF_S, a_settled_west  # noqa: PLC0415
+
+    from custom_components.vtherm_smartpi.smartpi.deadtime_estimator import DeadTimeEstimator  # noqa: PLC0415
+
+    assert DeadTimeEstimator().min_off_time_seconds == MIN_OFF_S
+    closed = datetime.fromtimestamp(1000.0, UTC).isoformat()
+    holds = a_settled_west({})
+    readings = [(1100.0, 19.4), (1300.0, 19.5), (1500.0, 19.5), (1610.0, 19.5), (1700.0, 19.4)]
+    assert [holds({"t": t, "west.indoor": c, "west.valve": 0.0, "west.valve_since": closed}) for t, c in readings] == [False, False, False, False, True]
+    assert not a_settled_west({"c": 19.6})({"t": 1700.0, "west.indoor": 19.5, "west.valve": 20.0, "west.valve_since": closed})
+
+
+def test_bp27_calls_again_within_smartpi_s_600_s_and_watches_15_minutes() -> None:
+    """BP27, on the activation delay: West's second call and the boiler's wait stay within the
+    600 s SmartPI's estimator asks without heat, with a calculation's margin; West's diagnostics
+    are watched for 15 minutes from the boiler's start."""
+    from scenarios import MIN_OFF_S, NO_DETECTION_WATCH_S, REST_S  # noqa: PLC0415
+
+    delay = ROLES["boiler-delay"]
+    s = SCENARIOS["BP27"]
+    assert (s.roles, s.start, s.boiler_at_end) == (("boiler-delay",), "fresh", True)
+    assert REST_S + delay.boiler_delay_s + RECALC_S <= MIN_OFF_S - RECALC_S
+    assert NO_DETECTION_WATCH_S >= 15 * 60.0
 
 
 def test_the_pack_s_pause_confirmation_is_smartpi_s() -> None:
