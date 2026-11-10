@@ -555,7 +555,8 @@ class SmartPI:
         recording, since the wait for the boiler is time without heat. The regulation, its
         dead-time window included, is not touched. A resume because the boiler has just started
         (``boiler_started``) is the start of the room's heat (``_heat_starts_now``, with the
-        room's ``current_temp`` as measured).
+        room's ``current_temp`` as measured); a resume because SmartPI stopped calling is a stop
+        without heat (``_stop_without_heat``).
         """
         paused = bool(paused)
         if paused == self._boiler_learning_paused:
@@ -568,6 +569,8 @@ class SmartPI:
             self._drop_dead_time_detection()
         elif boiler_started:
             self._heat_starts_now(current_temp)
+        else:
+            self._stop_without_heat(time.monotonic())
         _LOGGER.info(
             "%s - SmartPI learning %s (central boiler off)",
             self._name,
@@ -585,6 +588,16 @@ class SmartPI:
         elif est.state == "WAITING_COOL_RESPONSE":
             est.last_outcome["cool"] = "aborted"
             est.state = "COOLING"
+
+    def _stop_without_heat(self, now: float) -> None:
+        """SmartPI stops calling during the boiler pause, or the pause ends because it stopped:
+        the room's heat had stopped earlier, with the boiler. The dead-time estimator records the
+        stop, so its minimum time without heat counts from now, but arms no detection of the
+        room's passive response, which would time a room already cooling."""
+        est = self.dt_est
+        if self._committed_on_percent <= 0.01 < est.last_power:
+            est.last_power = 0.0
+            est.last_stop_time = now
 
     def _heat_starts_now(self, current_temp: float | None = None) -> None:
         """The boiler starts while SmartPI calls: the room's heat starts now. The dead-time
@@ -2147,6 +2160,8 @@ class SmartPI:
             # with the stale committed cycle value can create a false 1 -> 0 -> 1
             # transient when calculate() is called twice before the scheduler
             # commits the new cycle.
+            if self._boiler_learning_paused:
+                self._stop_without_heat(now)
             self.dt_est.update(
                 now=now,
                 tin=t_int_lp,
@@ -2228,6 +2243,8 @@ class SmartPI:
             self._commit_current_linear_output()
             self._update_deadtime_episode_status(self._committed_on_percent, hvac_mode, now)
             if self._learning_enabled:
+                if self._boiler_learning_paused:
+                    self._stop_without_heat(now)
                 self.dt_est.update(
                     now=now,
                     tin=t_int_lp,

@@ -18,7 +18,7 @@ from custom_components.vtherm_smartpi.boiler_call import (
 )
 from custom_components.vtherm_smartpi.handler import SmartPIHandler
 from custom_components.vtherm_smartpi.hvac_mode import VThermHvacMode_HEAT
-from custom_components.vtherm_smartpi.smartpi.const import SMARTPI_RECALC_INTERVAL_SEC, SmartPICalibrationPhase
+from custom_components.vtherm_smartpi.smartpi.const import SMARTPI_RECALC_INTERVAL_SEC, SmartPICalibrationPhase, SmartPIPhase
 from custom_components.vtherm_smartpi.smartpi.deadtime_estimator import DeadTimeEstimator
 from custom_components.vtherm_smartpi.smartpi.diagnostics import build_published_diagnostics
 from custom_components.vtherm_smartpi.smartpi.tint_filter import AdaptiveTintFilter
@@ -223,6 +223,53 @@ def test_no_detection_without_the_boiler_s_start(boiler_started, learning, power
     assert smartpi.dt_est.state != "WAITING_HEAT_RESPONSE"
 
 
+@pytest.mark.parametrize("paused", [False, True])
+def test_a_stop_that_ends_the_pause_arms_no_passive_detection(paused, monkeypatch) -> None:
+    """SmartPI stops calling: without the pause the estimator times the room's passive response
+    from the stop, as the author's does; when the stop ends the pause, the heat had stopped with
+    the boiler, so the estimator records the stop and arms nothing, and its passive dead time is
+    unchanged. The scheduler has committed the 0 % before the calculation."""
+    now = [0.0]
+    smartpi = _paused_while_calling(monkeypatch, now)
+    est = smartpi.dt_est
+    est.last_power = 1.0
+    if not paused:
+        smartpi.set_boiler_learning_paused(False)
+        est.last_power = 1.0
+    smartpi._committed_on_percent = 0.0
+
+    now[0] = 400.0
+    smartpi.set_boiler_learning_paused(False)
+    est.update(now=400.0, tin=18.9, u_applied=0.0)
+
+    if paused:
+        assert est.state != "WAITING_COOL_RESPONSE" and est.last_power == 0.0
+        assert not est._history_cool and est.last_outcome["cool"] is None
+    else:
+        assert est.state == "WAITING_COOL_RESPONSE"
+    assert est.last_stop_time == 400.0
+
+
+@pytest.mark.parametrize("paused", [False, True])
+def test_a_stop_seen_during_the_pause_arms_no_passive_detection(paused, monkeypatch) -> None:
+    """In SmartPI's first phase the stop is committed within the calculation, while the pause
+    still holds: the estimator records the stop and arms nothing, where without the pause it
+    times the room's passive response."""
+    now = [1000.0]
+    monkeypatch.setattr(algo_module.time, "monotonic", lambda: now[0])
+    smartpi = SmartPI(hass=MagicMock(), cycle_min=10, minimal_activation_delay=0, minimal_deactivation_delay=0, name="Boiler")
+    smartpi._committed_on_percent = 1.0
+    smartpi.dt_est.last_power = 1.0
+    smartpi.set_boiler_learning_paused(paused)
+
+    now[0] = 1600.0
+    smartpi.calculate(target_temp=18.0, current_temp=19.5, ext_current_temp=5.0, slope=0.0, hvac_mode=VThermHvacMode_HEAT)
+
+    assert smartpi.phase == SmartPIPhase.HYSTERESIS and smartpi.committed_on_percent == 0.0
+    assert smartpi.dt_est.last_stop_time == 1600.0
+    assert (smartpi.dt_est.state == "WAITING_COOL_RESPONSE") is not paused
+
+
 def test_the_user_setting_is_untouched() -> None:
     """The user's pause and the boiler's pause are two separate causes."""
     smartpi = _smartpi()
@@ -271,13 +318,15 @@ def _heat_then_stop_then_start(est, *, pre_c_per_h: float, off_min: float, pause
 
 
 @pytest.mark.parametrize(("pre_c_per_h", "off_min"), [(0.0, 60.0), (0.2, 60.0), (-0.3, 60.0), (0.2, 10.0)])
-def test_a_pause_leaves_the_next_start_s_dead_time_as_without_it(pre_c_per_h, off_min) -> None:
+def test_a_pause_leaves_the_next_start_s_dead_time_as_without_it(pre_c_per_h, off_min, monkeypatch) -> None:
     """The dead time is measured against the room's trend before the start, from the period
     without heating. A pause keeps the estimator's history and last stop, so the next start's
-    outcome, dead time and trend are those of the same room without the pause."""
+    outcome, dead time and trend are those of the same room without the pause. The stop that ends
+    the pause times no passive response: the heat had stopped with the boiler."""
     paused = _smartpi()
 
     def pause(on: bool) -> None:
+        monkeypatch.setattr(algo_module.time, "monotonic", lambda: 10_000.0 + (-1800.0 if on else 0.0))
         if not on:
             paused._committed_on_percent = 0.0  # the room has stopped calling
         paused.set_boiler_learning_paused(on)
@@ -289,6 +338,8 @@ def test_a_pause_leaves_the_next_start_s_dead_time_as_without_it(pre_c_per_h, of
     assert paused.dt_est.last_outcome["heat"] == normal.last_outcome["heat"] == "detected"
     assert paused.dt_est._history_heat == normal._history_heat
     assert paused.dt_est._trend_slope == pytest.approx(normal._trend_slope)
+    assert paused.dt_est.last_stop_time == normal.last_stop_time == 10_000.0
+    assert not paused.dt_est._history_cool and paused.dt_est.last_outcome["cool"] is None
 
 
 

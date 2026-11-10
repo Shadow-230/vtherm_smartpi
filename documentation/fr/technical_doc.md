@@ -375,6 +375,13 @@ comme pour tout démarrage :
 Le temps mort de la pièce est alors compté depuis le démarrage de la chaudière,
 et non depuis la demande qui l'a attendue.
 
+Lorsque SmartPI cesse de demander pendant la pause, ou que la pause se termine
+parce qu'il a cessé, la chaleur de la pièce s'était déjà arrêtée plus tôt, avec
+la chaudière. L'estimateur enregistre l'arrêt, de sorte que la durée minimale
+sans chauffe compte à partir de là, mais il ne mesure pas la réponse passive de
+la pièce à cet arrêt (3.6) : la pièce refroidissait déjà, et ce temps mort
+serait trop court.
+
 La pause ne change rien d'autre que l'apprentissage. Contrairement à la pause
 de l'utilisateur, elle ne redémarre pas l'épisode de chauffe de la régulation :
 la fenêtre de temps mort pendant laquelle le régulateur tient son intégrale

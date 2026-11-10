@@ -20,6 +20,8 @@ All notable changes to this project will be documented in this file.
   judged as any heating start at that moment: the dead time of a start that
   waited for the boiler is measured from the boiler's start, only after 600 s
   without heat (the wait counts), and with the trend from the kept history.
+  A stop that ends the pause, or comes during it, is recorded but times no
+  passive response: the heat had stopped earlier, with the boiler.
   It changes nothing but
   learning: the regulation (command and integral) is the same as without it,
   and the user's `set_smartpi_learning` setting is unchanged. It is shown as

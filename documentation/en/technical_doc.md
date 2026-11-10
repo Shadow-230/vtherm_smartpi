@@ -431,6 +431,12 @@ rules (3.6), as any start:
 The room's dead time is then counted from the boiler's start, not from the
 call that waited for it.
 
+When SmartPI stops calling during the pause, or the pause ends because it
+stopped, the room's heat had already stopped earlier, with the boiler. The
+estimator records the stop, so the minimum time without heat counts from then,
+but it does not time the room's passive response to this stop (3.6): the room
+was already cooling, and that dead time would come out too short.
+
 The pause changes nothing but learning. Unlike the user's pause, it does not
 restart the regulation's heating episode: the dead-time window in which the
 controller holds its integral counts from the start of the heating, and the

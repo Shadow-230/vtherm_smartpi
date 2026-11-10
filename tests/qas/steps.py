@@ -74,6 +74,7 @@ STOPPED = 7.0  # far below the rooms: SmartPI does not call
 BASE_SETPOINT = 20.0
 STARTS = ("fresh", "learned")
 WAITING_HEAT = "WAITING_HEAT_RESPONSE"  # deadtime_estimator.py: a heating detection waits for the room
+WAITING_COOL = "WAITING_COOL_RESPONSE"  # in heating, a detection of the room's passive response after a stop
 LEARNED = ("accepted_a", "accepted_b", "learn_ok", "deadtime")  # what the learning changes
 
 
@@ -174,12 +175,14 @@ LIVE = {
     "calibration": "calibration.state",
     "dt_state": "analysis.deadtime.state",
     "heat_outcome": "analysis.deadtime.heat_last_outcome",
+    "cool_outcome": "analysis.deadtime.cool_last_outcome",
     "dt_wait": "analysis.deadtime.waiting_elapsed_s",
     "accepted_a": "learning.accepted_updates_a",
     "accepted_b": "learning.accepted_updates_b",
     "learn_ok": "analysis.learning.learn_ok_count",
     "outcomes": "analysis.learning.window_outcomes_24h",
     "deadtime": "model.deadtime_heat_s",
+    "deadtime_cool": "model.deadtime_cool_s",  # in heating, the room's passive response after a stop
     "deadtime_reliable": "model.deadtime_heat_reliable",
     "a": "model.a",
     "b": "model.b",

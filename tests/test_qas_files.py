@@ -26,6 +26,7 @@ from scenarios import (  # noqa: E402
 )
 from steps import (  # noqa: E402
     EAST,
+    LIVE,
     MARGIN_S,
     NORTH,
     PAUSE_CONFIRM_S,
@@ -361,6 +362,18 @@ def test_bp27_calls_again_within_smartpi_s_600_s_and_watches_15_minutes() -> Non
     assert (s.roles, s.start, s.boiler_at_end) == (("boiler-delay",), "fresh", True)
     assert REST_S + delay.boiler_delay_s + RECALC_S <= MIN_OFF_S - RECALC_S
     assert NO_DETECTION_WATCH_S >= 15 * 60.0
+
+
+def test_each_value_the_pack_reads_is_in_smartpi_s_diagnostics() -> None:
+    """Every value a snapshot keeps of SmartPI's diagnostics is published, West's passive dead time
+    and its detection's outcome among them (BP6)."""
+    smartpi = SmartPI(hass=MagicMock(), cycle_min=5, minimal_activation_delay=0, minimal_deactivation_delay=0, name="QAS")
+    live = smartpi.get_published_diagnostics()
+    for name, dotted in LIVE.items():
+        data = live
+        for key in dotted.split("."):
+            assert isinstance(data, dict) and key in data, (name, dotted)
+            data = data[key]
 
 
 def test_the_pack_s_pause_confirmation_is_smartpi_s() -> None:

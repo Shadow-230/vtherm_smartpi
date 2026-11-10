@@ -56,6 +56,7 @@ from steps import (
     VALVE_CLOSES,
     WEST,
     WINDOW_CLOSES,
+    WAITING_COOL,
     WAITING_HEAT,
     WINDOW_OPENS,
     WITHIN_S,
@@ -309,16 +310,17 @@ async def BP5(b: Bench) -> None:
 
 
 BOILER_OFF_AT_ONCE = Wait(0.0, 30.0)  # VTherm acts on East's valve as it closes
+AFTER_THE_STOP = Wait(5 * RECALC_S, 5 * RECALC_S)  # BP6: West watched after its stop ends its pause
 
 
 @scenario(
     "BP6",
     THREE,
-    lambda role: total(west_alone(role), east_joins(role), east_leaves(role), west_leaves(role)),
+    lambda role: total(west_alone(role), east_joins(role), east_leaves(role), west_leaves(role), AFTER_THE_STOP),
     PAUSE_TESTS,
 )
 async def BP6(b: Bench) -> None:
-    """West and East call, the boiler on → East stops, the demand drops below the threshold with West heating → VTherm's boiler and its switch go off at once (also with an activation delay), West pauses two calculations later; West stopping then resumes it."""
+    """West and East call, the boiler on → East stops, the demand drops below the threshold with West heating → VTherm's boiler and its switch go off at once (also with an activation delay), West pauses two calculations later; West stopping then resumes it, and as its heat stopped with the boiler, SmartPI arms no detection of West's passive response (never WAITING_COOL_RESPONSE for five calculations) and West's passive dead time (deadtime_cool) is unchanged."""
     await b.west_calls()
     await b.east_calls()
     await b.change(
@@ -330,7 +332,13 @@ async def BP6(b: Bench) -> None:
             "the boiler's switch off at once": (lambda s: s["switch"] == "off", BOILER_OFF_AT_ONCE),
         },
     )
+    before = of(await b.snapshot(), WEST, "deadtime_cool")
     await b.west_stops()
+    seen = await b.watch(AFTER_THE_STOP.maximum_s)
+    armed = [clock(s) for s in seen if of(s, WEST, "dt_state") == WAITING_COOL]
+    b.check(not armed, f"West's stop ends its pause: no detection of its passive response for {AFTER_THE_STOP.maximum_s:.0f} s ({', '.join(armed[:3]) or 'none seen'})")
+    after = sorted({of(s, WEST, "deadtime_cool") for s in seen} - {before}, key=str)
+    b.check(not after, f"West's passive dead time unchanged: {before} s before its stop, {after or 'the same'} since")
 
 
 HEAT_UP = Wait(0.0, 3600.0)  # BP7: the calibration's heating step (see its note)
