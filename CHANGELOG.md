@@ -13,7 +13,9 @@ All notable changes to this project will be documented in this file.
   its default values. The pause (room model, response lag and dead time, also
   during a calibration) starts once this has lasted one calculation period
   (60 s), so that a room whose own start turns the boiler on does not pause, and
-  ends when the boiler is on or SmartPI stops calling. It changes nothing but
+  ends at the moment the boiler starts, or when SmartPI stops calling. The dead
+  time of a start that waited for the boiler is measured from the boiler's
+  start. It changes nothing but
   learning: the regulation (command and integral) is the same as without it,
   and the user's `set_smartpi_learning` setting is unchanged. It is shown as
   `learning.boiler_paused` in the diagnostics. No new setting. See

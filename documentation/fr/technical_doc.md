@@ -338,15 +338,21 @@ que l'équipement a signalé son nouvel état, quelques secondes plus tard avec 
 vraie tête de vanne, et une vérification pendant ce temps ne doit pas mettre en
 pause. La valeur suit la période de calcul de SmartPI, pas une publication.
 
-Le handler vérifie cela avant chaque calcul
-(`SmartPIHandler._update_boiler_learning_pause()` règle
-`SmartPI.set_boiler_learning_paused()`). L'apprentissage reprend dès le premier
-calcul où la chaudière est allumée ou où SmartPI cesse de demander. Un
+Le handler vérifie cela avant chaque calcul et à chaque changement d'état de la
+chaudière, qu'il suit (`SmartPIHandler._update_boiler_learning_pause()` règle
+`SmartPI.set_boiler_learning_paused()`). L'apprentissage reprend au moment où
+la chaudière démarre, ou au premier calcul où SmartPI cesse de demander. Un
 changement de la pause abandonne les observations en cours, comme la pause de
 l'utilisateur (`set_smartpi_learning`), sans modifier ce réglage : le prochain
 épisode de l'apprentissage commence au plus tôt au changement, donc SmartPI
 n'apprend pas pendant le temps mort de la pièce après le démarrage de la
-chaudière (3.2). Un changement efface aussi l'historique de température de la
+chaudière (3.2). Lorsque la pause se termine parce que la chaudière démarre
+pendant que SmartPI demande, la chaleur de la pièce commence alors : la
+détection du temps mort est alimentée comme lors d'un démarrage depuis 0 à ce
+moment, sur la dernière température filtrée de SmartPI, et les règles propres de
+l'estimateur (3.6) décident si elle s'arme. Le temps mort de la pièce est alors
+compté depuis le démarrage de la chaudière, et non depuis la demande qui l'a
+attendue. Un changement efface aussi l'historique de température de la
 détection du temps mort ; il n'a lieu que pendant que SmartPI demande ou au
 moment où il s'arrête, de sorte que la tendance avant le démarrage suivant (3.6)
 vient toujours de toute la période sans chauffe qui suit.
@@ -392,9 +398,13 @@ Limites :
 - SmartPI suit la commande de Versatile Thermostat à la chaudière, pas le
   brûleur : une chaudière qui ne s'allume pas pour une autre raison (une panne,
   l'eau chaude sanitaire) n'est pas vue.
-- Avec un délai d'activation plus long qu'une période de calcul, une pièce dont
-  le démarrage propre allume la chaudière se met en pause jusqu'au démarrage de
-  la chaudière : ce démarrage ne donne pas de mesure du temps mort.
+- Lorsque la chaudière démarre moins d'une période de calcul après la demande
+  d'une pièce (un délai d'activation de moins d'une minute), la pièce ne se met
+  pas en pause, et le temps mort de ce démarrage inclut l'attente de la
+  chaudière.
+- Une détection armée au démarrage de la chaudière ne retire aucune tendance
+  d'avant le démarrage (3.6) : l'historique de température n'est pas conservé
+  pendant la pause.
 - Après un redémarrage de Home Assistant, Versatile Thermostat montre la
   chaudière arrêtée jusqu'à ce qu'il ait de nouveau compté les thermostats et,
   avec un délai d'activation, jusqu'à la fin de ce délai : l'apprentissage peut

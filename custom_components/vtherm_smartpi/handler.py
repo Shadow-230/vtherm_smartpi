@@ -7,7 +7,8 @@ from typing import TYPE_CHECKING
 from homeassistant.util import slugify
 from homeassistant.components.sensor import DOMAIN as SENSOR_DOMAIN
 from homeassistant.helpers import entity_registry as er
-from homeassistant.helpers.event import async_track_time_interval
+from homeassistant.core import Event, callback
+from homeassistant.helpers.event import async_track_state_change_event, async_track_time_interval
 from homeassistant.helpers.dispatcher import async_dispatcher_send
 from datetime import timedelta
 
@@ -45,7 +46,7 @@ from .const import (
 from .hvac_mode import VThermHvacMode_OFF, VThermHvacMode_HEAT, VThermHvacMode_COOL
 from .commons import write_event_log
 from .valve_config_check import apply_valve_config_check, clear_valve_config_issues
-from .boiler_call import BOILER_PAUSE_CONFIRM_S, central_boiler_on
+from .boiler_call import BOILER_PAUSE_CONFIRM_S, central_boiler_entity_id, central_boiler_on
 from .smartpi.valve_curve import ValveCurveParams
 
 if TYPE_CHECKING:
@@ -75,6 +76,8 @@ class SmartPIHandler:
         # Since when SmartPI has called with the central boiler off, without a break (monotonic
         # time), None while it does not.
         self._boiler_off_since: float | None = None
+        # The listener of Versatile Thermostat's central boiler state (``_listen_to_the_boiler``).
+        self._boiler_listener_remove = None
         self._valve_linearization_configured: bool = False
         self._valve_curve_params: ValveCurveParams | None = None
 
@@ -228,6 +231,9 @@ class SmartPIHandler:
 
         self._stop_recalc_timer()
         self._remove_receipt_callback()
+        if self._boiler_listener_remove is not None:
+            self._boiler_listener_remove()
+            self._boiler_listener_remove = None
         clear_valve_config_issues(t)
 
     def _remove_receipt_callback(self) -> None:
@@ -400,6 +406,7 @@ class SmartPIHandler:
             )
             safety = getattr(getattr(t, "safety_manager", None), "is_safety_detected", False)
             algo.vt_safety_override = safety is True
+            self._listen_to_the_boiler()
             self._update_boiler_learning_pause(algo)
             t.prop_algorithm.calculate(
                 target_temp=t.target_temperature,
@@ -536,38 +543,58 @@ class SmartPIHandler:
         if self._should_publish_intermediate:
             async_dispatcher_send(t.hass, diag_update_signal(t.unique_id))
 
-    def _update_boiler_learning_pause(self, algo: SmartPI) -> None:
+    def _update_boiler_learning_pause(self, algo: SmartPI) -> bool:
         """Pause SmartPI's learning while it calls for heat and the central boiler is off, or
-        resume it.
+        resume it; whether the pause changed.
 
         The pause starts once this has held without a break for ``BOILER_PAUSE_CONFIRM_S``:
         when a thermostat's own start turns the boiler on, Versatile Thermostat does so only
-        once the thermostat's device reports it. Learning resumes at once. A change is
-        published at once.
+        once the thermostat's device reports it. Learning resumes at once; a resume because the
+        boiler starts while SmartPI calls starts the dead-time detection from that moment. A
+        change is published at once.
         """
         now = time.monotonic()
-        if not self._calls_with_boiler_off(algo):
+        calls = self._calls_for_boiler_heat(algo)
+        boiler_on = central_boiler_on(self._thermostat.hass) if calls else None
+        if not (calls and boiler_on is False):
             self._boiler_off_since = None
         elif self._boiler_off_since is None:
             self._boiler_off_since = now
         paused = self._boiler_off_since is not None and (
             algo.boiler_learning_paused or now - self._boiler_off_since >= BOILER_PAUSE_CONFIRM_S
         )
-        if paused != algo.boiler_learning_paused:
-            algo.set_boiler_learning_paused(paused)
-            self._should_publish_intermediate = True
+        if paused == algo.boiler_learning_paused:
+            return False
+        algo.set_boiler_learning_paused(paused, boiler_started=calls and boiler_on is True)
+        self._should_publish_intermediate = True
+        return True
 
-    def _calls_with_boiler_off(self, algo: SmartPI) -> bool:
-        """True while SmartPI calls for heat and Versatile Thermostat's central boiler, which
-        heats this thermostat, is off. Not for a thermostat the boiler does not heat, nor when
-        the boiler's state cannot be read."""
+    def _calls_for_boiler_heat(self, algo: SmartPI) -> bool:
+        """True while SmartPI calls for heat for a thermostat that Versatile Thermostat counts
+        for its central boiler."""
         t = self._thermostat
         if getattr(t, "is_used_by_central_boiler", False) is not True:
             return False
         power = algo.committed_on_percent
-        if not isinstance(power, (int, float)) or power <= 0.0:
-            return False
-        return central_boiler_on(t.hass) is False
+        return isinstance(power, (int, float)) and power > 0.0
+
+    def _listen_to_the_boiler(self) -> None:
+        """Follow the changes of Versatile Thermostat's central boiler state, once its entity
+        exists, so that the pause is checked at the moment the boiler starts or stops."""
+        t = self._thermostat
+        if self._boiler_listener_remove is not None or getattr(t, "is_used_by_central_boiler", False) is not True:
+            return
+        entity_id = central_boiler_entity_id(t.hass)
+        if entity_id is not None:
+            self._boiler_listener_remove = async_track_state_change_event(t.hass, [entity_id], self._on_boiler_change)
+
+    @callback
+    def _on_boiler_change(self, _event: Event) -> None:
+        """The boiler started or stopped: the pause is checked now, not at the next calculation."""
+        t = self._thermostat
+        algo = t.prop_algorithm if isinstance(t.prop_algorithm, SmartPI) else None
+        if algo is not None and self._update_boiler_learning_pause(algo):
+            async_dispatcher_send(t.hass, diag_update_signal(t.unique_id))
 
     async def on_state_changed(self, changed: bool):
         """Handle state changes."""

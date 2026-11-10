@@ -398,14 +398,19 @@ counts the thermostat's device, after the device reports its new state, seconds
 later with a real valve head, and a check in that time must not pause. The value
 follows SmartPI's calculation period, not a publication.
 
-The handler checks this before each calculation
-(`SmartPIHandler._update_boiler_learning_pause()` sets
-`SmartPI.set_boiler_learning_paused()`). Learning resumes at the first
-calculation where the boiler is on or SmartPI stops calling. A change of the
-pause drops the observations in flight, as the user's pause
+The handler checks this before each calculation and at each change of the
+boiler's state, which it follows (`SmartPIHandler._update_boiler_learning_pause()`
+sets `SmartPI.set_boiler_learning_paused()`). Learning resumes at the moment
+the boiler starts, or at the first calculation where SmartPI stops calling. A
+change of the pause drops the observations in flight, as the user's pause
 (`set_smartpi_learning`) does, without changing that setting: learning's next
 episode starts at the change at the earliest, so SmartPI does not learn during
-the room's dead time after the boiler starts (3.2). A change also clears the
+the room's dead time after the boiler starts (3.2). When the pause ends
+because the boiler starts while SmartPI calls, the room's heat starts then: the
+dead-time detection is fed as at a start from 0 at that moment, on SmartPI's
+last filtered temperature, and the estimator's own rules (3.6) decide whether
+it arms. The room's dead time is then counted from the boiler's start, not from
+the call that waited for it. A change also clears the
 dead-time detection's temperature history; it happens only while SmartPI calls
 or as it stops, so the trend before the next start (3.6) still comes from the
 whole period without heating that follows.
@@ -450,9 +455,11 @@ Limits:
 - SmartPI follows Versatile Thermostat's command to the boiler, not the burner:
   a boiler that does not fire for another reason (a fault, hot water) is not
   seen.
-- With an activation delay longer than a calculation period, a room whose own
-  start turns the boiler on pauses until the boiler starts: that start gives no
-  dead-time measurement.
+- When the boiler starts less than a calculation period after a room's call
+  (an activation delay under a minute), the room does not pause, and that
+  start's dead time includes the wait for the boiler.
+- A detection armed at the boiler's start removes no trend from before the
+  start (3.6): the temperature history is not kept during the pause.
 - After a restart of Home Assistant, Versatile Thermostat shows the boiler off
   until it has counted the thermostats again and, with an activation delay,
   until the delay has passed: learning may pause for that time.

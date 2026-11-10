@@ -173,6 +173,46 @@ def test_a_calibration_does_not_time_the_dead_time_with_the_boiler_off(pause, mo
     assert smartpi.dt_est.update.called is (pause != "boiler")
 
 
+def _paused_while_calling(monkeypatch, now: list[float], learning: bool = True) -> SmartPI:
+    """SmartPI calling at full power with a filtered room temperature, paused at 100 s."""
+    smartpi = _smartpi()
+    smartpi.set_learning_enabled(learning)
+    smartpi._committed_on_percent = 1.0
+    smartpi.tint_filter.update(19.0, 0.0)
+    monkeypatch.setattr(algo_module.time, "monotonic", lambda: now[0])
+    now[0] = 100.0
+    smartpi.set_boiler_learning_paused(True)
+    return smartpi
+
+
+def test_the_boiler_s_start_arms_the_dead_time_detection_from_then(monkeypatch) -> None:
+    """The pause ends because the boiler starts while SmartPI calls: the detection arms as at a
+    start from 0, its time counted from the boiler's start, not from the call that waited."""
+    now = [0.0]
+    smartpi = _paused_while_calling(monkeypatch, now)
+    assert smartpi.dt_est.state == "OFF"
+
+    now[0] = 220.0
+    smartpi.set_boiler_learning_paused(False, boiler_started=True)
+
+    assert smartpi.dt_est.state == "WAITING_HEAT_RESPONSE"
+    assert smartpi.dt_est.heat_start_time == 220.0
+
+
+@pytest.mark.parametrize(("boiler_started", "learning", "power"), [(False, True, 1.0), (True, False, 1.0), (True, True, 0.5)])
+def test_no_detection_without_the_boiler_s_start(boiler_started, learning, power, monkeypatch) -> None:
+    """No detection arms when the pause ends for another reason (SmartPI stopped calling), while
+    the user's learning is off, or at a power the estimator does not time (its own 80 % rule)."""
+    now = [0.0]
+    smartpi = _paused_while_calling(monkeypatch, now, learning=learning)
+    smartpi._committed_on_percent = power
+
+    now[0] = 220.0
+    smartpi.set_boiler_learning_paused(False, boiler_started=boiler_started)
+
+    assert smartpi.dt_est.state != "WAITING_HEAT_RESPONSE"
+
+
 def test_the_user_setting_is_untouched() -> None:
     """The user's pause and the boiler's pause are two separate causes."""
     smartpi = _smartpi()
@@ -295,10 +335,13 @@ async def test_an_own_start_that_turns_the_boiler_on_within_seconds_does_not_pau
     calculation while its valve has not reported (15 s), then Versatile Thermostat counts it and
     turns the boiler on."""
     handler = _handler()
+    algo = handler._thermostat.prop_algorithm
+    algo.set_boiler_learning_paused = MagicMock(wraps=algo.set_boiler_learning_paused)
 
     for at, on in ((1000.0, False), (1000.002, False), (1010.0, False), (1015.2, True), (1060.0, True)):
         algo = await _control(handler, boiler_on=on, power=1.0, at=at)
         assert algo.boiler_learning_paused is False
+    algo.set_boiler_learning_paused.assert_not_called()  # the detection armed at the start runs on
 
 
 async def test_the_pause_holds_while_the_boiler_waits_for_its_activation_delay() -> None:
@@ -348,3 +391,61 @@ async def test_a_change_of_the_pause_is_published_at_once() -> None:
 
     await _control(handler, boiler_on=True, power=0.5)
     assert handler.published >= 1
+
+
+async def test_the_boiler_s_start_resumes_at_once_and_arms_the_detection() -> None:
+    """Versatile Thermostat's boiler starts while the room waits for it, paused: the change of
+    the boiler's state resumes learning at that moment, without a calculation, publishes it, and
+    arms the dead-time detection from then."""
+    handler = _handler()
+    await _control(handler, boiler_on=False, power=1.0, at=1000.0)
+    algo = await _control(handler, boiler_on=False, power=1.0, at=1000.0 + BOILER_PAUSE_CONFIRM_S)
+    assert algo.boiler_learning_paused is True
+    algo.calculate = MagicMock()
+
+    with (
+        patch("custom_components.vtherm_smartpi.handler.time.monotonic", return_value=1120.0),
+        patch("custom_components.vtherm_smartpi.algo.time.monotonic", return_value=1120.0),
+        patch("custom_components.vtherm_smartpi.handler.central_boiler_on", return_value=True),
+        patch("custom_components.vtherm_smartpi.handler.async_dispatcher_send") as send,
+    ):
+        handler._on_boiler_change(MagicMock())
+
+    assert algo.boiler_learning_paused is False
+    assert send.called
+    algo.calculate.assert_not_called()
+    assert (algo.dt_est.state, algo.dt_est.heat_start_time) == ("WAITING_HEAT_RESPONSE", 1120.0)
+
+
+async def test_a_room_that_stops_before_the_boiler_starts_resumes_without_a_detection() -> None:
+    """The pause ends because SmartPI stops calling (its calculation not run here, which would
+    start the test thermostat calling again)."""
+    handler = _handler()
+    await _control(handler, boiler_on=False, power=1.0, at=1000.0)
+    algo = await _control(handler, boiler_on=False, power=1.0, at=1000.0 + BOILER_PAUSE_CONFIRM_S)
+    algo.calculate = MagicMock()
+
+    algo = await _control(handler, boiler_on=False, power=0.0, at=1080.0)
+
+    assert algo.boiler_learning_paused is False
+    assert algo.dt_est.state != "WAITING_HEAT_RESPONSE"
+
+
+def test_the_handler_follows_the_boiler_once_its_entity_exists_and_stops_on_removal() -> None:
+    handler = _handler()
+    unsubscribe = MagicMock()
+    with (
+        patch("custom_components.vtherm_smartpi.handler.central_boiler_entity_id", side_effect=[None, "binary_sensor.central_boiler"]),
+        patch("custom_components.vtherm_smartpi.handler.async_track_state_change_event", return_value=unsubscribe) as track,
+    ):
+        handler._listen_to_the_boiler()
+        assert track.call_count == 0
+        handler._listen_to_the_boiler()
+        handler._listen_to_the_boiler()
+    assert track.call_count == 1
+    assert track.call_args.args[1] == ["binary_sensor.central_boiler"]
+
+    handler._store = None  # no state to save here
+    with patch("custom_components.vtherm_smartpi.handler.clear_valve_config_issues"):
+        handler.remove()
+    unsubscribe.assert_called_once()

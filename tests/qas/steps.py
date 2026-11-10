@@ -23,8 +23,8 @@ power, the devices they count, their powers, the threshold.
 **The timing of a step** (``Wait``): SmartPI pauses once it has called with VTherm's boiler off
 without a break for a calculation period (``PAUSE_CONFIRM_S``), at its first calculation after
 it. Below the threshold the boiler is off; with an activation delay it stays off for that delay
-after the threshold is reached, so a calling thermostat pauses meanwhile and resumes once the
-boiler is on. A change of a thermostat's own setpoint or mode makes a calculation at once: its pause comes
+after the threshold is reached, so a calling thermostat pauses meanwhile. A paused thermostat
+resumes at the moment the boiler starts. A change of a thermostat's own setpoint or mode makes a calculation at once: its pause comes
 a calculation period and a part of the next one later, its resume at once. A change from outside
 (East, the threshold) reaches it at its next calculation: a pause two calculations later, a
 resume one. A closed window: VTherm's delay of 30 s, then two calculations.
@@ -129,9 +129,9 @@ def boiler_starts(role: Role) -> Wait:
 
 
 def resume_when_the_boiler_starts(role: Role) -> Wait:
-    """A paused thermostat resumes at its next calculation once VTherm's boiler is on: with an
-    activation delay, that delay after the threshold is reached."""
-    return Wait(role.boiler_delay_s + RESUME_EXTERNAL.typical_s, role.boiler_delay_s + RESUME_EXTERNAL.maximum_s)
+    """A paused thermostat resumes at the moment VTherm's boiler starts (SmartPI follows the
+    boiler's state): with an activation delay, that delay after the threshold is reached."""
+    return Wait(role.boiler_delay_s, role.boiler_delay_s + MARGIN_S)
 
 
 class Context:
@@ -169,6 +169,7 @@ LIVE = {
     "calibration": "calibration.state",
     "dt_state": "analysis.deadtime.state",
     "heat_outcome": "analysis.deadtime.heat_last_outcome",
+    "dt_wait": "analysis.deadtime.waiting_elapsed_s",
     "accepted_a": "learning.accepted_updates_a",
     "accepted_b": "learning.accepted_updates_b",
     "learn_ok": "analysis.learning.learn_ok_count",
@@ -522,8 +523,10 @@ class Bench:
                 wait = waits[climate]
             elif climate == own:
                 wait = PAUSE_ON_SETPOINT if due else RESUME_ON_SETPOINT
+            elif due:
+                wait = PAUSE_EXTERNAL
             else:
-                wait = PAUSE_EXTERNAL if due else RESUME_EXTERNAL
+                wait = resume_when_the_boiler_starts(self.role) if self.reaches() and not reached_before else RESUME_EXTERNAL
             wanted[f"{NAMES[climate]} {'paused' if due else 'resumed'}"] = (self.paused_is(climate, due), wait)
         took = await self.reach(wanted, started)
         if delayed_start:

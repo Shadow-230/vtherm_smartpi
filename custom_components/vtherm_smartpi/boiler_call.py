@@ -29,13 +29,18 @@ BOILER_PAUSE_TIMER_MARGIN_S = 1.0
 BOILER_PAUSE_CONFIRM_S = SMARTPI_RECALC_INTERVAL_SEC - BOILER_PAUSE_TIMER_MARGIN_S
 
 
-def central_boiler_on(hass: Any) -> bool | None:
-    """Whether Versatile Thermostat's central boiler is on; None when it cannot be read."""
+def central_boiler_entity_id(hass: Any) -> str | None:
+    """The entity ID of Versatile Thermostat's central boiler binary sensor, None without it."""
     try:
         registry = er.async_get(hass)
     except Exception:  # pylint: disable=broad-except
         return None
-    entity_id = registry.async_get_entity_id("binary_sensor", VT_DOMAIN, VT_CENTRAL_BOILER_UNIQUE_ID)
+    return registry.async_get_entity_id("binary_sensor", VT_DOMAIN, VT_CENTRAL_BOILER_UNIQUE_ID)
+
+
+def central_boiler_on(hass: Any) -> bool | None:
+    """Whether Versatile Thermostat's central boiler is on; None when it cannot be read."""
+    entity_id = central_boiler_entity_id(hass)
     states = getattr(hass, "states", None)
     state = states.get(entity_id) if entity_id is not None and states is not None else None
     if state is None or state.state not in ("on", "off"):
