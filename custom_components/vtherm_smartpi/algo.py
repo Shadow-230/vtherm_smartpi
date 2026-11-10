@@ -589,6 +589,15 @@ class SmartPI:
             est.last_outcome["cool"] = "aborted"
             est.state = "COOLING"
 
+    def heat_stopped_with_the_boiler(self) -> None:
+        """Versatile Thermostat's central boiler went off while SmartPI calls, after it heated the
+        room: the room's heat stops now, though SmartPI's command does not. The dead-time estimator
+        records the stop, so its minimum time without heat counts from now, and arms nothing: no
+        passive response is timed, and the start at the boiler's return is judged by the
+        estimator's own rules (``_heat_starts_now``)."""
+        self.dt_est.last_stop_time = time.monotonic()
+        _LOGGER.debug("%s - SmartPI: heat stopped with the central boiler", self._name)
+
     def _stop_without_heat(self, now: float) -> None:
         """SmartPI stops calling during the boiler pause, or the pause ends because it stopped:
         the room's heat had stopped earlier, with the boiler. The dead-time estimator records the

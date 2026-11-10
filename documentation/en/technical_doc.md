@@ -441,6 +441,17 @@ estimator records the stop, so the minimum time without heat counts from then,
 but it does not time the room's passive response to this stop (3.6): the room
 was already cooling, and that dead time would come out too short.
 
+When Versatile Thermostat's boiler goes off while SmartPI calls, and the boiler
+had been heating the room, the room's heat stops at that moment, though
+SmartPI's command does not change. The estimator records the stop then, so the
+minimum time without heat counts from the boiler's stop, and it arms nothing.
+When the boiler comes back within 600 s, its start is not measured, as a room
+that calls again shortly after its last heating is not; after 600 s, it is
+measured from the boiler's start. A room that starts calling while the boiler
+is off, and waits for it, records no stop: the boiler has not heated it. The
+handler knows which case it is: the boiler was on, or not, at its last check
+while SmartPI called.
+
 The pause changes nothing but learning. Unlike the user's pause, it does not
 restart the regulation's heating episode: the dead-time window in which the
 controller holds its integral counts from the start of the heating, and the

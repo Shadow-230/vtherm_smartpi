@@ -386,6 +386,18 @@ sans chauffe compte à partir de là, mais il ne mesure pas la réponse passive 
 la pièce à cet arrêt (3.6) : la pièce refroidissait déjà, et ce temps mort
 serait trop court.
 
+Lorsque la chaudière de Versatile Thermostat s'arrête pendant que SmartPI
+demande, et qu'elle chauffait la pièce, la chaleur de la pièce s'arrête à ce
+moment, bien que la commande de SmartPI ne change pas. L'estimateur enregistre
+alors l'arrêt, de sorte que la durée minimale sans chauffe compte à partir de
+l'arrêt de la chaudière, et il n'arme rien. Lorsque la chaudière revient en
+moins de 600 s, son démarrage n'est pas mesuré, comme celui d'une pièce qui
+redemande peu après sa dernière chauffe ; après 600 s, il est mesuré depuis le
+démarrage de la chaudière. Une pièce qui commence à demander pendant que la
+chaudière est arrêtée, et l'attend, n'enregistre aucun arrêt : la chaudière ne
+l'a pas chauffée. Le handler sait de quel cas il s'agit : la chaudière était
+allumée, ou non, à sa dernière vérification pendant que SmartPI demandait.
+
 La pause ne change rien d'autre que l'apprentissage. Contrairement à la pause
 de l'utilisateur, elle ne redémarre pas l'épisode de chauffe de la régulation :
 la fenêtre de temps mort pendant laquelle le régulateur tient son intégrale

@@ -12,6 +12,12 @@ All notable changes to this project will be documented in this file.
   Limit: a room without heat for 600 to 900 s that is still warming can still
   give a dead time shorter than the true one. See
   `documentation/en/technical_doc.md`, 3.6.
+- Learning pause: when Versatile Thermostat's central boiler goes off while
+  SmartPI calls, after it heated the room, the dead-time estimator records the
+  room's stop at that moment and arms nothing. A boiler that comes back within
+  600 s is not measured; after 600 s, its start is measured from the boiler's
+  start. A room that waits for a boiler that has not heated it records no stop.
+  See `documentation/en/technical_doc.md`, 3.8.
 - Learning: SmartPI does not learn heating while it calls for heat and
   Versatile Thermostat's central boiler is off, for a thermostat that Versatile
   Thermostat counts for its central boiler: the room then gets no heat and cools

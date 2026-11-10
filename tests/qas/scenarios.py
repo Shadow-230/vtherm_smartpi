@@ -829,7 +829,7 @@ async def BP26(b: Bench) -> None:
     boiler_at_end=True,
 )
 async def BP27(b: Bench) -> None:
-    """Fresh, an activation delay of 120 s, West and East without heat and their learning reset at least 600 s before and their rooms 0.1 degC below their highest reading since, East calling alone below the threshold, the boiler off → West calls and heats for 5 minutes with the boiler on, stops, and calls again about 300 s later, completing the threshold; the boiler starts 120 s later → West pauses while the boiler waits and resumes at its start; West was without heat for less than 600 s before the boiler's start (the wait counts), so SmartPI's dead-time estimator measures nothing: for 15 minutes from the boiler's start West's detection never waits for a response, its outcome never turns detected and its heating dead time stays unchanged; East's heating dead time, measured from the first boiler start, is at least 60 s."""
+    """Fresh, an activation delay of 120 s, West and East without heat and their learning reset at least 600 s before and their rooms 0.1 degC below their highest reading since, East calling alone below the threshold, the boiler off → West calls and heats for 5 minutes with the boiler on, stops, and calls again about 300 s later, completing the threshold; the boiler starts 120 s later → West pauses while the boiler waits and resumes at its start; West was without heat for less than 600 s before the boiler's start (the wait counts), so SmartPI's dead-time estimator measures nothing: for 15 minutes from the boiler's start West's detection never waits for a response, its outcome never turns detected and its heating dead time stays unchanged; East, heated until the boiler went off at West's stop, gets no new measurement either, as the boiler comes back within 600 s of going off, and its heating dead time is none or at least 60 s."""
     await rooms_settle(b, COUNTED)
     await b.change("East calls alone", lambda: b.calls_at(EAST, CALLING), own=EAST)
     await b.west_calls()
@@ -840,13 +840,18 @@ async def BP27(b: Bench) -> None:
     await asyncio.sleep(max(0.0, REST_S - (time.time() - stopped)))
     before = await b.snapshot()
     outcome, dead = of(before, WEST, "heat_outcome"), of(before, WEST, "deadtime")
-    b.note(f"before West calls again: dead-time detection {of(before, WEST, 'dt_state')}, outcome {outcome}, heating dead time {dead} s")
+    east_dead = of(before, EAST, "deadtime")
+    for climate in COUNTED:
+        b.note(
+            f"before West calls again: {NAMES[climate]}'s dead-time detection {of(before, climate, 'dt_state')}, "
+            f"outcome {of(before, climate, 'heat_outcome')}, heating dead time {of(before, climate, 'deadtime')} s"
+        )
     took = await b.west_calls()
     on = took.get("VTherm's boiler on")
     without_heat = None if on is None else b.started + on - stopped
     b.check(
         without_heat is not None and without_heat <= MIN_OFF_S - RECALC_S,
-        f"West without heat for {seconds(without_heat)} s before the boiler's start, the wait included: less than SmartPI's 600 s",
+        f"West without heat, and the boiler off, for {seconds(without_heat)} s before the boiler's start, the wait included: less than SmartPI's 600 s",
     )
     seen = await b.watch(NO_DETECTION_WATCH_S, 10.0)
     armed = [clock(s) for s in seen if of(s, WEST, "dt_state") == WAITING_HEAT or (of(s, WEST, "dt_wait") or 0) > 0]
@@ -855,6 +860,10 @@ async def BP27(b: Bench) -> None:
     b.check(not detected, f"West's detection outcome never turns detected: {outcome} before, {sorted({str(of(s, WEST, 'heat_outcome')) for s in seen})} since")
     changed = sorted({of(s, WEST, "deadtime") for s in seen} - {dead}, key=str)
     b.check(not changed, f"West's heating dead time unchanged: {dead} s before, {changed or 'the same'} since")
+    armed = [clock(s) for s in seen if of(s, EAST, "dt_state") == WAITING_HEAT]
+    b.check(not armed, f"East, heated until the boiler went off: no new detection for {NO_DETECTION_WATCH_S / 60:.0f} minutes from the boiler's return ({', '.join(armed[:3]) or 'never'})")
+    changed = sorted({of(s, EAST, "deadtime") for s in seen} - {east_dead}, key=str)
+    b.check(not changed, f"East's heating dead time unchanged: {east_dead} s before, {changed or 'the same'} since")
     east = of(seen[-1], EAST, "deadtime") if seen else None
     b.check(east is None or at_least_a_calculation(east), f"East's heating dead time {east} s: none, or at least {SHORTEST_DEADTIME_S:.0f} s")
 

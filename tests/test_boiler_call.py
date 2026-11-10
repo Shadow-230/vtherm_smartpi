@@ -561,6 +561,77 @@ async def test_a_room_that_stops_before_the_boiler_starts_resumes_without_a_dete
     assert algo.dt_est.state != "WAITING_HEAT_RESPONSE"
 
 
+def _boiler_changes(handler: SmartPIHandler, on: bool, at: float) -> SmartPI:
+    """Versatile Thermostat's boiler goes on or off at ``at``, seen by the handler's listener."""
+    with (
+        patch("custom_components.vtherm_smartpi.handler.time.monotonic", return_value=at),
+        patch("custom_components.vtherm_smartpi.algo.time.monotonic", return_value=at),
+        patch("custom_components.vtherm_smartpi.handler.central_boiler_on", return_value=on),
+        patch("custom_components.vtherm_smartpi.handler.async_dispatcher_send"),
+    ):
+        handler._on_boiler_change(MagicMock())
+    return handler._thermostat.prop_algorithm
+
+
+def _heating_room(handler: SmartPIHandler) -> SmartPI:
+    """SmartPI calling at full power, with a filtered room temperature, its calculations not run
+    (they would make the test thermostat call or stop by themselves)."""
+    algo = handler._thermostat.prop_algorithm
+    algo.calculate = MagicMock()
+    algo.tint_filter.update(19.0, 0.0)
+    algo.dt_est.last_power = 1.0
+    return algo
+
+
+@pytest.mark.parametrize(("back_after_s", "measured"), [(300.0, False), (700.0, True)])
+async def test_the_boiler_going_off_while_it_heats_the_room_is_the_room_s_stop(back_after_s, measured) -> None:
+    """The boiler heats the calling room, goes off at 1030 s and comes back: the room's heat
+    stopped with it, so the estimator records the stop then and arms nothing; the boiler's
+    return is judged by the estimator's own rules, 600 s without heat: back after 300 s, no
+    measurement; after 700 s, a measurement from the boiler's return, as the author's estimator
+    gives for a stop at 1030 s and a start at the return."""
+    handler = _handler()
+    algo = _heating_room(handler)
+    await _control(handler, boiler_on=True, power=1.0, at=1000.0)
+
+    _boiler_changes(handler, on=False, at=1030.0)
+    assert algo.dt_est.last_stop_time == 1030.0
+    assert algo.dt_est.state != "WAITING_COOL_RESPONSE"
+    await _control(handler, boiler_on=False, power=1.0, at=1090.0)
+    assert algo.boiler_learning_paused is True
+
+    back = 1030.0 + back_after_s
+    _boiler_changes(handler, on=True, at=back)
+
+    assert algo.boiler_learning_paused is False
+    assert algo.dt_est.last_stop_time == 1030.0
+    if measured:
+        assert (algo.dt_est.state, algo.dt_est.heat_start_time) == ("WAITING_HEAT_RESPONSE", back)
+        author = DeadTimeEstimator()
+        author.last_power, author.last_stop_time = 0.0, 1030.0
+        author.update(back, algo.tint_filter.t_int_lp, 1.0, hvac_mode=VThermHvacMode_HEAT)
+        assert (author.state, author.heat_start_time) == ("WAITING_HEAT_RESPONSE", back)
+    else:
+        assert algo.dt_est.state == "HEATING"
+
+
+async def test_an_own_start_that_waits_for_the_boiler_records_no_stop() -> None:
+    """A room starts calling while the boiler is off and waits for it: the boiler has not heated
+    it, so no stop is recorded, and the boiler's start is measured as before."""
+    handler = _handler()
+    algo = _heating_room(handler)
+    algo.dt_est.last_power = 0.0
+    algo.dt_est.last_stop_time = 300.0  # its last heating stopped 700 s before its call
+
+    await _control(handler, boiler_on=False, power=1.0, at=1000.0)
+    await _control(handler, boiler_on=False, power=1.0, at=1000.0 + BOILER_PAUSE_CONFIRM_S)
+    assert algo.boiler_learning_paused is True
+    _boiler_changes(handler, on=True, at=1120.0)
+
+    assert algo.dt_est.last_stop_time == 300.0
+    assert (algo.dt_est.state, algo.dt_est.heat_start_time) == ("WAITING_HEAT_RESPONSE", 1120.0)
+
+
 def test_the_handler_follows_the_boiler_once_its_entity_exists_and_stops_on_removal() -> None:
     handler = _handler()
     unsubscribe = MagicMock()
