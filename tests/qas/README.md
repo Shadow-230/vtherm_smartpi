@@ -108,11 +108,12 @@ SmartPI runs with its "SmartPI defaults" entry only.
 their own way when the boiler heats, so the pause's steps (BP1–BP3, BP5–BP11, BP18, BP20) run on
 `boiler-count`, `boiler-power` and `boiler-delay`, each with what that role makes of a step: with
 the delay, the boiler starts 120 s after the threshold is reached and stays off meanwhile, so a
-calling thermostat pauses during that time and resumes at the boiler's start. BP26 and BP27
+calling thermostat pauses during that time and resumes at the boiler's start. BP26 to BP28
 check what SmartPI's dead-time estimator makes of such a start, which it judges as a start of the
 heating at the boiler's start, by its own rules: from a settled room the dead time counts from the
-boiler's start (BP26); a room that calls again less than 600 s after its last heating, the wait
-included, gets no measurement (BP27). The
+boiler's start and is at least a calculation, 60 s (BP26); a room that calls again less than
+600 s after its last heating, the wait included, gets no measurement (BP27), nor one within 600 s
+of a reset of its learning (BP28). The
 power levels of `boiler-levels` let the power alone decide: West's 300 W alone stays below 600 W,
 East's 900 W alone or both reach it (BP13). With the power, VTherm counts each device's power
 times its valve opening for the next cycle, so a partly open valve counts as that share of the
@@ -176,9 +177,10 @@ its roles; every wait ends as soon as its condition holds. SmartPI calculates ev
 - after a restart, a thermostat calling with the boiler off pauses again a calculation period
   after SmartPI runs again (BP9);
 - the start state after the scenario, which the runner reaches before the next one: VTherm's
-  boiler off for the role's delay plus 30 s when the scenario ends with the boiler on (150 s with
-  the activation delay, and the same in BP0 after the preparation's restart), and a learned West
-  paused at the end resumes at its next calculation once it stops calling (BP9).
+  boiler off for the role's delay plus 30 s when the scenario ends with the boiler on or just
+  after a restart, which starts VTherm's boiler-off time again (150 s with the activation delay;
+  BP0 after the preparation's restart, BP9), and a learned West paused at the end resumes at its
+  next calculation once it stops calling (BP9).
 
 In the columns:
 - **typical**: what SmartPI's timing gives, plus the steps' own holds; one value, or the shortest
@@ -212,7 +214,7 @@ for a background command.
 | BP6 | West and East call, the boiler on | East stops, the demand drops below the threshold with West heating | VTherm's boiler and its switch go off at once (also with an activation delay), West pauses two calculations later; West stopping then resumes it, and as its heat stopped with the boiler, SmartPI arms no detection of West's passive response (never WAITING_COOL_RESPONSE for five calculations) and West's passive dead time (deadtime_cool) is unchanged. | `boiler-count`, `boiler-power`, `boiler-delay` | fresh | 10 min | 56 min | — | no | no | test_boiler_call.py |
 | BP7 | West learned, its setpoint 1 degC above its room | a forced calibration heats with the boiler off | learning pauses: the calibration arms no dead-time detection and the learned heating dead time stays unchanged; once East calls and the boiler is on, learning resumes. | `boiler-count`, `boiler-power`, `boiler-delay` | learned | 14 min – 16 min | 105 min – 106 min | typical when West starts below the calibration's low threshold (setpoint - 0.3 degC), as its setpoint is set 1 degC above the room | no | no | test_boiler_call.py |
 | BP8 | The start state | West and East start calling together | VTherm's boiler starts and neither pauses, though VTherm counts their devices a moment after SmartPI first reads the boiler's state; with an activation delay (120 s) the boiler stays off meanwhile, both pause and resume once it is on. | `boiler-count`, `boiler-power`, `boiler-delay` | fresh | 6 min – 10 min | 27 min – 29 min | — | no | yes | test_boiler_call.py, test_qas_instance.py |
-| BP9 | West learned, calling alone and paused | Home Assistant restarts | once SmartPI runs again, the pause returns within two calculations; nothing is learned in between (accepted updates unchanged, no dead-time detection armed); a, b and the dead time are kept. | `boiler-count`, `boiler-power`, `boiler-delay` | learned | 3 min | 52 min | — | no | no | test_boiler_call.py |
+| BP9 | West learned, calling alone and paused | Home Assistant restarts | once SmartPI runs again, the pause returns within two calculations; nothing is learned in between (accepted updates unchanged, no dead-time detection armed); a, b and the dead time are kept. | `boiler-count`, `boiler-power`, `boiler-delay` | learned | 3 min – 5 min | 52 min | — | no | no | test_boiler_call.py |
 | BP10 | West calls alone and pauses | VTherm's threshold lowered to 1 device (or 500 W), then back | lowered, the boiler starts (with an activation delay, 120 s later), though only West calls, and West resumes at that moment; back, West pauses again two calculations later and the boiler stops at once. | `boiler-count`, `boiler-power`, `boiler-delay` | fresh | 3 min – 5 min | 40 min – 42 min | — | no | no | test_boiler_call.py |
 | BP11 | West calls alone and pauses | West turned off and on, then its window opened and closed | off, its pause ends within a calculation (SmartPI does not call); heating again, the pause returns after a calculation period below the threshold; window open, VTherm turns West off after 30 s and the pause ends; window closed, West heats again and pauses two calculations later. | `boiler-count`, `boiler-power`, `boiler-delay` | fresh | 5 min | 58 min | — | no | no | test_boiler_call.py |
 | BP13 | West 300 W and East 900 W learned, a power threshold of 600 W | A West calls (300 W), A′ 20 minutes, B East calls (1200 W), C East stops (300 W), D West stops | A: the boiler stays off and West pauses after a calculation period with the boiler off; A′: the pause holds without a break, the boiler never starts, the room cools and nothing is learned; B: the boiler starts (with a delay, 120 s later) and West resumes at that moment; East does not pause (with the delay, it pauses too while the boiler waits); C: the boiler goes off at once, West pauses two calculations later, and nothing from the gap between them is learned; D: the pause ends. | `boiler-levels`, `boiler-levels-delay` | learned | 26 min | 70 min – 71 min | — | no | no | test_boiler_call.py, test_qas_instance.py |
@@ -220,8 +222,9 @@ for a background command.
 | BP18 | The start state | East calls, then West, and West's setpoint changes again at once (two of West's calculations a moment apart at the boiler's start) | neither pauses and the boiler starts, though two of West's calculations come a moment apart with the boiler still off; with an activation delay (120 s) both pause while the boiler waits and resume once it is on. | `boiler-count`, `boiler-power`, `boiler-delay` | fresh | 6 min – 10 min | 27 min – 29 min | — | no | no | test_boiler_call.py, test_qas_instance.py |
 | BP20 | West and East learned, both calling, the boiler on, nothing paused | Home Assistant restarts | once SmartPI runs again, VTherm counts their devices again and the boiler comes back; neither pauses, but with an activation delay VTherm shows the boiler off for 120 s, both pause meanwhile and resume once it is back; a, b and the dead times are kept. | `boiler-count`, `boiler-power`, `boiler-delay` | learned | 6 min – 10 min | 42 min – 44 min | — | no | no | test_boiler_call.py |
 | BP25 | Fresh, the valves reporting their opening 15 s after it is set, East calling alone below the threshold, the boiler off | West starts and completes the threshold, 20 times, each from the start state | West never pauses: SmartPI's log has no "West - SmartPI learning paused" line, though VTherm counts West only once its valve reports. | `boiler-count` | fresh | 60 min | 10.8 h | — | yes | no | test_boiler_call.py |
-| BP26 | Fresh, an activation delay of 120 s, West without heat for at least 600 s and its room 0.1 degC below its highest reading since, East calling alone below the threshold, the boiler off | West starts and completes the threshold; the boiler starts 120 s later | West pauses while the boiler waits and resumes at its start; SmartPI's heating dead-time detection counts from the boiler's start, not from West's call, and ends detected; the dead time it measured is recorded against the room's true 780 s and against 900 s (the true value plus the wait). | `boiler-delay` | fresh | 30 min | 2.6 h | typical when West's room is already 0.1 degC below its highest reading 600 s after its valve closed; after a run that heated West, its room may still rise and then has to cool | yes | no | test_boiler_call.py |
-| BP27 | Fresh, an activation delay of 120 s, East calling alone below the threshold, the boiler off | West calls and heats for 5 minutes with the boiler on, stops, and calls again about 300 s later, completing the threshold; the boiler starts 120 s later | West pauses while the boiler waits and resumes at its start; West was without heat for less than 600 s before the boiler's start (the wait counts), so SmartPI's dead-time estimator measures nothing: for 15 minutes from the boiler's start West's detection never waits for a response, its outcome never turns detected and its heating dead time stays unchanged. | `boiler-delay` | fresh | 32 min | 66 min | — | no | no | test_boiler_call.py |
+| BP26 | Fresh, an activation delay of 120 s, West without heat and its learning reset at least 600 s before and its room 0.1 degC below its highest reading since, East calling alone below the threshold, the boiler off | West starts and completes the threshold; the boiler starts 120 s later | West pauses while the boiler waits and resumes at its start; the heating dead-time detection armed at the boiler's start counts from it, not from West's call, and ends detected with a dead time of at least 60 s; the dead time is recorded against the room's true 780 s and against 900 s (the true value plus the wait). | `boiler-delay` | fresh | 30 min | 2.6 h | typical when the rooms are already 0.1 degC below their highest reading 600 s after their valves closed; after a heating, a room may still rise and then has to cool | yes | no | test_boiler_call.py |
+| BP27 | Fresh, an activation delay of 120 s, West and East without heat and their learning reset at least 600 s before and their rooms 0.1 degC below their highest reading since, East calling alone below the threshold, the boiler off | West calls and heats for 5 minutes with the boiler on, stops, and calls again about 300 s later, completing the threshold; the boiler starts 120 s later | West pauses while the boiler waits and resumes at its start; West was without heat for less than 600 s before the boiler's start (the wait counts), so SmartPI's dead-time estimator measures nothing: for 15 minutes from the boiler's start West's detection never waits for a response, its outcome never turns detected and its heating dead time stays unchanged; East, heated until the boiler went off at West's stop, gets no new measurement either, as the boiler comes back within 600 s of going off, and its heating dead time is none or at least 60 s. | `boiler-delay` | fresh | 42 min | 2.1 h | typical when the rooms are already 0.1 degC below their highest reading 600 s after their valves closed; after a heating, a room may still rise and then has to cool | yes | no | test_boiler_call.py |
+| BP28 | Fresh, an activation delay of 120 s, East calling alone below the threshold; West heats for 5 minutes with the boiler on and stops, and its learning is reset right after, its room still warming | West calls about 90 s after the reset and waits for the boiler; then West stops, settles (600 s from the reset and from its valve closing, its room 0.1 degC below its highest reading) and calls again | within 600 s of the reset SmartPI measures nothing: for 5 minutes from the boiler's start West's detection never waits for a response, and it has no outcome and no heating dead time; the settled start's detection, armed at the boiler's start, ends detected with a dead time of at least 60 s. | `boiler-delay` | fresh | 49 min | 3.3 h | typical when the rooms are already 0.1 degC below their highest reading 600 s after their valves closed; after a heating, a room may still rise and then has to cool | yes | no | test_boiler_call.py |
 <!-- end of catalogue -->
 
 ## 5. Known points
@@ -237,13 +240,21 @@ for a background command.
   boiler meanwhile.
 - BP26 measures a heating dead time from a fresh start: one detection on the bench spreads by
   hundreds of seconds, so its value is recorded against 780 s and 900 s, not judged; it passes on
-  the detection counting from the boiler's start and ending detected. The fresh reset clears
-  SmartPI's record of West's last stop, so BP26 itself waits before West's start until West's
-  valve has been closed for 600 s and its room is 0.1 °C below its highest reading since: a room
-  still warming from the previous run rose early and gave 357 s and 535 s on the bench.
-- BP27 resets nothing between West's two calls: SmartPI's own record of West's last stop decides
-  that the start at the boiler's start is not measured. It checks West's diagnostics, not the
-  log's "Heat Deadtime detected" line, which names no thermostat (East measures in the same run).
+  the detection armed at the boiler's start counting from it and ending detected with at least
+  60 s (the pause leaves "aborted" for the detection armed at West's call, which is not read).
+  SmartPI measures no start within 600 s of a reset of learning, but a room can still be warming
+  then, so BP26 itself waits before West's start until West's valve has been closed for 600 s,
+  its learning was reset 600 s before, and its room is 0.1 °C below its highest reading since: a
+  room still warming from the previous run rose early and gave 357 s and 535 s on the bench.
+- BP27 starts the same way, from settled West and East: back-to-back runs had measured rooms still
+  warming, 0 s for both in one run. It resets nothing between West's two calls: SmartPI's own
+  record of West's last stop decides that the start at the boiler's start is not measured. East,
+  heated until the boiler went off at West's stop, gets no new measurement either: SmartPI records
+  its stop at the boiler's stop, and the boiler comes back within 600 s. It checks West's
+  diagnostics, not the log's "Heat Deadtime detected" line, which names no
+  thermostat (East measures in the same run).
+- BP28 resets West's learning right after it heated, its room still warming: within 600 s of the
+  reset SmartPI measures nothing; the start after West has settled is measured.
 - BP7 sets West's setpoint 1 °C above its room, so that the calibration heats at once.
 - BP9 and BP20 restart Home Assistant; the trace misses its readings meanwhile.
 - BP25 runs about an hour (20 starts, each from the start state) and reads the instance's log

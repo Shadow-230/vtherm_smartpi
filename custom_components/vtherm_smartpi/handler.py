@@ -76,6 +76,9 @@ class SmartPIHandler:
         # Since when SmartPI has called with the central boiler off, without a break (monotonic
         # time), None while it does not.
         self._boiler_off_since: float | None = None
+        # Whether the central boiler was on at the last check while SmartPI called: the room was
+        # heated by it, so the boiler going off stops the room's heat.
+        self._heated_by_the_boiler: bool = False
         # The listener of Versatile Thermostat's central boiler state (``_listen_to_the_boiler``).
         self._boiler_listener_remove = None
         self._valve_linearization_configured: bool = False
@@ -551,11 +554,19 @@ class SmartPIHandler:
         when a thermostat's own start turns the boiler on, Versatile Thermostat does so only
         once the thermostat's device reports it. Learning resumes at once; a resume because the
         boiler starts while SmartPI calls starts the dead-time detection from that moment. A
-        change is published at once.
+        change is published at once. The boiler going off while SmartPI calls, after it heated
+        the room, is the end of the room's heat (``SmartPI.heat_stopped_with_the_boiler``); a
+        room that waits for a boiler that has not heated it records no stop.
         """
         now = time.monotonic()
         calls = self._calls_for_boiler_heat(algo)
         boiler_on = central_boiler_on(self._thermostat.hass) if calls else None
+        if calls and boiler_on is False and self._heated_by_the_boiler:
+            algo.heat_stopped_with_the_boiler()
+        if not calls:
+            self._heated_by_the_boiler = False
+        elif boiler_on is not None:
+            self._heated_by_the_boiler = boiler_on
         if not (calls and boiler_on is False):
             self._boiler_off_since = None
         elif self._boiler_off_since is None:

@@ -260,6 +260,10 @@ La transition ON -> OFF apprend la réponse passive opposée.
 
 La détection suit la température intérieure filtrée, y compris pendant une calibration forcée : une mesure brute qui oscille d'un pas de capteur détecterait sinon une réponse dès l'échelon de puissance. Une détection en cours n'est pas reprise après un redémarrage, et la durée minimale OFF doit être observée dans la session en cours avant qu'une détection puisse être armée.
 
+Il en va de même après une réinitialisation de l'estimateur : une réinitialisation de l'apprentissage (`reset_smartpi_learning`) et la réinitialisation lors d'un passage entre chauffage et refroidissement font partir la durée minimale OFF (`min_off_time_seconds = 600 s`) de la réinitialisation. Le passé de la pièce est alors inconnu : une pièce qui se réchauffe encore après sa dernière chauffe monte juste après un démarrage, et l'estimateur prendrait cette montée pour la réponse et donnerait un temps mort d'environ 0 s. Une réponse indicielle se mesure sur un procédé au repos : « il est nécessaire que le procédé soit en équilibre au début de l'essai » (référence 5, §6.4, p. 237). Un nouveau thermostat sans état sauvegardé n'a pas non plus de dernier arrêt : son premier démarrage n'est pas retenu.
+
+Limite : une pièce sans chauffe depuis 600 à 900 s qui se réchauffe encore après sa dernière chauffe peut encore donner un temps mort plus court que le vrai. La durée minimale OFF est écoulée, et la tendance avant le démarrage demande `DEADTIME_PRESTART_MIN_SPAN_S = 900 s` d'historique.
+
 Une réponse est détectée dès que la température s'est écartée de `0.05 °C` de son creux (chauffe) ou de son pic (refroidissement) depuis la transition de puissance. Le temps mort court de la transition au dernier instant à moins de `0.01 °C` de ce creux ou de ce pic, suivi pendant l'attente : il ne dépend donc pas de la rétention de l'historique de température. L'attente abandonne après `DEADTIME_ACTIVE_TIMEOUT_S = 14400 s` pour une réponse active (puissance démarrée) et `DEADTIME_PASSIVE_TIMEOUT_S = 43200 s` pour une réponse passive (puissance coupée) : après une coupure, un émetteur qui stocke beaucoup de chaleur (plancher chauffant) continue de réchauffer la pièce, puis plafonne, et la baisse peut arriver plusieurs heures plus tard. Pendant le bootstrap, l'attente passive se termine par une détection ou par une reprise de chauffe, qui exige une baisse que la détection voit d'abord ; la limite ne fait que borner le délai au-delà duquel une baisse n'est plus attribuée à la coupure. Une transition de puissance abandonne une attente en cours. L'issue de la dernière attente de chaque réponse et l'âge de l'attente en cours sont publiés (`analysis.deadtime`).
 
 La réponse à un démarrage de puissance est l'écart de la température par rapport à l'évolution qu'elle suivait avant le démarrage. Sans chauffe, la température d'une pièce reste stable ou baisse : le suivi du creux ci-dessus date alors la réponse. Une pièce qui se réchauffe déjà avec le chauffage éteint (occupants, soleil, pièce voisine) s'éloigne par elle-même du niveau de démarrage, et le suivi du creux daterait la réponse trop tôt (en COOL, il en va de même pour une pièce qui se refroidit déjà avant le début du refroidissement). Ainsi, à un démarrage actif (puissance activée), `deadtime_trend.prestart_trend()` ajuste une droite sur la température brute de la période OFF précédant le démarrage :
@@ -381,6 +385,18 @@ la chaudière. L'estimateur enregistre l'arrêt, de sorte que la durée minimale
 sans chauffe compte à partir de là, mais il ne mesure pas la réponse passive de
 la pièce à cet arrêt (3.6) : la pièce refroidissait déjà, et ce temps mort
 serait trop court.
+
+Lorsque la chaudière de Versatile Thermostat s'arrête pendant que SmartPI
+demande, et qu'elle chauffait la pièce, la chaleur de la pièce s'arrête à ce
+moment, bien que la commande de SmartPI ne change pas. L'estimateur enregistre
+alors l'arrêt, de sorte que la durée minimale sans chauffe compte à partir de
+l'arrêt de la chaudière, et il n'arme rien. Lorsque la chaudière revient en
+moins de 600 s, son démarrage n'est pas mesuré, comme celui d'une pièce qui
+redemande peu après sa dernière chauffe ; après 600 s, il est mesuré depuis le
+démarrage de la chaudière. Une pièce qui commence à demander pendant que la
+chaudière est arrêtée, et l'attend, n'enregistre aucun arrêt : la chaudière ne
+l'a pas chauffée. Le handler sait de quel cas il s'agit : la chaudière était
+allumée, ou non, à sa dernière vérification pendant que SmartPI demandait.
 
 La pause ne change rien d'autre que l'apprentissage. Contrairement à la pause
 de l'utilisateur, elle ne redémarre pas l'épisode de chauffe de la régulation :
@@ -1144,7 +1160,7 @@ La matrice pilote uniquement la mise à jour des gains et l'apprentissage thermi
 2. **Sundaresan K.R. et Krishnaswamy P.R.**, estimation des paramètres de délai et de constante de temps.
 3. Régression **OLS** avec test t de Student pour la validation de pente.
 4. **Hagglund T. et Astrom K.J.**, Supervision of adaptive control algorithms, *Automatica* 36(8), 2000, 1171–1180 : pause d'apprentissage pendant que la chaudière centrale est arrêtée (3.8).
-5. **Astrom K.J. et Hagglund T.**, *PID Controllers: Theory, Design, and Tuning*, 2e éd., Instrument Society of America, 1995 : pause d'apprentissage pendant que la chaudière centrale est arrêtée (3.8).
+5. **Astrom K.J. et Hagglund T.**, *PID Controllers: Theory, Design, and Tuning*, 2e éd., Instrument Society of America, 1995 : la durée minimale OFF après une réinitialisation (3.6) ; pause d'apprentissage pendant que la chaudière centrale est arrêtée (3.8).
 6. **Skogestad S.**, Simple analytic rules for model reduction and PID controller tuning, *Journal of Process Control* 13, 2003, 291–309 : pause d'apprentissage pendant que la chaudière centrale est arrêtée (3.8).
 
 Ce document sert de référence alignée sur l'implémentation SmartPI actuelle.

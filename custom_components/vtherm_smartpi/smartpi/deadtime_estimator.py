@@ -127,7 +127,11 @@ class DeadTimeEstimator:
         self.model_hvac_mode = None
         self.state = "OFF"
         self.last_power = 0.0
-        self.last_stop_time = None
+        # As after a restart (load_state): the OFF duration before the reset is
+        # unknown, and a room still warming from its last heating would give a
+        # dead time too short, so the minimum OFF time must elapse after the
+        # reset before a detection can be armed.
+        self.last_stop_time = time.monotonic()
         self.heat_start_time = None
         self.heat_trough_temp = None
         self.cool_start_time = None

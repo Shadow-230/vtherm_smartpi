@@ -249,6 +249,10 @@ ON -> OFF transition learns the opposite passive response.
 
 Detection tracks the filtered indoor temperature, including during a forced calibration: a raw measurement that oscillates by one sensor step would otherwise detect a response as soon as the power steps. A detection in progress is not resumed after a restart, and the minimum OFF duration must be observed again in the new session before a detection can be armed.
 
+The same holds after a reset of the estimator: a reset of learning (`reset_smartpi_learning`) and the reset at a change between heating and cooling start the minimum OFF duration (`min_off_time_seconds = 600 s`) at the reset. The room's past is unknown then: a room still warming from its last heating rises right after a start, and the estimator would take that rise for the response and give a dead time of about 0 s. A step response is measured from a process at rest: "it is necessary that the process be in equilibrium when the experiment is begun" (reference 5, §6.4, p. 237). A new thermostat without a saved state has no last stop either: its first start is not held back.
+
+Limit: a room without heat for 600 to 900 s that is still warming from its last heating can still give a dead time shorter than the true one. The minimum OFF duration has passed, and the trend before the start needs `DEADTIME_PRESTART_MIN_SPAN_S = 900 s` of history.
+
 A response is detected once the temperature has moved by `0.05 °C` from its trough (heat) or peak (cool) since the power transition. The dead time runs from the transition to the last instant within `0.01 °C` of that trough or peak, tracked during the wait, so it does not depend on the retention of the temperature history. The wait gives up after `DEADTIME_ACTIVE_TIMEOUT_S = 14400 s` for an active response (power started) and `DEADTIME_PASSIVE_TIMEOUT_S = 43200 s` for a passive response (power cut): after a cut, an emitter with a large stored heat (floor heating) keeps warming the room, then plateaus, and the drop can come several hours later. In the bootstrap the passive wait ends by a detection or a power restart, which needs a drop the detection sees first; the limit only bounds how late a drop is still attributed to the cut. A power transition aborts a pending wait. The outcome of the last wait per response and the age of the wait in progress are published (`analysis.deadtime`).
 
 The response to a power start is the deviation of the temperature from the course it followed before the start. Without heating, a room is flat or cools down: the trough tracking above then dates the response. A room that already warms with the heater off (occupants, sun, a neighbouring room) moves away from the start level by itself, and the trough tracking would date the response too early (in COOL, the same holds for a room that already cools before the cooling starts). So, at an active start (power on), `deadtime_trend.prestart_trend()` fits a line on the raw temperature of the OFF period before the start:
@@ -436,6 +440,17 @@ stopped, the room's heat had already stopped earlier, with the boiler. The
 estimator records the stop, so the minimum time without heat counts from then,
 but it does not time the room's passive response to this stop (3.6): the room
 was already cooling, and that dead time would come out too short.
+
+When Versatile Thermostat's boiler goes off while SmartPI calls, and the boiler
+had been heating the room, the room's heat stops at that moment, though
+SmartPI's command does not change. The estimator records the stop then, so the
+minimum time without heat counts from the boiler's stop, and it arms nothing.
+When the boiler comes back within 600 s, its start is not measured, as a room
+that calls again shortly after its last heating is not; after 600 s, it is
+measured from the boiler's start. A room that starts calling while the boiler
+is off, and waits for it, records no stop: the boiler has not heated it. The
+handler knows which case it is: the boiler was on, or not, at its last check
+while SmartPI called.
 
 The pause changes nothing but learning. Unlike the user's pause, it does not
 restart the regulation's heating episode: the dead-time window in which the
@@ -1180,5 +1195,5 @@ The matrix drives the gain updates and thermal learning only. A regime transitio
 2. **Sundaresan K.R. and Krishnaswamy P.R.**, estimation of delay and time-constant parameters.
 3. **OLS** regression with Student t-test for slope validation.
 4. **Hagglund T. and Astrom K.J.**, Supervision of adaptive control algorithms, *Automatica* 36(8), 2000, 1171–1180: learning pause while the central boiler is off (3.8).
-5. **Astrom K.J. and Hagglund T.**, *PID Controllers: Theory, Design, and Tuning*, 2nd ed., Instrument Society of America, 1995: learning pause while the central boiler is off (3.8).
+5. **Astrom K.J. and Hagglund T.**, *PID Controllers: Theory, Design, and Tuning*, 2nd ed., Instrument Society of America, 1995: the minimum OFF duration after a reset (3.6); learning pause while the central boiler is off (3.8).
 6. **Skogestad S.**, Simple analytic rules for model reduction and PID controller tuning, *Journal of Process Control* 13, 2003, 291–309: learning pause while the central boiler is off (3.8).

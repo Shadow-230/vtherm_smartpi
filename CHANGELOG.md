@@ -4,6 +4,20 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+- Dead time: a reset of the dead-time estimator (a reset of learning, or a
+  change between heating and cooling) starts its minimum time without heat
+  (600 s) at the reset, as a restart already does. A room still warming from
+  its last heating no longer gives a dead time of about 0 s right after a
+  reset. This changes the author's code in `smartpi/deadtime_estimator.py`.
+  Limit: a room without heat for 600 to 900 s that is still warming can still
+  give a dead time shorter than the true one. See
+  `documentation/en/technical_doc.md`, 3.6.
+- Learning pause: when Versatile Thermostat's central boiler goes off while
+  SmartPI calls, after it heated the room, the dead-time estimator records the
+  room's stop at that moment and arms nothing. A boiler that comes back within
+  600 s is not measured; after 600 s, its start is measured from the boiler's
+  start. A room that waits for a boiler that has not heated it records no stop.
+  See `documentation/en/technical_doc.md`, 3.8.
 - Learning: SmartPI does not learn heating while it calls for heat and
   Versatile Thermostat's central boiler is off, for a thermostat that Versatile
   Thermostat counts for its central boiler: the room then gets no heat and cools
