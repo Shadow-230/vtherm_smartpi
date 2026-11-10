@@ -422,6 +422,9 @@ class Bench:
         self.trace: Trace | None = None
         self.started = 0.0  # when the last step's action started
         self.learning = "fresh"  # West's and East's learning at the start (``start``)
+        # When each thermostat's learning was last reset or loaded: SmartPI's dead-time estimator
+        # measures no start in the 600 s after it (its minimum time without heat).
+        self.reset_at: dict[str, float] = {}
 
     @classmethod
     async def open(cls, r: Any) -> Bench:
@@ -684,6 +687,11 @@ class Bench:
             goals={f"West {'off' if opened else 'heating'}": mode},
         )
 
+    async def reset(self, climate: str) -> None:
+        """The thermostat's learning reset (SmartPI's service), and the moment of it."""
+        await self.api.call(SMARTPI, "reset_smartpi_learning", {"entity_id": climate})
+        self.reset_at[climate] = time.time()
+
     async def threshold_entity(self) -> tuple[str | None, float]:
         """The role's threshold: VTherm's count threshold, or its power threshold."""
         if self.role.count_threshold > 0:
@@ -781,10 +789,11 @@ class Bench:
         for climate in COUNTED:
             if start == "learned":
                 await self.api.call(HELPER_DOMAIN, "load_learned_state", {"entity_id": climate, "state": KEYS[climate]})
+                self.reset_at[climate] = time.time()
                 took, data = await self.until(lambda s, c=climate: of(s, c, "phase") not in (None, "Hysteresis"), MARGIN_S)
                 self.check(took is not None, f"start: {NAMES[climate]} learned, phase {of(data, climate, 'phase')}, heating dead time {of(data, climate, 'deadtime')} s")
             else:
-                await self.api.call(SMARTPI, "reset_smartpi_learning", {"entity_id": climate})
+                await self.reset(climate)
                 took, data = await self.until(
                     lambda s, c=climate: of(s, c, "deadtime_reliable") is False and of(s, c, "accepted_a") == 0 and of(s, c, "heat_outcome") is None,
                     MARGIN_S,

@@ -295,6 +295,7 @@ def test_the_typical_times_of_the_own_setpoint_and_the_closing_start_state() -> 
             assert s.closing(ROLES[name]).typical_s == ROLES[name].boiler_delay_s + SETTLED_S, (sid, name)
     assert SCENARIOS["BP2"].closing(delay).typical_s == 150.0
     assert SCENARIOS["BP9"].closing(count).typical_s == RECALC_S
+    assert SCENARIOS["BP9"].closing(delay).typical_s == delay.boiler_delay_s + SETTLED_S  # the restart's boiler-off time
     assert SCENARIOS["BP1"].closing(delay).typical_s == 0.0
 
 
@@ -336,19 +337,23 @@ def test_a_pause_while_the_boiler_waits_and_its_resume_at_its_start() -> None:
     assert waited_for_the_boiler(logged_pauses(_LOG, "West"), _at("08:11:00"), _at("08:12:00")) == (None, None)
 
 
-def test_bp26_starts_from_a_settled_west() -> None:
-    """BP26 starts once West's valve has been closed for SmartPI's 600 s and its room is a sensor
-    step below its highest reading since."""
-    from scenarios import MIN_OFF_S, a_settled_west  # noqa: PLC0415
+def test_a_room_settles_600_s_after_its_valve_closed_and_its_reset_and_below_its_peak() -> None:
+    """BP26-BP28 start a measured start once the room's valve has been closed for SmartPI's 600 s,
+    its learning was reset or loaded 600 s before, and its room is a sensor step below its highest
+    reading since."""
+    from scenarios import MIN_OFF_S, a_settled_room  # noqa: PLC0415
 
     from custom_components.vtherm_smartpi.smartpi.deadtime_estimator import DeadTimeEstimator  # noqa: PLC0415
 
     assert DeadTimeEstimator().min_off_time_seconds == MIN_OFF_S
     closed = datetime.fromtimestamp(1000.0, UTC).isoformat()
-    holds = a_settled_west({})
+    holds = a_settled_room(WEST, {}, 900.0)
     readings = [(1100.0, 19.4), (1300.0, 19.5), (1500.0, 19.5), (1610.0, 19.5), (1700.0, 19.4)]
     assert [holds({"t": t, "west.indoor": c, "west.valve": 0.0, "west.valve_since": closed}) for t, c in readings] == [False, False, False, False, True]
-    assert not a_settled_west({"c": 19.6})({"t": 1700.0, "west.indoor": 19.5, "west.valve": 20.0, "west.valve_since": closed})
+    assert not a_settled_room(WEST, {"c": 19.6}, 900.0)({"t": 1700.0, "west.indoor": 19.5, "west.valve": 20.0, "west.valve_since": closed})
+    # Reset 500 s before: not yet, though the valve and the room are ready.
+    assert not a_settled_room(WEST, {"c": 19.6}, 1200.0)({"t": 1700.0, "west.indoor": 19.5, "west.valve": 0.0, "west.valve_since": closed})
+    assert a_settled_room(EAST, {"c": 19.6}, 1100.0)({"t": 1700.0, "east.indoor": 19.5, "east.valve": 0.0, "east.valve_since": closed})
 
 
 def test_bp27_calls_again_within_smartpi_s_600_s_and_watches_15_minutes() -> None:
@@ -362,6 +367,25 @@ def test_bp27_calls_again_within_smartpi_s_600_s_and_watches_15_minutes() -> Non
     assert (s.roles, s.start, s.boiler_at_end) == (("boiler-delay",), "fresh", True)
     assert REST_S + delay.boiler_delay_s + RECALC_S <= MIN_OFF_S - RECALC_S
     assert NO_DETECTION_WATCH_S >= 15 * 60.0
+
+
+def test_bp26_to_bp28_ask_a_measured_dead_time_of_at_least_a_calculation() -> None:
+    """A dead time below one of SmartPI's calculations (60 s) is a rise already under way."""
+    from scenarios import SHORTEST_DEADTIME_S, at_least_a_calculation  # noqa: PLC0415
+
+    assert SHORTEST_DEADTIME_S == RECALC_S == 60.0
+    assert [at_least_a_calculation(v) for v in (None, 0.0035, 59.9, 60.0, 780.0)] == [False, False, False, True, True]
+
+
+def test_bp28_calls_within_600_s_of_the_reset() -> None:
+    """BP28, on the activation delay: West's call after the reset and the boiler's wait stay within
+    the 600 s SmartPI's estimator asks after a reset, with a calculation's margin."""
+    from scenarios import CALL_AFTER_RESET_S, MIN_OFF_S  # noqa: PLC0415
+
+    delay = ROLES["boiler-delay"]
+    s = SCENARIOS["BP28"]
+    assert (s.roles, s.start, s.boiler_at_end) == (("boiler-delay",), "fresh", True)
+    assert CALL_AFTER_RESET_S + delay.boiler_delay_s + RECALC_S <= MIN_OFF_S - RECALC_S
 
 
 def test_each_value_the_pack_reads_is_in_smartpi_s_diagnostics() -> None:
