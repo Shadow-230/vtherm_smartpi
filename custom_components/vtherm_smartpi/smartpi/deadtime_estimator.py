@@ -54,6 +54,13 @@ class DeadTimeEstimator:
         self.state = "OFF"  # OFF, HEATING, COOLING, WAITING_HEAT_RESPONSE, WAITING_COOL_RESPONSE
         self.last_power = 0.0
         self.last_stop_time: float | None = None
+        # Start of the current or last active period (power from 0), the
+        # passive response after it is timed only once it has settled.
+        self.last_start_time: float | None = None
+        # Settling time of an active response (s), from the response lag
+        # estimator (ResponseLagEstimator.active_settle_s), None while no lag
+        # is published. Set by SmartPI before each update.
+        self.active_settle_s: float | None = None
 
         # Detection ephemeral data
         self.heat_start_time: float | None = None
@@ -132,6 +139,7 @@ class DeadTimeEstimator:
         # dead time too short, so the minimum OFF time must elapse after the
         # reset before a detection can be armed.
         self.last_stop_time = time.monotonic()
+        self.last_start_time = None
         self.heat_start_time = None
         self.heat_trough_temp = None
         self.cool_start_time = None
@@ -150,6 +158,7 @@ class DeadTimeEstimator:
         self.state = "OFF"
         self.last_power = float(current_power)
         self.last_stop_time = None
+        self.last_start_time = None
         self.heat_start_time = None
         self.heat_trough_temp = None
         self.cool_start_time = None
@@ -310,6 +319,7 @@ class DeadTimeEstimator:
 
         # 0 -> >0: active HVAC response.
         if self.last_power <= 0.01 and u_applied > 0.01:
+            self.last_start_time = now
             allow_start = True
 
             threshold = (
@@ -360,6 +370,18 @@ class DeadTimeEstimator:
                     "DeadTime: Passive response ignored (Prev Power %.2f < %s)",
                     self.last_power,
                     threshold,
+                )
+            elif not self._active_period_settled(now, hvac_mode):
+                # The stop is recorded, but the response before it had not
+                # settled: the room was not at rest, and a passive response
+                # timed from this stop would be too short.
+                self._abort_waiting()
+                self.state = "COOLING" if passive_response == "cool" else "HEATING"
+                self._waiting_power_on = None
+                _LOGGER.debug(
+                    "DeadTime: Passive response not armed (active period %s s, settling %s s)",
+                    None if self.last_start_time is None else round(now - self.last_start_time),
+                    self._active_settling_s(hvac_mode),
                 )
             else:
                 self._start_response(
@@ -488,6 +510,38 @@ class DeadTimeEstimator:
                 self.state = "OFF"
 
         self.last_power = u_applied
+
+    def _active_settling_s(self, hvac_mode: VThermHvacMode) -> float | None:
+        """Time an active period must last before the passive response after it
+        is timed, None while the active dead time is not reliable.
+
+        A step response is measured from a process at rest; for a room heated
+        at constant power, rest is a steady ramp, reached once the response has
+        settled. The time is the active dead time, and with a published response
+        lag at least its settling time (active_settle_s): the same gate as the
+        start of an active learning window, which never starts before the dead
+        time has elapsed either.
+        """
+        active_s, active_reliable = self.active_deadtime(hvac_mode)
+        if not active_reliable or active_s is None:
+            return None
+        if self.active_settle_s is None:
+            return float(active_s)
+        return max(float(active_s), float(self.active_settle_s))
+
+    def _active_period_settled(self, now: float, hvac_mode: VThermHvacMode) -> bool:
+        """Whether the active period that ends now lasted its settling time."""
+        settling = self._active_settling_s(hvac_mode)
+        if settling is None or self.last_start_time is None:
+            return False
+        return now - self.last_start_time >= settling
+
+    def _abort_waiting(self) -> None:
+        """A response still waited for is dropped by the power transition."""
+        if self.state == "WAITING_HEAT_RESPONSE":
+            self.last_outcome["heat"] = "aborted"
+        elif self.state == "WAITING_COOL_RESPONSE":
+            self.last_outcome["cool"] = "aborted"
 
     def _free_running_since(self, hvac_mode: VThermHvacMode) -> float | None:
         """Return the start of the free-running part of the current OFF period.

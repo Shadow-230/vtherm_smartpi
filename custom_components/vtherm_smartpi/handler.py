@@ -548,7 +548,7 @@ class SmartPIHandler:
 
     def _update_boiler_learning_pause(self, algo: SmartPI) -> bool:
         """Pause SmartPI's learning while it calls for heat and the central boiler is off, or
-        resume it; whether the pause changed.
+        resume it; whether the pause changed or the room's heat stopped with the boiler.
 
         The pause starts once this has held without a break for ``BOILER_PAUSE_CONFIRM_S``:
         when a thermostat's own start turns the boiler on, Versatile Thermostat does so only
@@ -561,8 +561,10 @@ class SmartPIHandler:
         now = time.monotonic()
         calls = self._calls_for_boiler_heat(algo)
         boiler_on = central_boiler_on(self._thermostat.hass) if calls else None
-        if calls and boiler_on is False and self._heated_by_the_boiler:
+        stopped = calls and boiler_on is False and self._heated_by_the_boiler
+        if stopped:
             algo.heat_stopped_with_the_boiler()
+            self._should_publish_intermediate = True
         if not calls:
             self._heated_by_the_boiler = False
         elif boiler_on is not None:
@@ -575,7 +577,7 @@ class SmartPIHandler:
             algo.boiler_learning_paused or now - self._boiler_off_since >= BOILER_PAUSE_CONFIRM_S
         )
         if paused == algo.boiler_learning_paused:
-            return False
+            return stopped
         algo.set_boiler_learning_paused(paused, boiler_started=calls and boiler_on is True, current_temp=self._thermostat.current_temperature)
         self._should_publish_intermediate = True
         return True

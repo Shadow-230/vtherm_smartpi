@@ -9,6 +9,10 @@ cooling dead times the radiator's delay plus its lag. The two times SmartPI save
 start of learning; the thermal twin's save time 0, which SmartPI takes as a long stop and
 resynchronises), so a file changes only with its room's model. ``tests/test_qas_files.py`` checks
 that each is up to date and loads into SmartPI as its room's learned model.
+
+One variant, ``west_settled.json``, has West's response lag published as well (its mean residence
+time, the radiator's delay plus its lag, from three agreeing estimates) and heating periods of two
+hours: SmartPI's settling time of a heating is then three lags (BP29).
 """
 
 from __future__ import annotations
@@ -31,16 +35,31 @@ STATES = HERE / "custom_components" / "smartpi_test_helper" / "states"
 LEARNING_START = "2026-01-01T00:00:00"
 
 
+SETTLED = "west_settled"  # West with its response lag published (BP29)
+SETTLED_HEATING_S = 2 * 3600.0  # its heating periods: half their median is longer than three lags
+LAG_UNCERTAINTY_S = 10.0  # each estimate's standard deviation
+
+
 def file(r: Room) -> pathlib.Path:
     return STATES / f"{r.key}.json"
+
+
+def settled_file() -> pathlib.Path:
+    return STATES / f"{SETTLED}.json"
+
+
+def lag_s(r: Room) -> float:
+    """The room's response lag: its mean residence time, the radiator's delay plus its lag."""
+    return 60.0 * (r.delay_min + r.lag_min)
 
 
 def model(r: Room) -> dict[str, float]:
     return {"a": r.gain, "b": r.loss, "deadtime_s": 60.0 * (r.delay_min + r.lag_min)}
 
 
-def state(r: Room) -> dict[str, Any]:
-    """SmartPI's saved state with the room's model learned."""
+def state(r: Room, settled: bool = False) -> dict[str, Any]:
+    """SmartPI's saved state with the room's model learned; ``settled``: its response lag
+    published too."""
     from custom_components.vtherm_smartpi.algo import SmartPI  # noqa: PLC0415
     from custom_components.vtherm_smartpi.smartpi.const import AB_HISTORY_SIZE  # noqa: PLC0415
 
@@ -59,19 +78,34 @@ def state(r: Room) -> dict[str, Any]:
         setattr(dt_est, f"deadtime_{channel}_s", values["deadtime_s"])
         setattr(dt_est, f"deadtime_{channel}_reliable", True)
         getattr(dt_est, f"_history_{channel}").extend([values["deadtime_s"]] * 6)
+    if settled:
+        algo.learn_win.response_lag.load_state(
+            {
+                "estimates": [[lag_s(r), LAG_UNCERTAINTY_S]] * 3,
+                "durations": [SETTLED_HEATING_S] * 3,
+                "published": lag_s(r),
+                "episodes": 3,
+                "hvac_mode": "heat",
+            }
+        )
     saved = json.loads(json.dumps(algo.save_state()))
     saved["lw_state"]["learning_start_date"] = LEARNING_START
     saved["twin_state"]["saved_at"] = 0.0
     return saved
 
 
-def text(r: Room) -> str:
-    return json.dumps(state(r), indent=1, sort_keys=True) + "\n"
+def text(r: Room, settled: bool = False) -> str:
+    return json.dumps(state(r, settled), indent=1, sort_keys=True) + "\n"
+
+
+def files() -> list[tuple[pathlib.Path, str]]:
+    """Every file and the text it must hold."""
+    return [(file(r), text(r)) for r in ROOMS] + [(settled_file(), text(room("West"), settled=True))]
 
 
 def main(argv: list[str]) -> int:
     if "--check" in argv:
-        stale = [file(r).name for r in ROOMS if not file(r).is_file() or file(r).read_text(encoding="utf-8") != text(r)]
+        stale = [path.name for path, content in files() if not path.is_file() or path.read_text(encoding="utf-8") != content]
         if stale:
             print("not up to date:", ", ".join(stale))
             return 1
@@ -80,6 +114,8 @@ def main(argv: list[str]) -> int:
     for r in ROOMS:
         file(r).write_text(text(r), encoding="utf-8")
         print(f"{file(r).name}: {model(r)}")
+    settled_file().write_text(text(room("West"), settled=True), encoding="utf-8")
+    print(f"{settled_file().name}: {model(room('West'))}, response lag {lag_s(room('West')):.0f} s")
     return 0
 
 

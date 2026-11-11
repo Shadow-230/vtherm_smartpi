@@ -318,6 +318,10 @@ LOG_MARGIN_S = 60.0  # the bench's clock against Home Assistant's, when reading 
 CLOCK_MARGIN_S = 10.0  # the bench's reading against SmartPI's calculation and Home Assistant's clock
 BOILER_PAUSE_LINE = "(central boiler off)"  # algo.py, set_boiler_learning_paused: "<name> - SmartPI learning paused (...)"
 AT_ONCE_S = 1.0  # a resume logged at the boiler's start: within 0.001 s on the bench
+HEAT_STOP_LINE = "heat stopped with the central boiler"  # algo.py, heat_stopped_with_the_boiler
+COOL_DETECTED_LINE = "Cool Deadtime detected"  # deadtime_estimator.py: names no thermostat
+_HEAT_STOP = re.compile(r"(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d+) .*?\] (.+?) - SmartPI heat stopped with the central boiler( \(heating dead-time detection aborted\))?")
+_COOL_DETECTED = re.compile(r"(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d+) .*Cool Deadtime detected = ([0-9.]+)s")
 _LOGGED = re.compile(r"(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d+) .*?\] (.+?) - SmartPI learning (paused|resumed) \(central boiler off\)")
 
 
@@ -341,6 +345,31 @@ def logged_pauses(lines: Iterable[str], name: str) -> list[tuple[float, bool]]:
         if found and found.group(2) == name:
             at = datetime.strptime(found.group(1), "%Y-%m-%d %H:%M:%S.%f").replace(tzinfo=UTC).timestamp()
             out.append((at, found.group(3) == "paused"))
+    return sorted(out)
+
+
+def _logged_at(stamp: str) -> float:
+    return datetime.strptime(stamp, "%Y-%m-%d %H:%M:%S.%f").replace(tzinfo=UTC).timestamp()
+
+
+def logged_heat_stops(lines: Iterable[str], name: str) -> list[tuple[float, bool]]:
+    """A thermostat's stops of heat with the central boiler in SmartPI's info lines: (time,
+    whether a heating dead-time detection was dropped), in UTC."""
+    out = []
+    for line in lines:
+        found = _HEAT_STOP.search(line)
+        if found and found.group(2) == name:
+            out.append((_logged_at(found.group(1)), found.group(3) is not None))
+    return sorted(out)
+
+
+def logged_cool_dead_times(lines: Iterable[str]) -> list[tuple[float, float]]:
+    """The passive (cooling) dead times detected in SmartPI's info lines: (time, seconds)."""
+    out = []
+    for line in lines:
+        found = _COOL_DETECTED.search(line)
+        if found:
+            out.append((_logged_at(found.group(1)), float(found.group(2))))
     return sorted(out)
 
 
@@ -686,6 +715,13 @@ class Bench:
             waits={WEST: WINDOW_OPENS if opened else WINDOW_CLOSES},
             goals={f"West {'off' if opened else 'heating'}": mode},
         )
+
+    async def load(self, climate: str, state: str) -> None:
+        """The thermostat given a learned state of the helper (``states/<state>.json``)."""
+        await self.api.call(HELPER_DOMAIN, "load_learned_state", {"entity_id": climate, "state": state})
+        self.reset_at[climate] = time.time()
+        took, data = await self.until(lambda s: of(s, climate, "deadtime_reliable") is True and of(s, climate, "phase") not in (None, "Hysteresis"), MARGIN_S)
+        self.check(took is not None, f"{NAMES[climate]} learned from {state}: phase {of(data, climate, 'phase')}, heating dead time {of(data, climate, 'deadtime')} s")
 
     async def reset(self, climate: str) -> None:
         """The thermostat's learning reset (SmartPI's service), and the moment of it."""
