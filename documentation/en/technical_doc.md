@@ -266,6 +266,19 @@ The response to a power start is the deviation of the temperature from the cours
 
 A rejected measurement publishes the outcome `rejected` and leaves the detections unchanged: the dead time keeps its previous value. A passive response (power cut) is not concerned: the trend before a cut is that of the heating itself.
 
+A passive response is timed only after an active period that has settled. A step response is measured from a process at rest (reference 5, §6.4, p. 237); for a room heated at constant power, rest is a steady rise, as for any process with integral action (p. 21), reached once the response has settled, after about its mean residence time $T_{ar} = L + T$ (p. 16). The active period that ends at the cut must have lasted:
+
+- the reliable active dead time, while no response lag is published (3.7);
+- with a published lag, the longer of the active dead time and the settling time of an active learning window (`ResponseLagEstimator.active_settle_s`: three lags, at most half the median active episode, 3.2). SmartPI already waits for this gate, and never less than the dead time, before it learns `a` from an active response. Three lags put the response within 5 % of its steady value, as the time to 95 % used for heating systems (reference 7, p. 5).
+
+Without a reliable active dead time no passive response is timed. A shorter period records the cut (the minimum OFF duration counts from it), ends a detection still waiting (outcome `aborted`), and arms nothing. The period starts at the last power start; after the learning pause, at the boiler's start (3.8). SmartPI passes the settling time to the estimator at each calculation. In COOL the roles swap: the rise after a cooling period is timed once the cooling has settled.
+
+Limits:
+
+- with short active episodes the cap at half the median lowers the band below 95 %, as for the learning windows;
+- where no response lag is published, the active dead time alone remains the threshold;
+- the first phase learns `b` only once the passive dead time is reliable (3.1, 3.2): a room whose heating periods end before the threshold, for example through the sun or the stored heat of a floor heating, can stay longer in its first phase. A calibration (4.6) is concerned too: its cool-down times a passive response only after a heat-up longer than the threshold.
+
 Reliability becomes true as soon as at least one valid measurement has been captured on the corresponding channel. Each channel keeps its last 6 detections; the published value is their median, so a single aberrant detection does not move it (with one or two detections the median equals their mean). On restart, the published value is recomputed from the restored detections.
 
 ### 3.7 Response lag and delivered power
@@ -444,7 +457,11 @@ was already cooling, and that dead time would come out too short.
 When Versatile Thermostat's boiler goes off while SmartPI calls, and the boiler
 had been heating the room, the room's heat stops at that moment, though
 SmartPI's command does not change. The estimator records the stop then, so the
-minimum time without heat counts from the boiler's stop, and it arms nothing.
+minimum time without heat counts from the boiler's stop, and it arms nothing. A
+heating detection still waiting is dropped at once (outcome `aborted`), as the
+estimator drops one at a power cut: a later rise would not answer this heat. The
+stop is logged ("SmartPI heat stopped with the central boiler", with "(heating
+dead-time detection aborted)" when one was dropped) and published at once.
 When the boiler comes back within 600 s, its start is not measured, as a room
 that calls again shortly after its last heating is not; after 600 s, it is
 measured from the boiler's start. A room that starts calling while the boiler
@@ -1195,5 +1212,6 @@ The matrix drives the gain updates and thermal learning only. A regime transitio
 2. **Sundaresan K.R. and Krishnaswamy P.R.**, estimation of delay and time-constant parameters.
 3. **OLS** regression with Student t-test for slope validation.
 4. **Hagglund T. and Astrom K.J.**, Supervision of adaptive control algorithms, *Automatica* 36(8), 2000, 1171–1180: learning pause while the central boiler is off (3.8).
-5. **Astrom K.J. and Hagglund T.**, *PID Controllers: Theory, Design, and Tuning*, 2nd ed., Instrument Society of America, 1995: the minimum OFF duration after a reset (3.6); learning pause while the central boiler is off (3.8).
+5. **Astrom K.J. and Hagglund T.**, *PID Controllers: Theory, Design, and Tuning*, 2nd ed., Instrument Society of America, 1995: the minimum OFF duration after a reset and the passive response after a settled active period (3.6); learning pause while the central boiler is off (3.8).
 6. **Skogestad S.**, Simple analytic rules for model reduction and PID controller tuning, *Journal of Process Control* 13, 2003, 291–309: learning pause while the central boiler is off (3.8).
+7. **Ren J., Su M., Zhao X., Liu J. and Song S.**, Experimental study on the dynamic thermal response of a radiant floor system in an office building, *E3S Web of Conferences* 246, 2021, 10003: the passive response after a settled active period (3.6).

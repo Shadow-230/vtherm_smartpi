@@ -70,7 +70,26 @@ def test_each_learned_state_is_up_to_date(room) -> None:
 
 
 def test_no_other_learned_state() -> None:
-    assert {p.name for p in learned_state.STATES.glob("*.json")} == {learned_state.file(r).name for r in learned_state.ROOMS}
+    assert {p.name for p in learned_state.STATES.glob("*.json")} == {path.name for path, _ in learned_state.files()}
+
+
+def test_the_settled_variant_is_up_to_date_and_publishes_west_s_response_lag() -> None:
+    """``west_settled``: West's learned model with its response lag published (780 s, the
+    radiator's delay plus its lag) and heating periods of two hours, so that SmartPI's settling
+    time of a heating is three lags, 2340 s (BP29)."""
+    from scenarios import SETTLED_HEAT_S, SETTLED_STATE  # noqa: PLC0415
+
+    west = room("West")
+    path = learned_state.settled_file()
+    assert SETTLED_STATE == learned_state.SETTLED == path.stem
+    assert path.read_text(encoding="utf-8") == learned_state.text(west, settled=True), "run python tests/qas/learned_state.py"
+    smartpi = SmartPI(hass=MagicMock(), cycle_min=5, minimal_activation_delay=0, minimal_deactivation_delay=0, name="QAS")
+    smartpi.load_state(json.loads(path.read_text(encoding="utf-8")))
+    lag = smartpi.learn_win.response_lag
+    assert lag.lag_s == learned_state.lag_s(west) == 780.0
+    assert lag.active_settle_s == pytest.approx(3 * 780.0)
+    assert smartpi.dt_est.deadtime_heat_s == pytest.approx(780.0) and smartpi.dt_est.deadtime_heat_reliable
+    assert SETTLED_HEAT_S >= lag.active_settle_s + 5 * RECALC_S
 
 
 @pytest.mark.parametrize("room", learned_state.ROOMS, ids=lambda r: r.key)
@@ -398,6 +417,36 @@ def test_each_value_the_pack_reads_is_in_smartpi_s_diagnostics() -> None:
         for key in dotted.split("."):
             assert isinstance(data, dict) and key in data, (name, dotted)
             data = data[key]
+
+
+_STOPS_LOG = [
+    "2026-11-10 21:53:32.104 INFO (MainThread) [custom_components.vtherm_smartpi.algo] East - SmartPI heat stopped with the central boiler (heating dead-time detection aborted)",
+    "2026-11-10 22:40:31.000 INFO (MainThread) [custom_components.vtherm_smartpi.algo] East - SmartPI heat stopped with the central boiler",
+    "2026-11-10 22:41:00.000 INFO (MainThread) [custom_components.vtherm_smartpi.algo] West - SmartPI heat stopped with the central boiler",
+    "2026-11-10 21:54:25.337 INFO (MainThread) [custom_components.vtherm_smartpi.smartpi.deadtime_estimator] SmartPI: Cool Deadtime detected = 845.5s (drop delayed by 57.8s)",
+]
+
+
+def test_the_heat_stops_and_the_passive_dead_times_read_from_smartpi_s_log() -> None:
+    """Each thermostat's stops of heat with the boiler, and whether a heating detection was
+    dropped; the passive dead times, which name no thermostat."""
+    from steps import logged_cool_dead_times, logged_heat_stops  # noqa: PLC0415
+
+    assert logged_heat_stops(_STOPS_LOG, "East") == [(pytest.approx(_at("21:53:32.104")), True), (pytest.approx(_at("22:40:31.000")), False)]
+    assert [aborted for _, aborted in logged_heat_stops(_STOPS_LOG, "West")] == [False]
+    assert logged_cool_dead_times(_STOPS_LOG) == [(pytest.approx(_at("21:54:25.337")), 845.5)]
+
+
+def test_bp29_and_bp30_run_on_the_device_count_with_north_off() -> None:
+    """BP29 starts learned (West then given its settled state), BP30 fresh; both on the device
+    count, North off so that only West stops; BP30's West calls within the 600 s after its reset."""
+    from scenarios import LONG_HEAT_S, MIN_OFF_S  # noqa: PLC0415
+    from steps import STOPPED  # noqa: PLC0415
+
+    for sid, start in (("BP29", "learned"), ("BP30", "fresh")):
+        s = SCENARIOS[sid]
+        assert (s.roles, s.start, s.north, s.boiler_at_end) == (("boiler-count",), start, STOPPED, True), sid
+    assert LONG_HEAT_S >= 30 * 60.0 > MIN_OFF_S
 
 
 def test_the_pack_s_pause_confirmation_is_smartpi_s() -> None:

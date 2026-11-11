@@ -4,6 +4,20 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+- Dead time: the passive response after a stop is timed only once the active
+  period has settled: it must have lasted the reliable active dead time and,
+  with a published response lag, the settling time of an active learning
+  window (three lags, at most half the median active episode), the same gate
+  SmartPI already applies before learning `a`. Without a reliable active dead
+  time no passive response is timed. Short heatings gave passive dead times of
+  0 to 45 s on the bench. This changes the author's code in
+  `smartpi/deadtime_estimator.py`. Limits: with short active episodes the band
+  falls below 95 %; a room whose heating periods end before the threshold can
+  stay longer in its first phase. See `documentation/en/technical_doc.md`, 3.6.
+- Learning pause: when Versatile Thermostat's central boiler goes off while
+  SmartPI calls, after it heated the room, a heating dead-time detection still
+  waiting is dropped at once (outcome `aborted`); the stop is logged and
+  published. See `documentation/en/technical_doc.md`, 3.8.
 - Dead time: a reset of the dead-time estimator (a reset of learning, or a
   change between heating and cooling) starts its minimum time without heat
   (600 s) at the reset, as a restart already does. A room still warming from

@@ -277,6 +277,19 @@ La réponse à un démarrage de puissance est l'écart de la température par ra
 
 Une mesure rejetée publie l'issue `rejected` et laisse les détections inchangées : le temps mort conserve sa valeur précédente. Une réponse passive (coupure de puissance) n'est pas concernée : la tendance précédant une coupure est celle de la chauffe elle-même.
 
+Une réponse passive n'est mesurée qu'après une période active établie. Une réponse indicielle se mesure sur un procédé au repos (référence 5, §6.4, p. 237) ; pour une pièce chauffée à puissance constante, le repos est une montée régulière, comme pour tout procédé à action intégrale (p. 21), atteinte une fois la réponse établie, après environ son temps de séjour moyen $T_{ar} = L + T$ (p. 16). La période active qui se termine à la coupure doit avoir duré :
+
+- le temps mort actif fiable, tant qu'aucun retard de réponse n'est publié (3.7) ;
+- avec un retard publié, le plus long du temps mort actif et du temps d'établissement d'une fenêtre d'apprentissage active (`ResponseLagEstimator.active_settle_s` : trois retards, au plus la moitié de l'épisode actif médian, 3.2). SmartPI attend déjà ce seuil, et jamais moins que le temps mort, avant d'apprendre `a` sur une réponse active. Trois retards placent la réponse à 5 % de sa valeur établie, comme le temps de réponse à 95 % utilisé pour les systèmes de chauffage (référence 7, p. 5).
+
+Sans temps mort actif fiable, aucune réponse passive n'est mesurée. Une période plus courte enregistre la coupure (la durée minimale OFF compte à partir d'elle), termine une détection encore en attente (issue `aborted`) et n'arme rien. La période commence au dernier démarrage de puissance ; après la pause d'apprentissage, au démarrage de la chaudière (3.8). SmartPI transmet le temps d'établissement à l'estimateur à chaque calcul. En COOL les rôles s'inversent : la montée après une période de refroidissement est mesurée une fois le refroidissement établi.
+
+Limites :
+
+- avec des épisodes actifs courts, la limite à la moitié de la médiane abaisse la bande sous 95 %, comme pour les fenêtres d'apprentissage ;
+- là où aucun retard de réponse n'est publié, le temps mort actif seul reste le seuil ;
+- la première phase n'apprend `b` qu'une fois le temps mort passif fiable (3.1, 3.2) : une pièce dont les périodes de chauffe s'arrêtent avant le seuil, par exemple à cause du soleil ou de la chaleur stockée d'un plancher chauffant, peut rester plus longtemps dans sa première phase. Une calibration (4.6) est aussi concernée : son refroidissement ne mesure une réponse passive qu'après une montée en température plus longue que le seuil.
+
 La fiabilité devient vraie dès qu'au moins une mesure valide a été capturée sur le canal correspondant. Chaque canal garde ses 6 dernières détections ; la valeur publiée est leur médiane, de sorte qu'une détection aberrante isolée ne la déplace pas (avec une ou deux détections, la médiane vaut leur moyenne). Au redémarrage, la valeur publiée est recalculée à partir des détections restaurées.
 
 ### 3.7 Retard de réponse et puissance délivrée
@@ -390,7 +403,12 @@ Lorsque la chaudière de Versatile Thermostat s'arrête pendant que SmartPI
 demande, et qu'elle chauffait la pièce, la chaleur de la pièce s'arrête à ce
 moment, bien que la commande de SmartPI ne change pas. L'estimateur enregistre
 alors l'arrêt, de sorte que la durée minimale sans chauffe compte à partir de
-l'arrêt de la chaudière, et il n'arme rien. Lorsque la chaudière revient en
+l'arrêt de la chaudière, et il n'arme rien. Une détection de chauffe encore en
+attente est abandonnée aussitôt (issue `aborted`), comme l'estimateur en abandonne
+une à une coupure de puissance : une montée ultérieure ne répondrait pas à cette
+chaleur. L'arrêt est journalisé (« SmartPI heat stopped with the central boiler »,
+avec « (heating dead-time detection aborted) » lorsqu'une détection est
+abandonnée) et publié aussitôt. Lorsque la chaudière revient en
 moins de 600 s, son démarrage n'est pas mesuré, comme celui d'une pièce qui
 redemande peu après sa dernière chauffe ; après 600 s, il est mesuré depuis le
 démarrage de la chaudière. Une pièce qui commence à demander pendant que la
@@ -1160,7 +1178,8 @@ La matrice pilote uniquement la mise à jour des gains et l'apprentissage thermi
 2. **Sundaresan K.R. et Krishnaswamy P.R.**, estimation des paramètres de délai et de constante de temps.
 3. Régression **OLS** avec test t de Student pour la validation de pente.
 4. **Hagglund T. et Astrom K.J.**, Supervision of adaptive control algorithms, *Automatica* 36(8), 2000, 1171–1180 : pause d'apprentissage pendant que la chaudière centrale est arrêtée (3.8).
-5. **Astrom K.J. et Hagglund T.**, *PID Controllers: Theory, Design, and Tuning*, 2e éd., Instrument Society of America, 1995 : la durée minimale OFF après une réinitialisation (3.6) ; pause d'apprentissage pendant que la chaudière centrale est arrêtée (3.8).
+5. **Astrom K.J. et Hagglund T.**, *PID Controllers: Theory, Design, and Tuning*, 2e éd., Instrument Society of America, 1995 : la durée minimale OFF après une réinitialisation et la réponse passive après une période active établie (3.6) ; pause d'apprentissage pendant que la chaudière centrale est arrêtée (3.8).
 6. **Skogestad S.**, Simple analytic rules for model reduction and PID controller tuning, *Journal of Process Control* 13, 2003, 291–309 : pause d'apprentissage pendant que la chaudière centrale est arrêtée (3.8).
+7. **Ren J., Su M., Zhao X., Liu J. et Song S.**, Experimental study on the dynamic thermal response of a radiant floor system in an office building, *E3S Web of Conferences* 246, 2021, 10003 : la réponse passive après une période active établie (3.6).
 
 Ce document sert de référence alignée sur l'implémentation SmartPI actuelle.

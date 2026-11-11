@@ -568,6 +568,8 @@ class SmartPI:
         if paused:
             self._drop_dead_time_detection()
         elif boiler_started:
+            # The room's heat starts with the boiler, also when a calibration feeds the estimator.
+            self.dt_est.last_start_time = time.monotonic()
             self._heat_starts_now(current_temp)
         else:
             self._stop_without_heat(time.monotonic())
@@ -594,9 +596,16 @@ class SmartPI:
         room: the room's heat stops now, though SmartPI's command does not. The dead-time estimator
         records the stop, so its minimum time without heat counts from now, and arms nothing: no
         passive response is timed, and the start at the boiler's return is judged by the
-        estimator's own rules (``_heat_starts_now``)."""
+        estimator's own rules (``_heat_starts_now``). A heating detection still waiting is
+        dropped, as the estimator drops one at a stop: a later rise would not answer this heat."""
         self.dt_est.last_stop_time = time.monotonic()
-        _LOGGER.debug("%s - SmartPI: heat stopped with the central boiler", self._name)
+        dropped = self.dt_est.state == "WAITING_HEAT_RESPONSE"
+        self._drop_dead_time_detection()
+        _LOGGER.info(
+            "%s - SmartPI heat stopped with the central boiler%s",
+            self._name,
+            " (heating dead-time detection aborted)" if dropped else "",
+        )
 
     def _stop_without_heat(self, now: float) -> None:
         """SmartPI stops calling during the boiler pause, or the pause ends because it stopped:
@@ -2157,6 +2166,9 @@ class SmartPI:
                 self.integral_guard.arm(resume_guard_source)
 
         # --- 4. Learning & Calibration ---
+        # The passive response after a stop is timed only once the active period has settled,
+        # by the same gate as an active learning window (DeadTimeEstimator._active_settling_s).
+        self.dt_est.active_settle_s = self.learn_win.response_lag.active_settle_s
         # The dead-time estimator is fed also during the boiler pause: it then records the
         # temperature, and no detection arms while SmartPI keeps calling (set_boiler_learning_paused).
         if (

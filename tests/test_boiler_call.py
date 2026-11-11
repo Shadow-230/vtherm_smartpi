@@ -3,6 +3,7 @@ is off (documentation/en/technical_doc.md, 3.8)."""
 
 from __future__ import annotations
 
+import logging
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -226,13 +227,15 @@ def test_no_detection_without_the_boiler_s_start(boiler_started, learning, power
 @pytest.mark.parametrize("paused", [False, True])
 def test_a_stop_that_ends_the_pause_arms_no_passive_detection(paused, monkeypatch) -> None:
     """SmartPI stops calling: without the pause the estimator times the room's passive response
-    from the stop, as the author's does; when the stop ends the pause, the heat had stopped with
-    the boiler, so the estimator records the stop and arms nothing, and its passive dead time is
-    unchanged. The scheduler has committed the 0 % before the calculation."""
+    from the stop, after a heating that lasted its dead time, as the author's does; when the stop
+    ends the pause, the heat had stopped with the boiler, so the estimator records the stop and
+    arms nothing, and its passive dead time is unchanged. The scheduler has committed the 0 %
+    before the calculation."""
     now = [0.0]
     smartpi = _paused_while_calling(monkeypatch, now)
     est = smartpi.dt_est
     est.last_power = 1.0
+    est.deadtime_heat_s, est.deadtime_heat_reliable, est.last_start_time = 120.0, True, 0.0
     if not paused:
         smartpi.set_boiler_learning_paused(False)
         est.last_power = 1.0
@@ -254,12 +257,14 @@ def test_a_stop_that_ends_the_pause_arms_no_passive_detection(paused, monkeypatc
 def test_a_stop_seen_during_the_pause_arms_no_passive_detection(paused, monkeypatch) -> None:
     """In SmartPI's first phase the stop is committed within the calculation, while the pause
     still holds: the estimator records the stop and arms nothing, where without the pause it
-    times the room's passive response."""
+    times the room's passive response (the heating lasted its dead time)."""
     now = [1000.0]
     monkeypatch.setattr(algo_module.time, "monotonic", lambda: now[0])
     smartpi = SmartPI(hass=MagicMock(), cycle_min=10, minimal_activation_delay=0, minimal_deactivation_delay=0, name="Boiler")
     smartpi._committed_on_percent = 1.0
     smartpi.dt_est.last_power = 1.0
+    dt_est = smartpi.dt_est
+    dt_est.deadtime_heat_s, dt_est.deadtime_heat_reliable, dt_est.last_start_time = 120.0, True, 1000.0
     smartpi.set_boiler_learning_paused(paused)
 
     now[0] = 1600.0
@@ -630,6 +635,57 @@ async def test_an_own_start_that_waits_for_the_boiler_records_no_stop() -> None:
 
     assert algo.dt_est.last_stop_time == 300.0
     assert (algo.dt_est.state, algo.dt_est.heat_start_time) == ("WAITING_HEAT_RESPONSE", 1120.0)
+
+
+@pytest.mark.parametrize("learning", [True, False])
+def test_the_heating_starts_with_the_boiler(learning, monkeypatch) -> None:
+    """The room called long before, waited for the boiler, and stops 5 minutes after the
+    boiler's start: its heat lasted 5 minutes, shorter than its dead time, so no passive
+    response is timed; the heating's start is the boiler's, also when the estimator is not fed
+    at the boiler's start (the user's learning off)."""
+    now = [0.0]
+    smartpi = _paused_while_calling(monkeypatch, now, learning=learning)
+    est = smartpi.dt_est
+    est.deadtime_heat_s, est.deadtime_heat_reliable, est.last_start_time = 780.0, True, 0.0
+
+    now[0] = 1000.0
+    smartpi.set_boiler_learning_paused(False, boiler_started=True)
+    assert est.last_start_time == 1000.0
+
+    smartpi._committed_on_percent = 0.0
+    est.update(1300.0, 19.0, 0.0)
+
+    assert est.state != "WAITING_COOL_RESPONSE" and est.last_stop_time == 1300.0
+
+
+async def test_the_boiler_going_off_drops_the_heating_detection_in_flight(caplog) -> None:
+    """The heating detection armed at the boiler's start is dropped when the boiler goes off
+    while the room calls ("aborted"), logged and published at once: a later rise is not timed as
+    a response to heat that has stopped."""
+    handler = _handler()
+    algo = _heating_room(handler)
+    algo.dt_est.last_power = 0.0
+    await _control(handler, boiler_on=False, power=1.0, at=1000.0)
+    await _control(handler, boiler_on=False, power=1.0, at=1000.0 + BOILER_PAUSE_CONFIRM_S)
+    _boiler_changes(handler, on=True, at=1120.0)
+    assert algo.dt_est.state == "WAITING_HEAT_RESPONSE"
+
+    caplog.set_level(logging.INFO, logger="custom_components.vtherm_smartpi.algo")
+    with (
+        patch("custom_components.vtherm_smartpi.handler.time.monotonic", return_value=1420.0),
+        patch("custom_components.vtherm_smartpi.algo.time.monotonic", return_value=1420.0),
+        patch("custom_components.vtherm_smartpi.handler.central_boiler_on", return_value=False),
+        patch("custom_components.vtherm_smartpi.handler.async_dispatcher_send") as send,
+    ):
+        handler._on_boiler_change(MagicMock())
+
+    assert (algo.dt_est.state, algo.dt_est.last_outcome["heat"], algo.dt_est.last_stop_time) == ("HEATING", "aborted", 1420.0)
+    assert send.called
+    assert "heat stopped with the central boiler (heating dead-time detection aborted)" in caplog.text
+
+    for t, temp in ((1480.0, 19.0), (1540.0, 19.2), (1600.0, 19.4)):
+        algo.dt_est.update(t, temp, 1.0)
+    assert algo.dt_est.state == "HEATING" and not algo.dt_est._history_heat
 
 
 def test_the_handler_follows_the_boiler_once_its_entity_exists_and_stops_on_removal() -> None:
