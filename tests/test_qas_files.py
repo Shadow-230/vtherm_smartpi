@@ -482,6 +482,17 @@ def test_bp31_and_bp32_keep_a_cycle_s_margin_around_their_thresholds() -> None:
         assert (s.roles, s.start, s.north, s.boiler_at_end) == (("boiler-count",), "learned", STOPPED, True), sid
 
 
+def test_the_wait_for_a_passive_detection_counts_from_the_stop() -> None:
+    """BP29 and BP31 wait for the passive detection from West's stop: its 0 % committed at the next
+    calculation, the diagnostics up to about 2-3 min late (124 s in BP31 on the bench), and the
+    steps' margin."""
+    from scenarios import ARMED_WITHIN_S  # noqa: PLC0415
+    from steps import PUBLISHED_LATE_S  # noqa: PLC0415
+
+    assert ARMED_WITHIN_S == RECALC_S + PUBLISHED_LATE_S + MARGIN_S
+    assert ARMED_WITHIN_S >= RECALC_S + 124.0 + MARGIN_S
+
+
 def test_the_pack_s_pause_confirmation_is_smartpi_s() -> None:
     from custom_components.vtherm_smartpi.boiler_call import BOILER_PAUSE_CONFIRM_S  # noqa: PLC0415
 
