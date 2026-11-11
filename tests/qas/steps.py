@@ -101,9 +101,10 @@ def times(wait: Wait, n: int) -> Wait:
 # 1 s for the timer (boiler_call.BOILER_PAUSE_CONFIRM_S), at its first calculation after that.
 PAUSE_CONFIRM_S = RECALC_S - 1.0
 # The thermostat's own change: below from its setpoint's own calculation, paused at the first check a
-# period later, 60 s typically on the bench; at most two periods, when a check falls just short of the
-# period (East in BP6 on boiler-delay: 116 s), well within the limit.
-PAUSE_ON_SETPOINT = Wait(RECALC_S, WITHIN_S)
+# period later: 60-120 s, 90 s on average, as the setpoint falls at any moment of a calculation period
+# (117 pauses on the bench, checks of 7ae0d5e to 11e3071: 60-120 s, mean 84 s, median 85 s); at most
+# two periods (East in BP6 on boiler-delay: 116 s), well within the limit.
+PAUSE_ON_SETPOINT = Wait(1.5 * RECALC_S, WITHIN_S)
 RESUME_ON_SETPOINT = Wait(0.0, WITHIN_S)  # at once
 # A learned thermostat (past SmartPI's first phase) that stops calling commits its 0 % only after the
 # calculation of its setpoint: its resume comes at SmartPI's next calculation (48-56 s on the bench).
@@ -183,6 +184,8 @@ LIVE = {
     "outcomes": "analysis.learning.window_outcomes_24h",
     "deadtime": "model.deadtime_heat_s",
     "deadtime_cool": "model.deadtime_cool_s",  # in heating, the room's passive response after a stop
+    "lag": "analysis.learning.response_lag.lag_s",  # the published response lag, None before
+    "heating_median": "analysis.learning.response_lag.episode_median_s",  # the median heating period
     "deadtime_reliable": "model.deadtime_heat_reliable",
     "a": "model.a",
     "b": "model.b",

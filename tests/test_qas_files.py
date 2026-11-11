@@ -294,20 +294,21 @@ def test_bp20_reads_the_boiler_s_return_from_its_watch() -> None:
 
 
 def test_the_typical_times_of_the_own_setpoint_and_the_closing_start_state() -> None:
-    """A thermostat's own start pauses a calculation period after its setpoint's own calculation
-    (typically 60 s), at most two periods with a margin (East's 116 s in BP6 on the bench), also
+    """A thermostat's own start pauses a calculation period after its setpoint's own calculation,
+    at the next check: 60-120 s, 90 s on average (mean 84 s over 117 pauses on the bench), at most
+    two periods with a margin (East's 116 s in BP6 on the bench), also
     while an activation delay keeps the boiler off; a learned West that stops resumes a calculation
     later, a fresh one at once; after a restart the pause returns a calculation period after SmartPI
     runs again; the start state after a scenario that ends with the boiler on waits for it off the
     role's delay plus 30 s, and after one that ends with a learned West paused for its resume."""
     count, delay = ROLES["boiler-count"], ROLES["boiler-delay"]
-    assert PAUSE_ON_SETPOINT.typical_s == RECALC_S
+    assert PAUSE_ON_SETPOINT.typical_s == 1.5 * RECALC_S
     assert PAUSE_ON_SETPOINT.maximum_s >= 2 * RECALC_S + MARGIN_S
     assert delay.boiler_delay_s + MARGIN_S >= 2 * RECALC_S + MARGIN_S  # steps.Bench.waited
     assert west_leaves(count).typical_s == RESUME_ON_SETPOINT.typical_s == 0.0
     assert west_leaves(count, learned=True).typical_s == RECALC_S
-    assert SCENARIOS["BP3"].time_for(count).typical_s == RECALC_S
-    assert SCENARIOS["BP9"].time(count).typical_s == RECALC_S + 20.0 + RECALC_S
+    assert SCENARIOS["BP3"].time_for(count).typical_s == 1.5 * RECALC_S
+    assert SCENARIOS["BP9"].time(count).typical_s == 1.5 * RECALC_S + 20.0 + RECALC_S
     for sid in ("BP0", "BP2", "BP5", "BP7", "BP8", "BP18", "BP20", "BP25"):
         s = SCENARIOS[sid]
         for name in s.roles:
@@ -447,6 +448,38 @@ def test_bp29_and_bp30_run_on_the_device_count_with_north_off() -> None:
         s = SCENARIOS[sid]
         assert (s.roles, s.start, s.north, s.boiler_at_end) == (("boiler-count",), start, STOPPED, True), sid
     assert LONG_HEAT_S >= 30 * 60.0 > MIN_OFF_S
+
+
+def test_the_settling_time_the_pack_expects_is_smartpi_s() -> None:
+    """The pack's settling time is the estimator's: the heating dead time, and with a published
+    lag at least min(3 lags, half the median heating period)."""
+    from scenarios import settling_s  # noqa: PLC0415
+
+    from custom_components.vtherm_smartpi.smartpi.deadtime_estimator import DeadTimeEstimator  # noqa: PLC0415
+
+    for lag, median in ((None, None), (780.0, 7200.0), (780.0, 2400.0), (780.0, 1200.0), (780.0, None)):
+        est = DeadTimeEstimator()
+        est.deadtime_heat_s, est.deadtime_heat_reliable = 780.0, True
+        est.active_settle_s = None if lag is None else (3 * lag if median is None else min(3 * lag, median / 2))
+        assert settling_s(780.0, lag, median) == est._active_settling_s(VThermHvacMode_HEAT), (lag, median)
+    assert settling_s(None, 780.0, 7200.0) is None
+
+
+def test_bp31_and_bp32_keep_a_cycle_s_margin_around_their_thresholds() -> None:
+    """SmartPI counts a heating up to a cycle late: BP31's short heating stays below West's dead time
+    (780 s) and its long one above it; BP32's stays above the dead time and below the settling time
+    of three lags (2340 s), counted a cycle early or late. Both on the device count, learned,
+    North off."""
+    from scenarios import BETWEEN_HEAT_S, COUNTED_LATE_S, LEARNED_HEAT_S, SHORT_HEAT_S  # noqa: PLC0415
+    from steps import CYCLE_S, STOPPED  # noqa: PLC0415
+
+    dead, settling = 780.0, 3 * 780.0
+    assert COUNTED_LATE_S == CYCLE_S
+    assert SHORT_HEAT_S + COUNTED_LATE_S <= dead < LEARNED_HEAT_S - COUNTED_LATE_S
+    assert dead < BETWEEN_HEAT_S - COUNTED_LATE_S and BETWEEN_HEAT_S + COUNTED_LATE_S < settling
+    for sid in ("BP31", "BP32"):
+        s = SCENARIOS[sid]
+        assert (s.roles, s.start, s.north, s.boiler_at_end) == (("boiler-count",), "learned", STOPPED, True), sid
 
 
 def test_the_pack_s_pause_confirmation_is_smartpi_s() -> None:
