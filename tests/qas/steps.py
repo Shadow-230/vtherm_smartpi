@@ -122,6 +122,9 @@ VALVE_CLOSES = Wait(0.0, MARGIN_S)  # East's valve, at East's own calculation
 NO_PAUSE = Wait(2 * RECALC_S + 15.0, 2 * RECALC_S + 15.0)  # watched: no pause where none is due
 HOLD = Wait(3 * RECALC_S, 3 * RECALC_S)  # three readings, a calculation apart
 PUBLISHED = Wait(0.0, MARGIN_S)  # a service's change, published at once
+# SmartPI's diagnostics show a dead-time detection's state up to about 2-3 min after it changed
+# (BP26's waiting time, BP31's arming: 124 s, checks of 6e33004 and c95d85c).
+PUBLISHED_LATE_S = 3 * RECALC_S
 SETTLED_S = 30.0  # the boiler off at least this long, beyond the role's delay, before a start
 START_STATE = Wait(0.0, BOILER_DELAY_S + SETTLED_S + 2 * WITHIN_S)
 RESTART = Wait(20.0, 600.0)  # Home Assistant restarts: about 20 s on the bench
