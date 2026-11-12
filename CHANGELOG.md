@@ -4,6 +4,31 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+- Dead time: for a thermostat that Versatile Thermostat's central boiler counts,
+  the dead-time estimator now sees the heat the boiler really gives: SmartPI's
+  command while the boiler is on, and no power while it is off, at every feed.
+  This replaces the state "the central boiler cut the room's heat" and its end
+  at a command of 0, which let a command between 0 and 1 % end it during the
+  pause and arm a heating measurement with the boiler off (a false heating dead
+  time of 0 s on a review probe). Changes of behaviour:
+  - a new call while the boiler is still off arms nothing: a cooling (passive)
+    measurement timed from the boiler's stop goes on to its end, and the heat's
+    start counts from the boiler's start;
+  - a room's own start that turns the boiler on now counts from the boiler's
+    start, not from the room's call: the few seconds before Versatile
+    Thermostat counts the room's device, or an activation delay shorter than
+    the pause, are no longer in the heating dead time;
+  - a boiler start counts once the boiler has run 5 s (dated from its start); a
+    boiler back within 5 s of its stop is a blink, after which the heating goes
+    on without a new start (logged "SmartPI heat back with the central boiler
+    after a blink (no new start)").
+  Each change of the boiler reaches the estimator at once, from the handler's
+  listener. With a boiler state that cannot be read, or a thermostat the boiler
+  does not count, the estimator sees the command, as before. The pause and the
+  regulation are unchanged. Limit: a thermostat on a switch that alone keeps the
+  boiler on sees the boiler go off in each off part of its cycle. See
+  `documentation/en/technical_doc.md`, 3.6 and 3.8.
+
 - Learning pause: the state "the central boiler cut the room's heat" now also
   ends as soon as SmartPI's command falls to 0. Before, it survived the room's
   own stop: in SmartPI's first phase, a new call while the boiler already

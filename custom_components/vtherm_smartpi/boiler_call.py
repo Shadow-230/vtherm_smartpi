@@ -28,6 +28,15 @@ VT_CENTRAL_BOILER_UNIQUE_ID = "central_boiler_state"
 BOILER_PAUSE_TIMER_MARGIN_S = 1.0
 BOILER_PAUSE_CONFIRM_S = SMARTPI_RECALC_INTERVAL_SEC - BOILER_PAUSE_TIMER_MARGIN_S
 
+# The dead-time estimator follows the boiler's state with a filter for its blinks: a start counts
+# once the boiler has run this long without a break (from the boiler's start), a stop at once, and
+# a boiler back within this time of its stop blinked (the room's heat did not stop). Versatile
+# Thermostat can switch its boiler off and on again within milliseconds as it counts the devices
+# again (26-30 ms on the bench). 5 s is two orders of magnitude longer than that, a twelfth of the
+# estimator's time step (SmartPI's calculation, 60 s), and under 1 % of a room's dead time (600 to
+# 1200 s on the bench). The value is chosen by this reasoning, not taken from a publication.
+BOILER_BLINK_S = 5.0
+
 
 def central_boiler_entity_id(hass: Any) -> str | None:
     """The entity ID of Versatile Thermostat's central boiler binary sensor, None without it."""
