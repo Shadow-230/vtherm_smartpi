@@ -272,6 +272,8 @@ The response to a power start is the deviation of the temperature from the cours
 
 A rejected measurement publishes the outcome `rejected` and leaves the detections unchanged: the dead time keeps its previous value. A passive response (power cut) is not concerned: the trend before a cut is that of the heating itself.
 
+A measurement that would lower the published dead time is also ignored (outcome `ignored`, the dead time keeps its value) when the evidence is weak: the trend before the start is clearly in the direction of the response (a fitted change of at least `DEADTIME_PRESTART_RISE_MIN_STEPS = 2` sensor steps over the window, even if it was removed rather than rejected), or the window is too short to evaluate any trend. A room that warms before the start can only make the response look earlier, so it never shortens the dead time. A measurement that equals or lengthens the published value follows the rules above, and so does any measurement before the first published value.
+
 A passive response is timed only after an active period that has settled. A step response is measured from a process at rest (reference 5, §6.4, p. 237); for a room heated at constant power, rest is a steady rise, as for any process with integral action (p. 21), reached once the response has settled, after about its mean residence time $T_{ar} = L + T$ (p. 16). The active period that ends at the cut must have lasted:
 
 - the reliable active dead time, while no response lag is published (3.7);
