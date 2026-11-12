@@ -781,7 +781,7 @@ async def rooms_settle(b: Bench, climates: Sequence[str]) -> None:
     for climate in climates:
         b.check(
             took is not None,
-            f"{NAMES[climate]} settled after {seconds(took)} s: its valve closed since {of(snap, climate, 'valve_since')}, "
+            f"{NAMES[climate]} settled after {seconds(took)} s: its device off since {of(snap, climate, 'valve_since') or of(snap, climate, 'heater_since')}, "
             f"its learning reset {seconds(snap['t'] - b.reset_at[climate]) if climate in b.reset_at else '—'} s before, "
             f"its room {of(snap, climate, 'indoor')} degC, the highest {peaks[climate].get('c')} degC",
         )
@@ -1038,11 +1038,12 @@ async def passive_detection_shown(b: Bench, climate: str, since: float, what: st
     return snap
 
 
-async def passive_detections_end_detected(b: Bench, climates: Sequence[str], since: float) -> None:
+async def passive_detections_end_detected(b: Bench, climates: Sequence[str], since: float, prior: dict[str, Any] | None = None) -> None:
     """Each room's passive detection goes on without a break and ends detected: the first reading
     out of WAITING_COOL_RESPONSE shows the outcome "detected", not "aborted". SmartPI's log, whose
     lines name no room, gives at least one passive dead time per room since ``since``, each of at
-    least 60 s."""
+    least 60 s. ``prior``: a room's outcome before its detection armed; when it was already
+    "detected", the outcome alone proves nothing, and the log's lines decide."""
     ended: dict[str, dict[str, Any]] = {}
     start = time.time()
     while True:
@@ -1059,7 +1060,8 @@ async def passive_detections_end_detected(b: Bench, climates: Sequence[str], sin
         b.check(
             outcome == "detected",
             f"{NAMES[climate]}'s passive detection went on until it ended: {outcome}"
-            + ("" if snap is None else f", {snap['t'] - since:.0f} s after the stop"),
+            + ("" if snap is None else f", {snap['t'] - since:.0f} s after the stop")
+            + (" (already detected before: the log's line decides)" if (prior or {}).get(climate) == "detected" else ""),
         )
     lines = await asyncio.to_thread(instance_log, COOL_DETECTED_LINE, datetime.fromtimestamp(since, UTC))
     found = [value for at, value in logged_cool_dead_times(lines) if at >= since - CLOCK_MARGIN_S]
@@ -1352,17 +1354,17 @@ async def BP33(b: Bench) -> None:
         b.check(snap.get("count_threshold") == original, f"VTherm's threshold back to {original:g}: {snap.get('count_threshold')}")
 
 
-# --- BP34, BP35: a room behind a relay that alone keeps the boiler on --------------------------
+# --- BP34-BP36: a room behind a relay that alone keeps the boiler on --------------------------
 #
 # boiler-relay: North is a water radiator behind an on/off actuator, a relay that VTherm drives as
 # a switch, and the central boiler counts it with a threshold of one device. SmartPI drives a
 # switch in cycles: at a command of 60 % the relay is on for 60 % of each cycle and off for the
-# rest, a pulse whose width follows the controller's output (Astrom and Hagglund 1995, 3.4,
-# p. 78-79, equation 3.23). The off part of the cycle is SmartPI's own command, not a lack of heat.
-# VTherm counts a switch only while it is on, so with North alone the boiler goes off in each off
-# part. BP34 and BP35 expect what SmartPI's documentation promises (technical_doc.md 3.6 and 3.8):
-# no learning pause and no stop of heat in the room's own off part. The plugin of qas a6d0f78 does
-# not keep it (3.8, limits): both scenarios are written to show that, and to pass once it is fixed.
+# rest. The off part of the cycle is SmartPI's own command, not a lack of heat. VTherm counts a
+# switch only while it is on, so with North alone the boiler goes off in each off part. SmartPI
+# takes it for a cut of the heat only once the relay has been on for 5 s with the boiler off, and
+# gives the heat back only while both are on (technical_doc.md 3.8). BP34 and BP35 check that the
+# room's own off part is no cut (no learning pause, no stop of heat); BP36, that a real cut, the
+# boiler not starting for the relay, holds through the relay's on and off parts.
 
 RELAY_STATE = "north_relay"  # learned_state.RELAY: North of boiler-relay, its room's model learned
 HOLD_STEP_C = 1.0  # BP34: North's setpoint this far above its room: 50-65 % in the local simulation
@@ -1371,6 +1373,36 @@ RELAY_BOILER_OFFS = 3  # BP34: the boiler off at least this often while North ca
 HEAT_STEP_C = 2.0  # BP35: 100 % for about 40 minutes in the local simulation, then SmartPI modulates
 MODULATES = Wait(2400.0, 5400.0)  # BP35: from the step until North's command falls below 100 %
 MODULATED_S = 2 * CYCLE_S  # BP35: North heats two cycles more, modulating, before it stops
+EXTERNAL_CUT_S = 3 * CYCLE_S  # BP36: three of North's cycles with the boiler off
+CUT_PAUSED_AFTER_S = 2 * RECALC_S + POLL_S  # BP36: paused by then (a calculation period after the call, read at a calculation)
+
+
+def boiler_off_parts(seen: Sequence[dict[str, Any]], climate: str) -> list[float]:
+    """The lengths of VTherm's boiler's off parts while ``climate`` called, from the readings'
+    changes of the boiler's state (its own time stamps)."""
+    lengths = []
+    off_at = None
+    for s in seen:
+        since = published_at(s.get("boiler_since"))
+        if s["boiler"] == "off" and (of(s, climate, "opening") or 0) > 0 and off_at is None:
+            off_at = since
+        elif s["boiler"] == "on" and off_at is not None and since is not None:
+            lengths.append(round(since - off_at, 1))
+            off_at = None
+    return lengths
+
+
+def switch_times(seen: Sequence[dict[str, Any]], climate: str) -> list[str]:
+    """The times the room's switch turned on and off, from the readings (its own time stamps)."""
+    out = []
+    last = None
+    for s in seen:
+        state = of(s, climate, "heater")
+        if state != last and last is not None:
+            at = published_at(of(s, climate, "heater_since"))
+            out.append(f"{state} {datetime.fromtimestamp(at, UTC):%H:%M:%S}" if at else f"{state} ?")
+        last = state
+    return out
 
 
 async def north_learned(b: Bench) -> None:
@@ -1432,7 +1464,7 @@ async def BP34(b: Bench) -> None:
     boiler_at_end=True,
 )
 async def BP35(b: Bench) -> None:
-    """North learned (a water radiator behind a relay, the boiler's threshold one device), West and East not calling; North settled, 600 s after its learned state was loaded and its room not warming → North's setpoint 2 degC above its room: SmartPI heats at 100 %, then modulates, the relay off in part of each cycle and VTherm's boiler with it; North heats two cycles more and stops → North's heating counts from the step, not from the relay's last start: no "North - SmartPI heat stopped with the central boiler" line while North called; North's stop arms a detection of its passive response, shown within 495 s, which goes on without a break and ends detected with at least 60 s."""
+    """North learned (a water radiator behind a relay, the boiler's threshold one device), West and East not calling; North settled, 600 s after its learned state was loaded and its room not warming → North's setpoint 2 degC above its room: SmartPI heats at 100 %, then modulates, the relay off in part of each cycle and VTherm's boiler with it; North heats two cycles more and stops → the role shows the case: the boiler went off at least once while North called (the off parts' lengths recorded); North's heating counts from the step, not from the relay's last start: no "North - SmartPI heat stopped with the central boiler" line while North called; North's stop arms a detection of its passive response, shown within 495 s, which goes on without a break and ends detected with at least 60 s, judged against North's outcome at the stop."""
     await north_learned(b)
     await rooms_settle(b, (NORTH,))
     room_c = of(await b.snapshot(), NORTH, "indoor")
@@ -1449,12 +1481,63 @@ async def BP35(b: Bench) -> None:
         await b.calls_at(NORTH, STOPPED)
         return
     b.note(f"— North heats {MODULATED_S / 60:.0f} minutes more, modulating")
-    await asyncio.sleep(MODULATED_S)
-    b.note("— North stops calling")
+    seen = await b.watch(MODULATED_S)
+    offs = boiler_off_parts(seen, NORTH)
+    b.check(bool(offs), f"VTherm's boiler went off {len(offs)} times while North called, modulating (at least once): off parts of {offs} s")
+    prior = of(seen[-1], NORTH, "cool_outcome") if seen else None
+    b.note(f"— North stops calling (its passive outcome then: {prior})")
     await b.calls_at(NORTH, STOPPED)
     stopped = time.time()
     stops = await north_heat_stops(since, stopped)
     b.check(not stops, f"SmartPI's log: {len(stops)} \"North - SmartPI heat stopped with the central boiler\" lines while North called")
     await passive_detection_shown(b, NORTH, stopped, f"North's stop after {(stopped - since) / 60:.0f} minutes of heat")
-    await passive_detections_end_detected(b, (NORTH,), stopped)
+    await passive_detections_end_detected(b, (NORTH,), stopped, prior={NORTH: prior})
+
+
+@scenario(
+    "BP36",
+    ("boiler-relay",),
+    lambda role: total(PUBLISHED, Wait(EXTERNAL_CUT_S, EXTERNAL_CUT_S), PUBLISHED),
+    PAUSE_TESTS,
+    north=STOPPED,
+)
+async def BP36(b: Bench) -> None:
+    """North learned (a water radiator behind a relay), West and East not calling → VTherm's threshold raised to 2 devices, North calls 1 degC above its room, alone, for 15 minutes: its relay switches on and off in its cycle while the boiler does not start → the role shows the case: the relay turned on and off at least twice (its switching times recorded) and the boiler stayed off; North gets no heat in the relay's on parts as in its off parts: SmartPI's dead-time estimator sees no power in every reading, North pauses a calculation period after its call and stays paused (one pause line, no resume line while it calls), and the threshold is back to 1."""
+    await north_learned(b)
+    room_c = of(await b.snapshot(), NORTH, "indoor")
+    if not isinstance(room_c, (int, float)):
+        b.check(False, f"North's room temperature: {room_c}")
+        return
+    entity_id, original = await b.threshold_entity()
+    try:
+        await b.api.call("number", "set_value", {"entity_id": entity_id, "value": 2.0})
+        b.count_threshold = 2.0
+        target = round(room_c + HOLD_STEP_C, 1)
+        b.note(f"— VTherm's threshold 2 devices; North's setpoint {target:g} degC, its room {room_c:g} degC")
+        since = time.time()
+        await b.calls_at(NORTH, target)
+        seen = await b.watch(EXTERNAL_CUT_S)
+        await b.calls_at(NORTH, STOPPED)
+        stopped = time.time()
+
+        switched = switch_times(seen, NORTH)
+        b.note(f"North's relay: {', '.join(switched) or 'no change'}")
+        boiler_on = [clock(s) for s in seen if s["boiler"] != "off"]
+        b.check(
+            sum(1 for change in switched if change.startswith("off")) >= 2 and not boiler_on,
+            f"the relay turned off {sum(1 for c in switched if c.startswith('off'))} times (at least twice), the boiler off throughout ({', '.join(boiler_on[:3]) or 'off'})",
+        )
+        powered = [f"{clock(s)} {of(s, NORTH, 'dt_power')}" for s in seen if of(s, NORTH, "dt_power") != 0.0]
+        b.check(not powered, f"SmartPI's dead-time estimator saw no power for North in every reading ({', '.join(powered[:3]) or 'none above 0'})")
+        unpaused = [clock(s) for s in seen if s["t"] - since >= CUT_PAUSED_AFTER_S and of(s, NORTH, "paused") is not True]
+        b.check(not unpaused, f"North paused from {CUT_PAUSED_AFTER_S:.0f} s after its call, in every reading ({', '.join(unpaused[:3]) or 'always'})")
+        lines = await asyncio.to_thread(instance_log, BOILER_PAUSE_LINE, datetime.fromtimestamp(since, UTC))
+        changes = [("paused" if p else "resumed") for at, p in logged_pauses(lines, NAMES[NORTH]) if since - CLOCK_MARGIN_S <= at <= stopped]
+        b.check(changes == ["paused"], f"SmartPI's log while North called: {changes or 'no pause line'} (one pause, no resume)")
+    finally:
+        await b.calls_at(NORTH, STOPPED)
+        await b.api.call("number", "set_value", {"entity_id": entity_id, "value": original})
+        b.count_threshold = original
+        snap = await b.snapshot()
+        b.check(snap.get("count_threshold") == original, f"VTherm's threshold back to {original:g}: {snap.get('count_threshold')}")
 

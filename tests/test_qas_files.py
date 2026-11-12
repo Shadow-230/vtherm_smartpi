@@ -537,8 +537,8 @@ def test_the_pack_s_pause_confirmation_is_smartpi_s() -> None:
 def test_the_relay_role_and_its_scenarios() -> None:
     """boiler-relay: North a water radiator behind a relay (a switch), counted by the central boiler
     with a threshold of one device, so that North alone keeps it on; North's learned state is its
-    room's model; BP34 and BP35 run on it alone, North not calling at the start, and every other
-    scenario on another role but BP0."""
+    room's model; BP34, BP35 and BP36 run on it alone, North not calling at the start, and every
+    other scenario on another role but BP0."""
     from pack import RELAY_NORTH  # noqa: PLC0415
     from scenarios import RELAY_STATE  # noqa: PLC0415
 
@@ -551,9 +551,9 @@ def test_the_relay_role_and_its_scenarios() -> None:
     assert configuration.configuration(role)["smartpi_test_rooms"]["rooms"]["north"]["heater"] == "relay"
     assert RELAY_STATE == learned_state.RELAY == learned_state.relay_file().stem
     assert learned_state.model(north)["deadtime_s"] == 780.0
-    for sid in ("BP34", "BP35"):
+    for sid in ("BP34", "BP35", "BP36"):
         assert (SCENARIOS[sid].roles, SCENARIOS[sid].north) == (("boiler-relay",), 7.0), sid
-    others = [sid for sid, s in SCENARIOS.items() if "boiler-relay" in s.roles and sid not in ("BP0", "BP34", "BP35")]
+    others = [sid for sid, s in SCENARIOS.items() if "boiler-relay" in s.roles and sid not in ("BP0", "BP34", "BP35", "BP36")]
     assert not others, others
 
 
@@ -568,3 +568,23 @@ def test_bp25_runs_twenty_own_starts_with_a_valve_delay() -> None:
     assert PAUSED_LINE == "West - SmartPI learning paused"  # algo.py, set_boiler_learning_paused
     assert s.time(count).typical_s == pytest.approx(OWN_STARTS * own_start(count).typical_s)
     assert 50 * 60 <= s.time_for(count).typical_s <= 80 * 60
+
+
+def test_the_relay_s_switching_and_the_boiler_s_off_parts_read_from_the_readings() -> None:
+    """BP35 and BP36 read the boiler's off parts while the room calls and the relay's switching
+    times from the readings' own time stamps."""
+    from scenarios import boiler_off_parts, switch_times  # noqa: PLC0415
+
+    def reading(t, boiler, since, opening, heater, heater_since):
+        return {"t": t, "boiler": boiler, "boiler_since": since, "north.opening": opening, "north.heater": heater, "north.heater_since": heater_since}
+
+    seen = [
+        reading(0.0, "on", "2026-11-12T10:00:00+00:00", 60.0, "on", "2026-11-12T10:00:00+00:00"),
+        reading(5.0, "off", "2026-11-12T10:00:03+00:00", 60.0, "off", "2026-11-12T10:00:03+00:00"),
+        reading(10.0, "off", "2026-11-12T10:00:03+00:00", 60.0, "off", "2026-11-12T10:00:03+00:00"),
+        reading(15.0, "on", "2026-11-12T10:00:15+00:00", 60.0, "on", "2026-11-12T10:00:15+00:00"),
+    ]
+    assert boiler_off_parts(seen, NORTH) == [12.0]
+    assert switch_times(seen, NORTH) == ["off 10:00:03", "on 10:00:15"]
+    assert LIVE["dt_power"] == "analysis.deadtime.last_power"
+

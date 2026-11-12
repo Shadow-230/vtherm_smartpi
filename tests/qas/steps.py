@@ -184,6 +184,7 @@ LIVE = {
     "heat_outcome": "analysis.deadtime.heat_last_outcome",
     "cool_outcome": "analysis.deadtime.cool_last_outcome",
     "dt_wait": "analysis.deadtime.waiting_elapsed_s",
+    "dt_power": "analysis.deadtime.last_power",  # the power the dead-time estimator last saw
     "accepted_a": "learning.accepted_updates_a",
     "accepted_b": "learning.accepted_updates_b",
     "learn_ok": "analysis.learning.learn_ok_count",

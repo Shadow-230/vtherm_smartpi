@@ -85,6 +85,16 @@ class SmartPIHandler:
         self._boiler_seen_off_at: float | None = None
         # The check scheduled once a boiler's start has held ``BOILER_BLINK_S``.
         self._boiler_check_remove = None
+        # A thermostat on a relay (``_drives_a_relay``): since when its device is on (monotonic
+        # time, None while off), whether the check scheduled then found it on ``BOILER_BLINK_S``
+        # later, the boiler's state as it heats the room (``_boiler_heats_the_room``), and the
+        # listener of the thermostat's own state, which Versatile Thermostat writes at each change
+        # of the relay.
+        self._device_on_since: float | None = None
+        self._device_held: bool = False
+        self._device_check_remove = None
+        self._relay_heat: bool | None = None
+        self._thermostat_listener_remove = None
         # The listener of Versatile Thermostat's central boiler state (``_listen_to_the_boiler``).
         self._boiler_listener_remove = None
         self._valve_linearization_configured: bool = False
@@ -243,7 +253,11 @@ class SmartPIHandler:
         if self._boiler_listener_remove is not None:
             self._boiler_listener_remove()
             self._boiler_listener_remove = None
+        if self._thermostat_listener_remove is not None:
+            self._thermostat_listener_remove()
+            self._thermostat_listener_remove = None
         self._cancel_the_boiler_check()
+        self._cancel_the_device_check()
         clear_valve_config_issues(t)
 
     def _remove_receipt_callback(self) -> None:
@@ -561,14 +575,15 @@ class SmartPIHandler:
         The pause starts once this has held without a break for ``BOILER_PAUSE_CONFIRM_S``:
         when a thermostat's own start turns the boiler on, Versatile Thermostat does so only
         once the thermostat's device reports it. Checks in that time must not pause. Learning
-        resumes at once. A change is published at once.
+        resumes at once. A change is published at once. For a thermostat on a relay, the boiler's
+        state is the one it heats the room with (``_boiler_heats_the_room``).
         """
         now = time.monotonic()
         t = self._thermostat
         counted = getattr(t, "is_used_by_central_boiler", False) is True
-        boiler_on = central_boiler_on(t.hass) if counted else None
-        heat_changed = self._follow_the_boiler(algo, boiler_on, now)
         calls = self._calls_for_boiler_heat(algo)
+        boiler_on = self._boiler_heats_the_room(central_boiler_on(t.hass) if counted else None, calls, now)
+        heat_changed = self._follow_the_boiler(algo, boiler_on, now)
         if not (calls and boiler_on is False):
             self._boiler_off_since = None
         elif self._boiler_off_since is None:
@@ -581,6 +596,73 @@ class SmartPIHandler:
         algo.set_boiler_learning_paused(paused)
         self._should_publish_intermediate = True
         return True
+
+    def _drives_a_relay(self) -> bool:
+        """Whether SmartPI drives the thermostat's device in on/off cycles (a relay): Versatile
+        Thermostat's cycle scheduler, not in valve mode. A thermostat without a cycle scheduler
+        (a climate underlying) is not one."""
+        scheduler = getattr(self._thermostat, "cycle_scheduler", None)
+        return scheduler is not None and getattr(scheduler, "is_valve_mode", None) is False
+
+    def _boiler_heats_the_room(self, boiler_on: bool | None, calls: bool, now: float) -> bool | None:
+        """The boiler's state as it heats the room: the state read, but for a thermostat on a
+        relay while SmartPI calls.
+
+        Versatile Thermostat counts a relay for its boiler only while it is on, so with the relay
+        alone the boiler goes off in each off part of SmartPI's cycle, and back as the relay
+        turns on, milliseconds later. Neither is a change of the room's heat: the off part is the
+        cycle's own, as SmartPI's command averages it. So the boiler cuts the heat only once the
+        relay has been on for ``BOILER_BLINK_S`` with the boiler off, and gives it back only
+        while both are on; in between, the last state holds: in the relay's own off part, and
+        while the boiler may still follow a relay just on. A heat cut stays cut while the boiler
+        comes back in the relay's off part (for another room): the heat starts with the relay.
+        """
+        device_on = self._track_the_device(now)
+        if boiler_on is None or not calls or not self._drives_a_relay():
+            self._relay_heat = boiler_on
+            return boiler_on
+        if boiler_on and device_on:
+            self._relay_heat = True
+        elif not boiler_on and device_on and (self._device_held or now - (self._device_on_since or now) >= BOILER_BLINK_S):
+            self._relay_heat = False
+        elif self._relay_heat is None:
+            self._relay_heat = boiler_on
+        return self._relay_heat
+
+    def _track_the_device(self, now: float) -> bool:
+        """Whether the thermostat's device is on (``is_device_active``), and since when; a check is
+        scheduled ``BOILER_BLINK_S`` after it turned on."""
+        on = getattr(self._thermostat, "is_device_active", False) is True
+        if on and self._device_on_since is None:
+            self._device_on_since, self._device_held = now, False
+            self._schedule_the_device_check()
+        elif not on and self._device_on_since is not None:
+            self._device_on_since, self._device_held = None, False
+            self._cancel_the_device_check()
+        return on
+
+    def _schedule_the_device_check(self) -> None:
+        """Check the boiler again once the relay has been on ``BOILER_BLINK_S``, while the
+        thermostat's changes are followed (``_listen_to_the_boiler``)."""
+        self._cancel_the_device_check()
+        if self._thermostat_listener_remove is None or not self._drives_a_relay():
+            return
+        since = self._device_on_since
+
+        @callback
+        def _held(_now) -> None:
+            if self._device_on_since is None or self._device_on_since != since:
+                return  # the relay changed since
+            self._device_check_remove = None
+            self._device_held = True
+            self._on_boiler_change(None)
+
+        self._device_check_remove = async_call_later(self._thermostat.hass, BOILER_BLINK_S, _held)
+
+    def _cancel_the_device_check(self) -> None:
+        if self._device_check_remove is not None:
+            self._device_check_remove()
+            self._device_check_remove = None
 
     def _follow_the_boiler(self, algo: SmartPI, boiler_on: bool | None, now: float) -> bool:
         """Give SmartPI the boiler's state its dead-time estimator follows
@@ -662,13 +744,23 @@ class SmartPIHandler:
     def _listen_to_the_boiler(self) -> None:
         """Follow the changes of Versatile Thermostat's central boiler state, once its entity
         exists, so that its state and the pause are checked at the moment the boiler starts or
-        stops."""
+        stops; for a thermostat on a relay, follow its own state too, which Versatile Thermostat
+        writes at each change of the relay (``_on_thermostat_change``)."""
         t = self._thermostat
         if self._boiler_listener_remove is not None or getattr(t, "is_used_by_central_boiler", False) is not True:
             return
         entity_id = central_boiler_entity_id(t.hass)
         if entity_id is not None:
             self._boiler_listener_remove = async_track_state_change_event(t.hass, [entity_id], self._on_boiler_change)
+            if self._drives_a_relay() and getattr(t, "entity_id", None):
+                self._thermostat_listener_remove = async_track_state_change_event(t.hass, [t.entity_id], self._on_thermostat_change)
+
+    @callback
+    def _on_thermostat_change(self, event: Event | None) -> None:
+        """The thermostat's state changed: when its relay turned on or off, the boiler's state
+        and the pause are checked now."""
+        if (getattr(self._thermostat, "is_device_active", False) is True) != (self._device_on_since is not None):
+            self._on_boiler_change(event)
 
     @callback
     def _on_boiler_change(self, _event: Event | None) -> None:

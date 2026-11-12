@@ -4,6 +4,19 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+- Learning pause and dead time: a room on a relay that alone keeps the central
+  boiler on. Versatile Thermostat counts a relay for its boiler only while it is
+  on, so the boiler went off in each off part of SmartPI's cycle: learning
+  paused in every off part longer than 59 s, and the dead-time estimator saw a
+  stop and a start in every cycle, so the heating never counted as settled. For
+  a thermostat whose device SmartPI drives in on/off cycles, the boiler now cuts
+  the heat only once the relay has been on for 5 s with the boiler off, and gives
+  it back only while both are on; in the relay's own off part the last state
+  holds. A normal cycle no longer pauses learning or stops the heat, and a cut
+  from outside holds through the relay's on and off parts. Valves and
+  thermostats without a cycle scheduler are unchanged. See
+  `documentation/en/technical_doc.md`, 3.8.
+
 - Dead time: two fixes to the estimator's following of the central boiler.
   - A calibration now feeds the estimator no power while the boiler is off, and
     the boiler's changes reach the estimator during a calibration too. Before,

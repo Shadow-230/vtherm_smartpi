@@ -485,6 +485,43 @@ est choisie par ce raisonnement, et non tirée d'une publication. Une attente
 plus longue laisserait passer moins de faux changements mais verrait les vrais
 plus tard.
 
+**Une pièce sur relais.** SmartPI pilote un interrupteur par cycles : à une
+commande de 60 %, le relais est allumé 60 % de chaque cycle et éteint le reste.
+Versatile Thermostat ne compte un interrupteur pour sa chaudière que lorsqu'il
+est allumé. Ainsi, quand le relais maintient seul la chaudière allumée, la
+chaudière s'arrête dans chaque partie éteinte du cycle et revient, quelques
+millisecondes après le relais, à la partie allumée suivante. Cette partie
+éteinte appartient au cycle : la commande de SmartPI, que l'estimateur et
+l'apprentissage voient comme la moyenne du cycle, la compte déjà. Ce n'est pas
+la chaudière qui retient la chaleur. Pour un thermostat dont SmartPI pilote
+l'équipement par cycles marche/arrêt (le planificateur de cycles de Versatile
+Thermostat, hors mode vanne), tant que SmartPI demande :
+
+- la chaudière ne coupe la chaleur qu'une fois le relais allumé depuis 5 s
+  (`BOILER_BLINK_S`) avec la chaudière arrêtée : Versatile Thermostat a alors eu
+  le temps de la démarrer, et ne l'a pas fait (son seuil n'est pas atteint, ou
+  son délai d'activation court). Le handler suit l'état du thermostat lui-même,
+  que Versatile Thermostat écrit à chaque changement du relais, et vérifie de
+  nouveau 5 s après l'allumage du relais ;
+- après une coupure, la chaleur ne revient que lorsque la chaudière et le relais
+  sont tous deux allumés. Une chaudière démarrée par une autre pièce dans la
+  partie éteinte du relais ne chauffe pas encore cette pièce : le démarrage de
+  la chaleur compte depuis la partie allumée suivante du relais, et non jusqu'à
+  un demi-cycle trop tôt (30 minutes dans un cycle d'une heure) ;
+- entre les deux, le dernier état est conservé : dans la partie éteinte propre
+  au relais, et tant que la chaudière peut encore suivre un relais qui vient de
+  s'allumer. L'apprentissage ne se met pas en pause dans un cycle normal, et
+  l'estimateur n'y voit ni arrêt ni démarrage ; une coupure venue de l'extérieur
+  tient pendant les parties allumées et éteintes du relais, sans clignoter.
+
+Quand SmartPI ne demande pas, l'état de la chaudière est suivi tel qu'il est lu :
+une nouvelle demande chaudière arrêtée l'attend donc comme tout démarrage. Une
+vanne n'est pas concernée : elle est ouverte pendant tout le cycle tant qu'elle
+demande, et Versatile Thermostat ne la compte qu'une fois son ouverture signalée,
+quelques secondes après la demande ; le démarrage d'une vanne doit donc compter
+depuis celui de la chaudière. Un thermostat sans planificateur de cycles (un
+climat sous-jacent) n'est pas concerné non plus.
+
 La pause et l'état de la chaudière ne changent rien d'autre que
 l'apprentissage. Contrairement à la pause de l'utilisateur, la pause ne redémarre pas l'épisode de chauffe de la régulation :
 la fenêtre de temps mort pendant laquelle le régulateur tient son intégrale
@@ -537,15 +574,9 @@ Limites :
   soit vu, le démarrage compte depuis cet échantillon, au plus 5 s en retard.
 - La chaudière allumée, arrêtée et rallumée en moins de 5 s abandonne une
   détection de chauffe encore en attente : l'arrêt compte aussitôt.
-- Un thermostat sur interrupteur (un relais) qui maintient seul la chaudière
-  allumée : Versatile Thermostat ne compte un interrupteur que lorsqu'il est
-  allumé, donc la chaudière s'arrête dans chaque partie arrêtée du cycle de
-  SmartPI, alors que la commande de SmartPI reste au-dessus de 0.
-  L'apprentissage se met alors en pause dans chaque partie arrêtée plus longue
-  qu'une période de calcul (59 s), et l'estimateur voit un arrêt et un
-  démarrage à chaque cycle, si bien qu'une mesure du temps mort de chauffe peut
-  ne jamais se terminer. Une vanne, ouverte pendant tout le cycle tant qu'elle
-  demande, n'est pas concernée.
+- Une pièce sur relais dont la chaudière ne démarre pas est coupée 5 s après
+  l'allumage du relais, et non aussitôt ; avec plusieurs relais sur un même
+  thermostat, les 5 s comptent depuis le premier relais allumé.
 - Après un redémarrage de Home Assistant, Versatile Thermostat montre la
   chaudière arrêtée jusqu'à ce qu'il ait de nouveau compté les thermostats et,
   avec un délai d'activation, jusqu'à la fin de ce délai : l'apprentissage peut
