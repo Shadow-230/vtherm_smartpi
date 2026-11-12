@@ -328,7 +328,7 @@ AFTER_THE_STOP = Wait(5 * RECALC_S, 5 * RECALC_S)  # BP6: West watched after its
     PAUSE_TESTS,
 )
 async def BP6(b: Bench) -> None:
-    """West and East call, the boiler on → East stops, the demand drops below the threshold with West heating → VTherm's boiler and its switch go off at once (also with an activation delay), West pauses two calculations later; West stopping then resumes it, and as its heat stopped with the boiler, SmartPI arms no detection of West's passive response (never WAITING_COOL_RESPONSE for five calculations) and West's passive dead time (deadtime_cool) is unchanged."""
+    """West and East call, the boiler on → East stops, the demand drops below the threshold with West heating → VTherm's boiler and its switch go off at once (also with an activation delay), West pauses two calculations later; West stopping then resumes it, and as its heat stopped with the boiler, SmartPI arms no detection of West's passive response (never WAITING_COOL_RESPONSE for five calculations)."""
     await b.west_calls()
     await b.east_calls()
     await b.change(
@@ -340,13 +340,10 @@ async def BP6(b: Bench) -> None:
             "the boiler's switch off at once": (lambda s: s["switch"] == "off", BOILER_OFF_AT_ONCE),
         },
     )
-    before = of(await b.snapshot(), WEST, "deadtime_cool")
     await b.west_stops()
     seen = await b.watch(AFTER_THE_STOP.maximum_s)
     armed = [clock(s) for s in seen if of(s, WEST, "dt_state") == WAITING_COOL]
     b.check(not armed, f"West's stop ends its pause: no detection of its passive response for {AFTER_THE_STOP.maximum_s:.0f} s ({', '.join(armed[:3]) or 'none seen'})")
-    after = sorted({of(s, WEST, "deadtime_cool") for s in seen} - {before}, key=str)
-    b.check(not after, f"West's passive dead time unchanged: {before} s before its stop, {after or 'the same'} since")
 
 
 HEAT_UP = Wait(0.0, 3600.0)  # BP7: the calibration's heating step (see its note)
@@ -769,13 +766,13 @@ async def rooms_settle(b: Bench, climates: Sequence[str]) -> None:
         )
 
 
-def no_passive_response(b: Bench, seen: Sequence[dict[str, Any]], what: str) -> None:
-    """West's stop armed no detection of its passive response. An armed detection waits at
+def no_passive_response(b: Bench, seen: Sequence[dict[str, Any]], what: str, climate: str = WEST) -> None:
+    """The room's stop armed no detection of its passive response. An armed detection waits at
     least the room's dead time, longer than the watch, so the watch sees it although the
     diagnostics show it up to about 2 min late. (The passive dead time itself cannot change in
     the watch: a detection takes about 1000 s here, and the published value is the median of six.)"""
-    armed = [clock(s) for s in seen if of(s, WEST, "dt_state") == WAITING_COOL]
-    b.check(not armed, f"{what}: no detection of West's passive response for {len(seen) * POLL_S:.0f} s ({', '.join(armed[:3]) or 'never'})")
+    armed = [clock(s) for s in seen if of(s, climate, "dt_state") == WAITING_COOL]
+    b.check(not armed, f"{what}: no detection of {NAMES[climate]}'s passive response for {len(seen) * POLL_S:.0f} s ({', '.join(armed[:3]) or 'never'})")
 
 
 async def heat_detection_dropped(b: Bench, climate: str, since: float, off_at: float | None, seen: Sequence[dict[str, Any]]) -> None:
@@ -861,7 +858,7 @@ async def BP26(b: Bench) -> None:
     boiler_at_end=True,
 )
 async def BP27(b: Bench) -> None:
-    """Fresh, an activation delay of 120 s, West and East without heat and their learning reset at least 600 s before and their rooms 0.1 degC below their highest reading since, East calling alone below the threshold, the boiler off → West calls and heats for 5 minutes with the boiler on, stops, and calls again about 300 s later, completing the threshold; the boiler starts 120 s later → West pauses while the boiler waits and resumes at its start; West was without heat for less than 600 s before the boiler's start (the wait counts), so SmartPI's dead-time estimator measures nothing: for 15 minutes from the boiler's start West's detection never waits for a response, its outcome never turns detected and its heating dead time stays unchanged; East, heated until the boiler went off at West's stop, gets no new measurement either, as the boiler comes back within 600 s of going off, and its heating dead time is none or at least 60 s; West's stop after its 5 minutes of heat arms no detection of its passive response, and East's heating detection is dropped as the boiler goes off (SmartPI's log)."""
+    """Fresh, an activation delay of 120 s, West and East without heat and their learning reset at least 600 s before and their rooms 0.1 degC below their highest reading since, East calling alone below the threshold, the boiler off → West calls and heats for 5 minutes with the boiler on, stops, and calls again about 300 s later, completing the threshold; the boiler starts 120 s later → West pauses while the boiler waits and resumes at its start; West was without heat for less than 600 s before the boiler's start (the wait counts), so SmartPI's dead-time estimator measures nothing: for 15 minutes from the boiler's start West's detection never waits for a response, its outcome never turns detected and its heating dead time stays unchanged; East, heated until the boiler went off at West's stop, gets no new measurement either, as the boiler comes back within 600 s of going off, and its heating dead time is none or at least 60 s; West's stop after its 5 minutes of heat arms no detection of its passive response, nor the boiler's stop one of East's, and East's heating detection is dropped as the boiler goes off (SmartPI's log)."""
     await rooms_settle(b, COUNTED)
     await b.change("East calls alone", lambda: b.calls_at(EAST, CALLING), own=EAST)
     await b.west_calls()
@@ -873,6 +870,7 @@ async def BP27(b: Bench) -> None:
     off_at = published_at(off.get("boiler_since")) if off.get("boiler") == "off" else None
     rest = await b.watch(max(0.0, REST_S - (time.time() - stopped)))
     no_passive_response(b, rest, f"West's stop after {HEAT_S / 60:.0f} minutes of heat, before its heating settled")
+    no_passive_response(b, rest, f"the boiler's stop after {HEAT_S / 60:.0f} minutes of heat, East fresh", EAST)
     await heat_detection_dropped(b, EAST, stopped, off_at, rest)
     before = await b.snapshot()
     outcome, dead = of(before, WEST, "heat_outcome"), of(before, WEST, "deadtime")
@@ -1006,26 +1004,57 @@ async def west_s_settling(b: Bench, lag_published: bool) -> float | None:
     return settling
 
 
+async def passive_detection_shown(b: Bench, climate: str, since: float, what: str) -> dict[str, Any]:
+    """The room's passive detection shows in its diagnostics within ``ARMED_WITHIN_S`` of
+    ``since`` (its stop, or the boiler's); the snapshot that shows it."""
+    took, snap = await b.until(lambda s: of(s, climate, "dt_state") == WAITING_COOL, max(0.0, ARMED_WITHIN_S - (time.time() - since)))
+    b.check(
+        took is not None,
+        f"{what} arms a detection of {NAMES[climate]}'s passive response, shown {seconds(snap['t'] - since)} s after it "
+        f"(within {ARMED_WITHIN_S:.0f} s): {of(snap, climate, 'dt_state')}",
+    )
+    return snap
+
+
+async def passive_detections_end_detected(b: Bench, climates: Sequence[str], since: float) -> None:
+    """Each room's passive detection goes on without a break and ends detected: the first reading
+    out of WAITING_COOL_RESPONSE shows the outcome "detected", not "aborted". SmartPI's log, whose
+    lines name no room, gives at least one passive dead time per room since ``since``, each of at
+    least 60 s."""
+    ended: dict[str, dict[str, Any]] = {}
+    start = time.time()
+    while True:
+        snap = await b.snapshot()
+        for climate in climates:
+            if climate not in ended and of(snap, climate, "dt_state") != WAITING_COOL:
+                ended[climate] = snap
+        if len(ended) == len(climates) or time.time() - start > PASSIVE_DETECTION.maximum_s:
+            break
+        await asyncio.sleep(10.0)
+    for climate in climates:
+        snap = ended.get(climate)
+        outcome = None if snap is None else of(snap, climate, "cool_outcome")
+        b.check(
+            outcome == "detected",
+            f"{NAMES[climate]}'s passive detection went on until it ended: {outcome}"
+            + ("" if snap is None else f", {snap['t'] - since:.0f} s after the stop"),
+        )
+    lines = await asyncio.to_thread(instance_log, COOL_DETECTED_LINE, datetime.fromtimestamp(since, UTC))
+    found = [value for at, value in logged_cool_dead_times(lines) if at >= since - CLOCK_MARGIN_S]
+    b.check(
+        len(found) >= len(climates) and all(value >= SHORTEST_DEADTIME_S for value in found),
+        f"passive dead times in SmartPI's log since the stop: {', '.join(f'{v:.1f}' for v in found) or 'none'} s, "
+        f"at least {len(climates)}, each at least {SHORTEST_DEADTIME_S:.0f} s",
+    )
+
+
 async def passive_response_measured(b: Bench, heated_s: float) -> None:
     """West stops after ``heated_s`` of heat, longer than its settling time: SmartPI arms a
     detection of its passive response, it ends detected, and the log gives at least 60 s."""
     stopped = time.time()
     await b.west_stops()
-    took, snap = await b.until(lambda s: of(s, WEST, "dt_state") == WAITING_COOL, max(0.0, ARMED_WITHIN_S - (time.time() - stopped)))
-    b.check(
-        took is not None,
-        f"West's stop after {heated_s / 60:.0f} minutes of heat arms a detection of its passive response, "
-        f"shown {seconds(snap['t'] - stopped)} s after the stop (within {ARMED_WITHIN_S:.0f} s): {of(snap, WEST, 'dt_state')}",
-    )
-    took, snap = await b.until(lambda s: of(s, WEST, "dt_state") != WAITING_COOL, PASSIVE_DETECTION.maximum_s, 10.0)
-    b.check(of(snap, WEST, "cool_outcome") == "detected", f"West's passive response: {of(snap, WEST, 'cool_outcome')} after {seconds(took)} s more")
-    lines = await asyncio.to_thread(instance_log, COOL_DETECTED_LINE, datetime.fromtimestamp(stopped, UTC))
-    found = [(at, value) for at, value in logged_cool_dead_times(lines) if at >= stopped - CLOCK_MARGIN_S]
-    b.check(
-        bool(found) and found[0][1] >= SHORTEST_DEADTIME_S,
-        f"West's passive dead time in SmartPI's log: {', '.join(f'{v:.1f}' for _, v in found[:3]) or 'none'} s, at least {SHORTEST_DEADTIME_S:.0f} s"
-        + (f", logged {found[0][0] - stopped:.0f} s after the stop" if found else ""),
-    )
+    await passive_detection_shown(b, WEST, stopped, f"West's stop after {heated_s / 60:.0f} minutes of heat")
+    await passive_detections_end_detected(b, (WEST,), stopped)
 
 
 async def both_call(b: Bench) -> None:
@@ -1044,14 +1073,24 @@ async def both_call(b: Bench) -> None:
     boiler_at_end=True,
 )
 async def BP29(b: Bench) -> None:
-    """West learned with its response lag published (780 s, heating periods of 2 h), East learned, North off → West and East call, the boiler on, and West heats for 45 minutes, longer than its settling time of three lags (39 min), then stops → SmartPI arms a detection of West's passive response, it ends detected, and SmartPI's log gives a passive dead time of at least 60 s."""
+    """West learned with its response lag published (780 s, heating periods of 2 h), East learned, North off → West and East call, the boiler on, and West heats for 45 minutes, longer than its settling time of three lags (39 min), then stops, which turns the boiler off while East still calls; East stops only once its passive detection shows → SmartPI arms a detection of West's passive response at West's stop and one of East's at the boiler's stop (East, heated 45 minutes, still calls then, so it is the boiler's stop that arms it); both go on without a break and end detected, and SmartPI's log gives passive dead times of at least 60 s."""
     await b.load(WEST, SETTLED_STATE)
     settling = await west_s_settling(b, lag_published=True)
     b.check(settling is not None and SETTLED_HEAT_S >= settling + COUNTED_LATE_S, f"{SETTLED_HEAT_S / 60:.0f} minutes of heat count more than {seconds(settling)} s, a cycle late")
     await b.change("West and East call", lambda: both_call(b))
     b.note(f"— West heats for {SETTLED_HEAT_S / 60:.0f} minutes with the boiler on")
     await asyncio.sleep(SETTLED_HEAT_S)
-    await passive_response_measured(b, SETTLED_HEAT_S)
+    stopped = time.time()
+    await b.west_stops()
+    off = await b.snapshot()
+    off_at = published_at(off.get("boiler_since")) if off.get("boiler") == "off" else None
+    b.check(off_at is not None, f"West's stop turns VTherm's boiler off: {off.get('boiler')} since {off.get('boiler_since')}")
+    await passive_detection_shown(b, WEST, stopped, f"West's stop after {SETTLED_HEAT_S / 60:.0f} minutes of heat")
+    # East still calls: its detection can only be armed by the boiler's stop.
+    snap = await passive_detection_shown(b, EAST, off_at or stopped, f"The boiler's stop after {SETTLED_HEAT_S / 60:.0f} minutes of East's heat")
+    b.check(calls(snap, EAST), f"East still calls as its passive detection shows: valve opening {of(snap, EAST, 'opening')} %")
+    await b.east_stops()
+    await passive_detections_end_detected(b, (WEST, EAST), stopped)
 
 
 @scenario(
@@ -1105,7 +1144,7 @@ async def BP30(b: Bench) -> None:
     boiler_at_end=True,
 )
 async def BP31(b: Bench) -> None:
-    """West learned (heating dead time 780 s, no response lag published), East learned, North off → West and East call, the boiler on; West heats for 5 minutes, shorter than its dead time, and stops; after 600 s without heat it calls again, heats for 20 minutes and stops → after the short heating SmartPI arms no detection of West's passive response for 300 s; after the long one the detection arms and ends detected, and SmartPI's log gives a passive dead time of at least 60 s."""
+    """West learned (heating dead time 780 s, no response lag published), East learned, North off → West and East call, the boiler on; West heats for 5 minutes, shorter than its dead time, and stops; after 600 s without heat it calls again, heats for 20 minutes and stops → after the short heating SmartPI arms no detection of West's passive response for 300 s, nor the boiler's stop one of East's (learned, heated 5 minutes as well); after the long one the detection arms and ends detected, and SmartPI's log gives a passive dead time of at least 60 s."""
     settling = await west_s_settling(b, lag_published=False)
     b.check(
         settling is not None and SHORT_HEAT_S < settling <= LEARNED_HEAT_S - COUNTED_LATE_S,
@@ -1118,6 +1157,7 @@ async def BP31(b: Bench) -> None:
     await b.west_stops()
     rest = await b.watch(AFTER_THE_STOP.maximum_s)
     no_passive_response(b, rest, f"West's stop after {SHORT_HEAT_S / 60:.0f} minutes of heat, shorter than its heating dead time")
+    no_passive_response(b, rest, f"the boiler's stop after {SHORT_HEAT_S / 60:.0f} minutes of East's heat, shorter than its heating dead time", EAST)
     await asyncio.sleep(max(0.0, MIN_OFF_S - (time.time() - stopped)))
     await b.west_calls()
     b.note(f"— West heats for {LEARNED_HEAT_S / 60:.0f} minutes with the boiler on")

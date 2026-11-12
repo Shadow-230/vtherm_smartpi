@@ -660,8 +660,9 @@ def test_the_heating_starts_with_the_boiler(learning, monkeypatch) -> None:
 
 async def test_the_boiler_going_off_drops_the_heating_detection_in_flight(caplog) -> None:
     """The heating detection armed at the boiler's start is dropped when the boiler goes off
-    while the room calls ("aborted"), logged and published at once: a later rise is not timed as
-    a response to heat that has stopped."""
+    while the room calls ("aborted"), logged and published at once; the estimator sees the power
+    fall to 0 then (5 minutes of heat, no reliable dead time: no passive detection) and no power
+    after it, so a later rise is not timed as a response to heat that has stopped."""
     handler = _handler()
     algo = _heating_room(handler)
     algo.dt_est.last_power = 0.0
@@ -679,13 +680,14 @@ async def test_the_boiler_going_off_drops_the_heating_detection_in_flight(caplog
     ):
         handler._on_boiler_change(MagicMock())
 
-    assert (algo.dt_est.state, algo.dt_est.last_outcome["heat"], algo.dt_est.last_stop_time) == ("HEATING", "aborted", 1420.0)
+    assert (algo.dt_est.state, algo.dt_est.last_outcome["heat"], algo.dt_est.last_stop_time) == ("COOLING", "aborted", 1420.0)
+    assert algo.dt_est.last_power == 0.0 and algo.heat_cut_by_the_boiler
     assert send.called
     assert "heat stopped with the central boiler (heating dead-time detection aborted)" in caplog.text
 
     for t, temp in ((1480.0, 19.0), (1540.0, 19.2), (1600.0, 19.4)):
-        algo.dt_est.update(t, temp, 1.0)
-    assert algo.dt_est.state == "HEATING" and not algo.dt_est._history_heat
+        algo.dt_est.update(t, temp, algo._dead_time_power())
+    assert algo.dt_est.state == "COOLING" and not algo.dt_est._history_heat
 
 
 def test_the_handler_follows_the_boiler_once_its_entity_exists_and_stops_on_removal() -> None:
