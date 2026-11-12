@@ -122,9 +122,12 @@ VALVE_CLOSES = Wait(0.0, MARGIN_S)  # East's valve, at East's own calculation
 NO_PAUSE = Wait(2 * RECALC_S + 15.0, 2 * RECALC_S + 15.0)  # watched: no pause where none is due
 HOLD = Wait(3 * RECALC_S, 3 * RECALC_S)  # three readings, a calculation apart
 PUBLISHED = Wait(0.0, MARGIN_S)  # a service's change, published at once
-# SmartPI's diagnostics show a dead-time detection's state up to about 2-3 min after it changed
-# (BP26's waiting time, BP31's arming: 124 s, checks of 6e33004 and c95d85c).
-PUBLISHED_LATE_S = 3 * RECALC_S
+# SmartPI's diagnostics show a dead-time detection's state up to a cycle after it changed. SmartPI's
+# own calculation, every minute, publishes only when an input or the committed command changed;
+# VTherm runs a control with a time stamp every cycle (5 minutes), and that one always publishes.
+# Seen on the bench: 124 s (BP31's arming, check of c95d85c) and 212 s (the end of BP33's
+# detection, check of 8f95de5).
+PUBLISHED_LATE_S = CYCLE_S
 SETTLED_S = 30.0  # the boiler off at least this long, beyond the role's delay, before a start
 START_STATE = Wait(0.0, BOILER_DELAY_S + SETTLED_S + 2 * WITHIN_S)
 RESTART = Wait(20.0, 600.0)  # Home Assistant restarts: about 20 s on the bench
@@ -324,7 +327,8 @@ LOG_MARGIN_S = 60.0  # the bench's clock against Home Assistant's, when reading 
 CLOCK_MARGIN_S = 10.0  # the bench's reading against SmartPI's calculation and Home Assistant's clock
 BOILER_PAUSE_LINE = "(central boiler off)"  # algo.py, set_boiler_learning_paused: "<name> - SmartPI learning paused (...)"
 AT_ONCE_S = 1.0  # a resume logged at the boiler's start: within 0.001 s on the bench
-HEAT_STOP_LINE = "heat stopped with the central boiler"  # algo.py, heat_stopped_with_the_boiler
+HEAT_STOP_LINE = "heat stopped with the central boiler"  # algo.py, _heat_stops_with_the_boiler
+HEAT_DETECTED_LINE = "Heat Deadtime detected"  # deadtime_estimator.py: names no thermostat
 COOL_DETECTED_LINE = "Cool Deadtime detected"  # deadtime_estimator.py: names no thermostat
 _HEAT_STOP = re.compile(r"(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d+) .*?\] (.+?) - SmartPI heat stopped with the central boiler( \(heating dead-time detection aborted\))?")
 _COOL_DETECTED = re.compile(r"(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d+) .*Cool Deadtime detected = ([0-9.]+)s(?: \(drop delayed by ([0-9.]+)s\))?")

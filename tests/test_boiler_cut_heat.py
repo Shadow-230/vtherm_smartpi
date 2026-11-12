@@ -1,20 +1,25 @@
-"""The central boiler stops heating a room that still calls (documentation/en/technical_doc.md,
-3.8): the dead-time estimator sees the power fall to 0 at that moment, and no power until the boiler
-heats the room again, so the author's rules time the passive response from the boiler's stop and
-the room's own stop changes nothing. Built on the bench's probe of 2026-11-11: the real handler and
-SmartPI's real calculation, times on the handler's monotonic clock. The room heated from 0 s (dead
-time 780 s, reliable); the boiler goes off at 1030 s; the room's passive response starts 780 s
-after its heat really ended, then it cools 0.3 degC/h."""
+"""The dead-time estimator sees the heat the central boiler really gives (documentation/en/
+technical_doc.md, 3.6 and 3.8): SmartPI's command while the boiler is on, no power while it is off.
+The boiler going off stops the room's heat at that moment, so the author's rules time the passive
+response from the boiler's stop, and what the room does while the boiler stays off (its own stop, a
+new call) changes nothing; the boiler's start is the start of the room's heat. Built on the bench's
+probes of 2026-11-11 and 2026-11-12: the real handler and SmartPI's real calculation, times on the
+handler's monotonic clock. The room heated from 0 s (dead time 780 s, reliable); the boiler goes off
+at 1030 s; the room's passive response starts 780 s after its heat really ended, then it cools
+0.3 degC/h."""
 
 from __future__ import annotations
 
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import logging
+
 import pytest
 
 from custom_components.vtherm_smartpi.algo import SmartPI
+from custom_components.vtherm_smartpi.boiler_call import BOILER_BLINK_S
 from custom_components.vtherm_smartpi.handler import SmartPIHandler
-from custom_components.vtherm_smartpi.hvac_mode import VThermHvacMode_HEAT, VThermHvacMode_OFF
+from custom_components.vtherm_smartpi.hvac_mode import VThermHvacMode_OFF
 from fakes.fake_thermostat_runtime import FakeThermostatRuntime
 from helpers import force_smartpi_stable_mode
 
@@ -45,12 +50,13 @@ def _temp(at: float) -> float:
     return T0 - max(0.0, at - STOP - DEAD) * COOL_C_PER_S
 
 
-async def _step(handler: SmartPIHandler, at: float, boiler_on: bool, committed: float) -> SmartPI:
-    """One control at ``at``: SmartPI's committed power, the pause check, the real calculation."""
+async def _step(handler: SmartPIHandler, at: float, boiler_on: bool | None, committed: float, temp: float | None = None) -> SmartPI:
+    """One control at ``at``: SmartPI's committed power, the pause check, the real calculation;
+    the room's temperature ``temp``, by default the model's."""
     t = handler._thermostat
     algo = t.prop_algorithm
     algo._committed_on_percent = committed
-    t.current_temperature = _temp(at)
+    t.current_temperature = _temp(at) if temp is None else temp
     with (
         patch("custom_components.vtherm_smartpi.handler.time.monotonic", return_value=at),
         patch("custom_components.vtherm_smartpi.algo.time.monotonic", return_value=at),
@@ -62,7 +68,9 @@ async def _step(handler: SmartPIHandler, at: float, boiler_on: bool, committed: 
     return algo
 
 
-def _boiler(handler: SmartPIHandler, on: bool, at: float) -> None:
+def _boiler(handler: SmartPIHandler, on: bool | None, at: float) -> None:
+    """Versatile Thermostat's boiler changes at ``at``, seen by the handler's listener (or, the
+    state unchanged, the boiler still in that state then)."""
     handler._thermostat.current_temperature = _temp(at)
     with (
         patch("custom_components.vtherm_smartpi.handler.time.monotonic", return_value=at),
@@ -123,7 +131,8 @@ async def test_the_reference_stop_with_the_boiler_on_is_the_author_s() -> None:
 async def test_the_boiler_s_cut_times_the_passive_response_from_its_stop(calculations) -> None:
     """The boiler goes off at 1030 s after a settled heating: the passive response is timed from
     1030 s, whenever the room's own stop comes after it and whether learning paused meanwhile; the
-    room's stop changes nothing, and the dead time is the reference's on the same samples."""
+    room's stop changes nothing, and the dead time is the reference's on the same samples (the
+    bench's probe of 2026-11-11, a room's own stop before its pause)."""
     handler = await _heated()
     algo = handler._thermostat.prop_algorithm
     est = algo.dt_est
@@ -154,9 +163,10 @@ async def test_the_boiler_s_cut_after_a_short_heating_records_the_stop_only() ->
 
 @pytest.mark.parametrize(("back_after_s", "measured"), [(300.0, False), (700.0, True)])
 async def test_the_boiler_s_return_before_the_response_ends_the_passive_detection(back_after_s, measured) -> None:
-    """The boiler heats the calling room again before its passive response came: the passive
-    detection ends "aborted", whether the start is refused (300 s after the boiler's stop, less
-    than 600 s) or measured from the boiler's return (700 s)."""
+    """The boiler heats the calling room again before its passive response came: learning resumes
+    at once, and once the boiler has run 5 s the estimator sees the start from the boiler's
+    return. The passive detection ends "aborted", whether the start is refused (300 s after the
+    boiler's stop, less than 600 s) or measured from the boiler's return (700 s)."""
     handler = await _heated()
     algo = handler._thermostat.prop_algorithm
     est = algo.dt_est
@@ -166,78 +176,245 @@ async def test_the_boiler_s_return_before_the_response_ends_the_passive_detectio
 
     back = STOP + back_after_s
     _boiler(handler, True, back)
+    assert not algo.boiler_learning_paused and est.state == "WAITING_COOL_RESPONSE"
+    _boiler(handler, True, back + BOILER_BLINK_S)
 
     assert est.last_outcome["cool"] == "aborted" and est.last_stop_time == STOP
-    assert not algo.heat_cut_by_the_boiler
+    assert algo.boiler_on is True and algo._dead_time_power() == 1.0
+    assert est.last_start_time == back
     if measured:
         assert (est.state, est.heat_start_time) == ("WAITING_HEAT_RESPONSE", back)
     else:
         assert est.state == "HEATING"
 
 
-async def _cut() -> SmartPIHandler:
+async def test_the_boiler_s_state_holds_through_the_thermostat_off_a_reset_and_a_restart() -> None:
+    """The estimator follows the boiler, not SmartPI's own events: with the boiler off it sees no
+    power after the thermostat off and a reset of learning. After a restart SmartPI has no
+    boiler state until the handler reads it: it sees the command, and the first reading (the
+    boiler off) is no stop."""
     handler = await _heated()
+    algo = handler._thermostat.prop_algorithm
     _boiler(handler, False, STOP)
-    algo = handler._thermostat.prop_algorithm
-    assert algo.heat_cut_by_the_boiler and algo._dead_time_power() == 0.0
-    return handler
-
-
-def _sees_the_command(algo: SmartPI) -> bool:
-    return not algo.heat_cut_by_the_boiler and algo._dead_time_power() == algo._committed_on_percent > 0.0
-
-
-async def test_the_cut_ends_when_the_boiler_heats_the_room_again() -> None:
-    """Before learning paused (the boiler back within a calculation period) and at the resume."""
-    handler = await _cut()
-    _boiler(handler, True, STOP + 20.0)
-    assert _sees_the_command(handler._thermostat.prop_algorithm)
-
-    handler = await _cut()
-    await _step(handler, STOP + 60.0, False, 1.0)
-    _boiler(handler, True, STOP + 120.0)
-    assert _sees_the_command(handler._thermostat.prop_algorithm)
-
-
-async def test_the_cut_ends_with_the_thermostat_off_or_a_change_of_mode() -> None:
-    handler = await _cut()
-    algo = handler._thermostat.prop_algorithm
     with patch("custom_components.vtherm_smartpi.algo.time.monotonic", return_value=STOP + 60.0):
         algo.calculate(target_temp=20.0, current_temp=19.0, ext_current_temp=5.0, slope=0.0, hvac_mode=VThermHvacMode_OFF)
     algo._committed_on_percent = 1.0
-    assert _sees_the_command(algo)
-    with patch("custom_components.vtherm_smartpi.algo.time.monotonic", return_value=STOP + 120.0):
-        algo.calculate(target_temp=20.0, current_temp=19.0, ext_current_temp=5.0, slope=0.0, hvac_mode=VThermHvacMode_HEAT)
-    assert algo.dt_est.last_power > 0.0
-
-
-async def test_the_cut_ends_with_a_learning_reset_and_a_restart() -> None:
-    handler = await _cut()
-    algo = handler._thermostat.prop_algorithm
+    assert algo._dead_time_power() == 0.0
     algo.reset_learning()
-    algo._committed_on_percent = 1.0
-    assert _sees_the_command(algo)
+    assert algo._dead_time_power() == 0.0
 
-    handler = await _cut()
-    algo = handler._thermostat.prop_algorithm
-    saved = algo.save_state()
-    algo.load_state(saved)  # a restart restores the saved state; the cut is not saved
-    algo._committed_on_percent = 1.0
-    assert _sees_the_command(algo)
     restarted = SmartPI(hass=MagicMock(), cycle_min=10, minimal_activation_delay=0, minimal_deactivation_delay=0, name="Restart")
-    restarted.load_state(saved)
+    restarted.load_state(algo.save_state())
     restarted._committed_on_percent = 1.0
-    assert _sees_the_command(restarted)
+    assert restarted.boiler_on is None and restarted._dead_time_power() == 1.0
+    stop = restarted.dt_est.last_stop_time
+    assert restarted.set_boiler_state(False) is False
+    assert (restarted.dt_est.last_power, restarted.dt_est.last_stop_time) == (0.0, stop)
 
 
-async def test_the_cut_ends_as_smartpi_s_command_falls_to_0() -> None:
-    """The room stops calling during the cut: the estimator saw no power already, so the stop
-    changes nothing, and the cut ends."""
-    handler = await _cut()
-    algo = await _step(handler, STOP + 30.0, False, 0.0)
-    assert not algo.heat_cut_by_the_boiler
-    algo._committed_on_percent = 1.0
-    assert _sees_the_command(algo)
+@pytest.mark.parametrize(("dip", "rise_at"), [(0.0, 1210.0), (0.005, 1210.0), (0.005, 1700.0), (0.0, 1700.0)])
+async def test_a_dip_and_a_new_call_while_the_boiler_is_off_arm_nothing(dip, rise_at) -> None:
+    """The bench's review probe of 2026-11-12 (dip and new call): the room calls as the boiler
+    cuts its heat at 1030 s and pauses at 1090 s; its command dips to 0 or to 0.5 % (still above 0,
+    so the pause holds) and rises to 100 % again, the boiler still off. The estimator saw no power
+    from the boiler's stop: nothing arms, no stop is recorded after 1030 s, and the passive
+    detection timed from the boiler's stop goes on. The boiler's start 200 s after the rise is the
+    start of the room's heat, judged by the estimator's rules from it: measured 870 s after the
+    boiler's stop, not 380 s after it."""
+    handler = await _heated()
+    algo = handler._thermostat.prop_algorithm
+    est = algo.dt_est
+    _boiler(handler, False, STOP)
+    await _step(handler, 1090.0, False, 1.0)
+    at = 1150.0
+    while at < rise_at:
+        await _step(handler, at, False, dip)
+        assert algo._dead_time_power() == 0.0
+        at += 60.0
+    for at in (rise_at, rise_at + 60.0, rise_at + 120.0):
+        await _step(handler, at, False, 1.0)
+        assert (est.state, est.cool_start_time, est.last_stop_time) == ("WAITING_COOL_RESPONSE", STOP, STOP)
+        assert est.last_outcome["heat"] is None
+
+    on = rise_at + 200.0
+    _boiler(handler, True, on)
+    _boiler(handler, True, on + BOILER_BLINK_S)
+
+    assert (est.last_stop_time, est.last_start_time, est.last_outcome["cool"]) == (STOP, on, "aborted")
+    if on - STOP >= est.min_off_time_seconds:
+        assert (est.state, est.heat_start_time) == ("WAITING_HEAT_RESPONSE", on)
+    else:
+        assert est.state == "HEATING"
+
+
+async def test_a_rise_of_the_room_while_the_boiler_is_off_gives_no_heating_dead_time(caplog) -> None:
+    """The bench's review probe of 2026-11-12 (false heat): as above (0.5 % from 1150 s, 100 % at
+    1700 s, the boiler still off), then the room warms 0.1 degC without the boiler (sun, a
+    neighbour) from 1760 s. No heating detection arms and none is detected: the room's heating
+    dead time stays as it was."""
+    caplog.set_level(logging.INFO)
+    handler = await _heated()
+    est = handler._thermostat.prop_algorithm.dt_est
+    before = (est.deadtime_heat_s, list(est._history_heat))
+    _boiler(handler, False, STOP)
+    await _step(handler, 1090.0, False, 1.0, T0)
+    for at in range(1150, 1700, 60):
+        await _step(handler, float(at), False, 0.005, T0)
+    for at in range(1700, 2300, 60):
+        await _step(handler, float(at), False, 1.0, T0 if at < 1760 else T0 + 0.1)
+        assert est.state != "WAITING_HEAT_RESPONSE"
+
+    assert est.last_outcome["heat"] is None
+    assert (est.deadtime_heat_s, list(est._history_heat)) == before
+    assert "Heat Deadtime detected" not in caplog.text
+
+
+async def test_a_new_call_with_the_boiler_still_off_lets_the_passive_detection_end() -> None:
+    """Decision A: after the boiler's cut the room stops itself (1060 s) and calls again at 1700 s,
+    the boiler still off. Nothing arms at the call; the passive detection timed from the boiler's
+    stop goes on without a break and ends detected, with the reference's dead time on the same
+    samples. The start of the room's heat counts from the boiler's start."""
+    handler = await _heated()
+    algo = handler._thermostat.prop_algorithm
+    est = algo.dt_est
+    _boiler(handler, False, STOP)
+    await _step(handler, STOP + 30.0, False, 0.0)
+    at = 1700.0
+    await _step(handler, at, False, 1.0)
+    times = [STOP + 30.0, at]
+    while est.state == "WAITING_COOL_RESPONSE" and at < STOP + 3600.0:
+        assert (est.cool_start_time, est.last_stop_time, est.last_outcome["heat"]) == (STOP, STOP, None)
+        at += 60.0
+        await _step(handler, at, False, 1.0)
+        times.append(at)
+
+    assert est.last_outcome["cool"] == "detected" and algo.boiler_learning_paused
+    assert list(est._history_cool) == await _reference(times)
+
+    on = at + 300.0
+    _boiler(handler, True, on)
+    _boiler(handler, True, on + BOILER_BLINK_S)
+    assert (est.last_start_time, est.last_stop_time) == (on, STOP)
+
+
+def _without_heat(handler: SmartPIHandler) -> None:
+    """The room has been without heat since 0 s, its learned dead times kept."""
+    est = handler._thermostat.prop_algorithm.dt_est
+    est.last_power, est.state, est.last_start_time, est.last_stop_time = 0.0, "OFF", None, 0.0
+
+
+async def test_an_own_start_that_turns_the_boiler_on_counts_from_the_boiler_s_start() -> None:
+    """Decision B: a room without heat for long calls at 1000 s with the boiler off; its valve
+    reports 15 s later and Versatile Thermostat turns the boiler on. The heating's start is the
+    boiler's (1015 s), not the call's, seen once the boiler has run 5 s; the room does not
+    pause."""
+    handler = _handler()
+    _without_heat(handler)
+    algo = handler._thermostat.prop_algorithm
+    est = algo.dt_est
+    for at in range(100, 1000, 60):
+        await _step(handler, float(at), False, 0.0)
+    await _step(handler, 1000.0, False, 1.0)
+    assert est.state != "WAITING_HEAT_RESPONSE" and est.last_start_time is None
+
+    _boiler(handler, True, 1015.0)
+    assert est.state != "WAITING_HEAT_RESPONSE"
+    _boiler(handler, True, 1015.0 + BOILER_BLINK_S)
+
+    assert (est.state, est.heat_start_time, est.last_start_time) == ("WAITING_HEAT_RESPONSE", 1015.0, 1015.0)
+    assert not algo.boiler_learning_paused
+
+
+async def test_a_start_of_the_boiler_shorter_than_a_blink_is_not_seen() -> None:
+    """The room waits for the boiler, which runs 3 s and goes off again: the estimator sees no
+    start."""
+    handler = _handler()
+    _without_heat(handler)
+    est = handler._thermostat.prop_algorithm.dt_est
+    for at in range(100, 1001, 60):
+        await _step(handler, float(at), False, 1.0 if at >= 1000 else 0.0)
+    _boiler(handler, True, 1015.0)
+    _boiler(handler, False, 1018.0)
+    await _step(handler, 1060.0, False, 1.0)
+
+    assert est.state != "WAITING_HEAT_RESPONSE" and est.last_start_time is None
+
+
+async def test_a_blink_of_the_boiler_off_on_and_off_is_one_stop(caplog) -> None:
+    """At a final stop Versatile Thermostat's boiler can go off, on and off again within 30 ms (the
+    bench's BP7): the estimator sees one stop, at the first; the start in between never ran 5 s,
+    so the passive detection timed from the boiler's stop goes on and ends detected, as the
+    reference on the same samples."""
+    caplog.set_level(logging.INFO)
+    handler = await _heated()
+    est = handler._thermostat.prop_algorithm.dt_est
+    _boiler(handler, False, STOP)
+    _boiler(handler, True, STOP + 0.015)
+    _boiler(handler, False, STOP + 0.030)
+    assert (est.state, est.cool_start_time, est.last_stop_time) == ("WAITING_COOL_RESPONSE", STOP, STOP)
+
+    await _step(handler, STOP + 60.0, False, 0.0)
+    await _cools_down(handler, STOP + 60.0, False)
+
+    assert est.last_outcome["cool"] == "detected"
+    assert list(est._history_cool) == await _reference([STOP + 60.0])
+    assert caplog.text.count("heat stopped with the central boiler") == 1 and "blink" not in caplog.text
+
+
+async def test_a_blink_of_the_boiler_on_off_and_on_keeps_the_heating_going(caplog) -> None:
+    """The boiler heating the room goes off and back on within 30 ms. The estimator sees the stop
+    at once and arms the passive detection; the boiler back within 5 s blinked: the detection ends
+    aborted, and the heating goes on without a new start (its period still counts from 0 s), so the
+    room's own stop at 1500 s times its passive response from that stop."""
+    caplog.set_level(logging.INFO)
+    handler = await _heated()
+    algo = handler._thermostat.prop_algorithm
+    est = algo.dt_est
+    _boiler(handler, False, STOP)
+    assert est.state == "WAITING_COOL_RESPONSE"
+    _boiler(handler, True, STOP + 0.03)
+
+    await _step(handler, STOP + 30.0, True, 1.0)
+
+    assert (est.last_outcome["cool"], est.state, est.last_start_time, est.last_power) == ("aborted", "HEATING", 0.0, 1.0)
+    assert "SmartPI heat back with the central boiler after a blink" in caplog.text
+    await _step(handler, 1500.0, True, 0.0)
+    assert (est.state, est.cool_start_time) == ("WAITING_COOL_RESPONSE", 1500.0)
+
+
+async def test_a_stop_of_the_boiler_longer_than_a_blink_is_a_stop_and_its_return_a_start() -> None:
+    """The boiler off for 6 s: its return, once it has run 5 s, is a start judged by the
+    estimator's rules: within 600 s of the stop it is not measured, the passive detection ends
+    aborted, and the heating period counts from the return."""
+    handler = await _heated()
+    est = handler._thermostat.prop_algorithm.dt_est
+    _boiler(handler, False, STOP)
+    _boiler(handler, True, STOP + 6.0)
+    _boiler(handler, True, STOP + 6.0 + BOILER_BLINK_S)
+
+    assert (est.last_outcome["cool"], est.state, est.last_start_time) == ("aborted", "HEATING", STOP + 6.0)
+
+
+@pytest.mark.parametrize("counted", [True, False])
+async def test_an_unknown_boiler_or_one_that_does_not_count_the_room_is_the_author_s(counted, caplog) -> None:
+    """A boiler whose state cannot be read, or a thermostat the boiler does not count: the
+    estimator sees SmartPI's command, as in the author's code, and the room's own stop times its
+    passive response from the stop, as the reference. A state that becomes unknown is no stop."""
+    caplog.set_level(logging.INFO)
+    handler = await _heated()
+    handler._thermostat.is_used_by_central_boiler = counted
+    algo = handler._thermostat.prop_algorithm
+    est = algo.dt_est
+    read = None if counted else False  # not counted: the boiler's state is not read at all
+
+    await _step(handler, 1010.0, read, 1.0)
+    assert (algo.boiler_on, algo._dead_time_power(), est.state) == (None, 1.0, "HEATING")
+    await _step(handler, STOP, read, 0.0)
+    assert (est.state, est.cool_start_time) == ("WAITING_COOL_RESPONSE", STOP)
+    await _cools_down(handler, STOP, read)
+
+    assert list(est._history_cool) == [REFERENCE_S]
+    assert "heat stopped with the central boiler" not in caplog.text
 
 
 def _fresh_handler() -> SmartPIHandler:
@@ -287,7 +464,7 @@ async def test_a_new_call_after_the_cut_s_stop_starts_at_once_in_the_first_phase
 
     est = algo.dt_est
     assert algo.phase.value == "Hysteresis" and algo.committed_on_percent == 1.0
-    assert not algo.heat_cut_by_the_boiler
+    assert algo.boiler_on is True
     assert (est.state, est.last_start_time, est.heat_start_time) == ("WAITING_HEAT_RESPONSE", 2330.0, 2330.0)
 
 
@@ -307,28 +484,5 @@ async def test_a_new_call_after_the_cut_s_stop_in_the_stable_phase_is_as_without
     algo = await _step(handler, 2330.0, True, 1.0)
 
     est = algo.dt_est
-    assert not algo.heat_cut_by_the_boiler
+    assert algo.boiler_on is True
     assert (est.state, est.last_start_time, est.heat_start_time) == ("WAITING_HEAT_RESPONSE", 2330.0, 2330.0)
-
-
-async def test_a_new_call_with_the_boiler_still_off_waits_for_it_as_before() -> None:
-    """After the cut the room stops (the cut ends) and calls again at 1700 s, the boiler still
-    off: an ordinary own start that waits for the boiler, as before the cut existed. The heating
-    detection arms at the call (670 s without heat since the boiler's stop), the pause drops it,
-    and the start counts from the boiler's start at 1900 s."""
-    handler = await _heated()
-    algo = handler._thermostat.prop_algorithm
-    est = algo.dt_est
-    _boiler(handler, False, STOP)
-    await _step(handler, STOP + 30.0, False, 0.0)
-    assert not algo.heat_cut_by_the_boiler
-
-    await _step(handler, 1700.0, False, 1.0)
-    assert (est.state, est.heat_start_time) == ("WAITING_HEAT_RESPONSE", 1700.0)
-    await _step(handler, 1760.0, False, 1.0)
-    assert algo.boiler_learning_paused and (est.state, est.last_outcome["heat"]) == ("HEATING", "aborted")
-
-    _boiler(handler, True, 1900.0)
-
-    assert not algo.boiler_learning_paused
-    assert (est.state, est.heat_start_time, est.last_stop_time) == ("WAITING_HEAT_RESPONSE", 1900.0, STOP)

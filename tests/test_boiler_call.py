@@ -12,6 +12,7 @@ from homeassistant.helpers import entity_registry as er
 import custom_components.vtherm_smartpi.algo as algo_module
 from custom_components.vtherm_smartpi.algo import SmartPI
 from custom_components.vtherm_smartpi.boiler_call import (
+    BOILER_BLINK_S,
     BOILER_PAUSE_CONFIRM_S,
     VT_CENTRAL_BOILER_UNIQUE_ID,
     VT_DOMAIN,
@@ -185,29 +186,39 @@ def test_a_calibration_does_not_time_the_dead_time_with_the_boiler_off(pause, mo
 
 
 def _paused_while_calling(monkeypatch, now: list[float], learning: bool = True) -> SmartPI:
-    """SmartPI calling at full power with a filtered room temperature, paused at 100 s."""
+    """SmartPI calling at full power from 40 s with a filtered room temperature, the central
+    boiler off since before the call, paused at 100 s."""
     smartpi = _smartpi()
     smartpi.set_learning_enabled(learning)
-    smartpi._committed_on_percent = 1.0
+    smartpi._committed_on_percent = 0.0
     smartpi.tint_filter.update(19.0, 0.0)
     monkeypatch.setattr(algo_module.time, "monotonic", lambda: now[0])
+    now[0] = 30.0
+    smartpi.set_boiler_state(True)
+    smartpi.set_boiler_state(False)
+    now[0] = 40.0
+    smartpi._committed_on_percent = 1.0
     now[0] = 100.0
     smartpi.set_boiler_learning_paused(True)
     return smartpi
 
 
 def test_the_boiler_s_start_arms_the_dead_time_detection_from_then(monkeypatch) -> None:
-    """The pause ends because the boiler starts while SmartPI calls: the detection arms as at a
-    start from 0, its time counted from the boiler's start, not from the call that waited."""
+    """The boiler starts at 220 s while SmartPI calls, and the handler gives it 5 s later: the
+    detection arms as at a start from 0, its time counted from the boiler's start, not from the
+    call that waited."""
     now = [0.0]
     smartpi = _paused_while_calling(monkeypatch, now)
-    assert smartpi.dt_est.state == "OFF"
+    assert smartpi.dt_est.state == "OFF" and smartpi._dead_time_power() == 0.0
 
     now[0] = 220.0
-    smartpi.set_boiler_learning_paused(False, boiler_started=True)
+    smartpi.set_boiler_learning_paused(False)
+    assert smartpi.dt_est.state == "OFF"
+    now[0] = 225.0
+    assert smartpi.set_boiler_state(True, since=220.0) is True
 
     assert smartpi.dt_est.state == "WAITING_HEAT_RESPONSE"
-    assert smartpi.dt_est.heat_start_time == 220.0
+    assert (smartpi.dt_est.heat_start_time, smartpi.dt_est.last_start_time) == (220.0, 220.0)
 
 
 @pytest.mark.parametrize(("boiler_started", "learning", "power"), [(False, True, 1.0), (True, False, 1.0), (True, True, 0.5)])
@@ -219,7 +230,9 @@ def test_no_detection_without_the_boiler_s_start(boiler_started, learning, power
     smartpi._committed_on_percent = power
 
     now[0] = 220.0
-    smartpi.set_boiler_learning_paused(False, boiler_started=boiler_started)
+    smartpi.set_boiler_learning_paused(False)
+    if boiler_started:
+        smartpi.set_boiler_state(True, since=220.0)
 
     assert smartpi.dt_est.state != "WAITING_HEAT_RESPONSE"
 
@@ -255,14 +268,18 @@ def test_a_stop_that_ends_the_pause_arms_no_passive_detection(paused, monkeypatc
 
 @pytest.mark.parametrize("paused", [False, True])
 def test_a_stop_seen_during_the_pause_arms_no_passive_detection(paused, monkeypatch) -> None:
-    """In SmartPI's first phase the stop is committed within the calculation, while the pause
-    still holds: the estimator records the stop and arms nothing, where without the pause it
-    times the room's passive response (the heating lasted its dead time)."""
+    """In SmartPI's first phase the stop is committed within the calculation. Without the pause
+    the estimator times the room's passive response from it (the heating lasted its dead time).
+    Paused, the room called while the boiler was off since 1000 s: the estimator saw no power,
+    so the room's stop changes nothing for it, and it arms nothing."""
     now = [1000.0]
     monkeypatch.setattr(algo_module.time, "monotonic", lambda: now[0])
     smartpi = SmartPI(hass=MagicMock(), cycle_min=10, minimal_activation_delay=0, minimal_deactivation_delay=0, name="Boiler")
+    smartpi.set_boiler_state(True)
+    if paused:
+        smartpi.set_boiler_state(False)
     smartpi._committed_on_percent = 1.0
-    smartpi.dt_est.last_power = 1.0
+    smartpi.dt_est.last_power = 0.0 if paused else 1.0
     dt_est = smartpi.dt_est
     dt_est.deadtime_heat_s, dt_est.deadtime_heat_reliable, dt_est.last_start_time = 120.0, True, 1000.0
     smartpi.set_boiler_learning_paused(paused)
@@ -271,7 +288,7 @@ def test_a_stop_seen_during_the_pause_arms_no_passive_detection(paused, monkeypa
     smartpi.calculate(target_temp=18.0, current_temp=19.5, ext_current_temp=5.0, slope=0.0, hvac_mode=VThermHvacMode_HEAT)
 
     assert smartpi.phase == SmartPIPhase.HYSTERESIS and smartpi.committed_on_percent == 0.0
-    assert smartpi.dt_est.last_stop_time == 1600.0
+    assert (smartpi.dt_est.last_stop_time == 1600.0) is not paused
     assert (smartpi.dt_est.state == "WAITING_COOL_RESPONSE") is not paused
 
 
@@ -326,8 +343,9 @@ def _heat_then_stop_then_start(est, *, pre_c_per_h: float, off_min: float, pause
 def test_a_pause_leaves_the_next_start_s_dead_time_as_without_it(pre_c_per_h, off_min, monkeypatch) -> None:
     """The dead time is measured against the room's trend before the start, from the period
     without heating. A pause keeps the estimator's history and last stop, so the next start's
-    outcome, dead time and trend are those of the same room without the pause. The stop that ends
-    the pause times no passive response: the heat had stopped with the boiler."""
+    outcome, dead time and trend are those of the same room without the pause. The estimator is
+    fed SmartPI's command through the pause here, as a calibration feeds it before its pause: the
+    stop that ends the pause times no passive response, the heat had stopped with the boiler."""
     paused = _smartpi()
 
     def pause(on: bool) -> None:
@@ -354,8 +372,8 @@ def _a_start_that_waits(room, *, call_s: float, pre_c_per_h: float = 0.0, monkey
     comes 300 s after it at 3 degC/h. Fed every 20 s, read to 0.01 degC, through the regulation's
     filter, until the detection ends (or at once when none arms). ``room`` is SmartPI, fed as it
     feeds its estimator (the call from ``call_s``, the pause a calculation period later, the
-    resume at the boiler's start), or the author's estimator alone, whose heat starts with the
-    boiler."""
+    resume and the boiler's state, off from the room's stop, on at the boiler's start), or the
+    author's estimator alone, whose heat starts with the boiler."""
     smartpi = room if isinstance(room, SmartPI) else None
     est = smartpi.dt_est if smartpi else room
     filt = smartpi.tint_filter if smartpi else AdaptiveTintFilter("test")
@@ -363,7 +381,7 @@ def _a_start_that_waits(room, *, call_s: float, pre_c_per_h: float = 0.0, monkey
     now = [-3600.0]
     if smartpi:
         monkeypatch.setattr(algo_module.time, "monotonic", lambda: 10_000.0 + now[0])
-        smartpi._committed_on_percent = 1.0
+        smartpi.set_boiler_state(True)
     est.last_power = 1.0  # heating already
     while now[0] <= boiler + 7200.0:
         t = now[0]
@@ -371,11 +389,15 @@ def _a_start_that_waits(room, *, call_s: float, pre_c_per_h: float = 0.0, monkey
         raw = round(temp, 2)
         lp, _ = filt.update(raw, 10_000.0 + t)
         if smartpi:
+            smartpi._committed_on_percent = 1.0 if t < 0.0 or t >= call_s else 0.0
+            if t == 0.0:
+                smartpi.set_boiler_state(False, current_temp=raw)  # the boiler goes off with the room's stop
             if t == call_s + RECALC_S:
                 smartpi.set_boiler_learning_paused(True)
             if t == boiler:
-                smartpi.set_boiler_learning_paused(False, boiler_started=True, current_temp=raw)
-            power = 1.0 if t < 0.0 or t >= call_s else 0.0
+                smartpi.set_boiler_learning_paused(False)
+                smartpi.set_boiler_state(True, current_temp=raw, since=10_000.0 + t)
+            power = smartpi._dead_time_power()
         else:
             power = 1.0 if t < 0.0 or t >= boiler else 0.0
         est.update(10_000.0 + t, lp, power, hvac_mode=VThermHvacMode_HEAT, tin_raw=raw)
@@ -530,9 +552,11 @@ async def test_a_change_of_the_pause_is_published_at_once() -> None:
 
 async def test_the_boiler_s_start_resumes_at_once_and_arms_the_detection() -> None:
     """Versatile Thermostat's boiler starts while the room waits for it, paused: the change of
-    the boiler's state resumes learning at that moment, without a calculation, publishes it, and
-    arms the dead-time detection from then."""
+    the boiler's state resumes learning at that moment, without a calculation, and publishes it;
+    the check scheduled 5 s later, the boiler still on, arms the dead-time detection from the
+    boiler's start and publishes it."""
     handler = _handler()
+    handler._boiler_listener_remove = MagicMock()  # the boiler's changes are followed
     await _control(handler, boiler_on=False, power=1.0, at=1000.0)
     algo = await _control(handler, boiler_on=False, power=1.0, at=1000.0 + BOILER_PAUSE_CONFIRM_S)
     assert algo.boiler_learning_paused is True
@@ -543,13 +567,57 @@ async def test_the_boiler_s_start_resumes_at_once_and_arms_the_detection() -> No
         patch("custom_components.vtherm_smartpi.algo.time.monotonic", return_value=1120.0),
         patch("custom_components.vtherm_smartpi.handler.central_boiler_on", return_value=True),
         patch("custom_components.vtherm_smartpi.handler.async_dispatcher_send") as send,
+        patch("custom_components.vtherm_smartpi.handler.async_call_later") as later,
     ):
         handler._on_boiler_change(MagicMock())
 
     assert algo.boiler_learning_paused is False
     assert send.called
     algo.calculate.assert_not_called()
+    assert algo.dt_est.state != "WAITING_HEAT_RESPONSE"
+    assert later.call_args.args[1] == BOILER_BLINK_S
+
+    with (
+        patch("custom_components.vtherm_smartpi.handler.time.monotonic", return_value=1120.0 + BOILER_BLINK_S),
+        patch("custom_components.vtherm_smartpi.algo.time.monotonic", return_value=1120.0 + BOILER_BLINK_S),
+        patch("custom_components.vtherm_smartpi.handler.central_boiler_on", return_value=True),
+        patch("custom_components.vtherm_smartpi.handler.async_dispatcher_send") as send,
+    ):
+        later.call_args.args[2](None)
+
+    assert send.called
+    algo.calculate.assert_not_called()
     assert (algo.dt_est.state, algo.dt_est.heat_start_time) == ("WAITING_HEAT_RESPONSE", 1120.0)
+
+
+async def test_a_boiler_that_goes_off_before_its_check_starts_nothing() -> None:
+    """The boiler runs 2 s and goes off again: the check scheduled for its start is cancelled, and
+    a check that still fires changes nothing; the estimator sees no start. On removal a pending
+    check is cancelled too."""
+    handler = _handler()
+    handler._boiler_listener_remove = MagicMock()
+    await _control(handler, boiler_on=False, power=1.0, at=1000.0)
+    algo = handler._thermostat.prop_algorithm
+    algo.calculate = MagicMock()
+    with patch("custom_components.vtherm_smartpi.handler.async_call_later") as later:
+        _boiler_changes(handler, on=True, at=1120.0)
+        check = later.call_args.args[2]
+        cancel = later.return_value
+        _boiler_changes(handler, on=False, at=1122.0)
+        cancel.assert_called_once()
+        _boiler_changes(handler, on=True, at=1130.0)
+    with (
+        patch("custom_components.vtherm_smartpi.handler.time.monotonic", return_value=1125.0),
+        patch("custom_components.vtherm_smartpi.handler.central_boiler_on", return_value=True),
+        patch("custom_components.vtherm_smartpi.handler.async_dispatcher_send"),
+    ):
+        check(None)  # the first check, for the start at 1120 s
+
+    assert algo.boiler_on is False and algo.dt_est.state != "WAITING_HEAT_RESPONSE"
+    handler._store = None  # no state to save here
+    with patch("custom_components.vtherm_smartpi.handler.clear_valve_config_issues"):
+        handler.remove()
+    assert cancel.call_count == 2  # the check for the start at 1130 s
 
 
 async def test_a_room_that_stops_before_the_boiler_starts_resumes_without_a_detection() -> None:
@@ -607,8 +675,9 @@ async def test_the_boiler_going_off_while_it_heats_the_room_is_the_room_s_stop(b
 
     back = 1030.0 + back_after_s
     _boiler_changes(handler, on=True, at=back)
-
     assert algo.boiler_learning_paused is False
+    _boiler_changes(handler, on=True, at=back + BOILER_BLINK_S)  # the boiler still on 5 s later
+
     assert algo.dt_est.last_stop_time == 1030.0
     if measured:
         assert (algo.dt_est.state, algo.dt_est.heat_start_time) == ("WAITING_HEAT_RESPONSE", back)
@@ -632,6 +701,7 @@ async def test_an_own_start_that_waits_for_the_boiler_records_no_stop() -> None:
     await _control(handler, boiler_on=False, power=1.0, at=1000.0 + BOILER_PAUSE_CONFIRM_S)
     assert algo.boiler_learning_paused is True
     _boiler_changes(handler, on=True, at=1120.0)
+    _boiler_changes(handler, on=True, at=1120.0 + BOILER_BLINK_S)
 
     assert algo.dt_est.last_stop_time == 300.0
     assert (algo.dt_est.state, algo.dt_est.heat_start_time) == ("WAITING_HEAT_RESPONSE", 1120.0)
@@ -649,7 +719,9 @@ def test_the_heating_starts_with_the_boiler(learning, monkeypatch) -> None:
     est.deadtime_heat_s, est.deadtime_heat_reliable, est.last_start_time = 780.0, True, 0.0
 
     now[0] = 1000.0
-    smartpi.set_boiler_learning_paused(False, boiler_started=True)
+    smartpi.set_boiler_learning_paused(False)
+    now[0] = 1005.0
+    smartpi.set_boiler_state(True, since=1000.0)
     assert est.last_start_time == 1000.0
 
     smartpi._committed_on_percent = 0.0
@@ -669,6 +741,7 @@ async def test_the_boiler_going_off_drops_the_heating_detection_in_flight(caplog
     await _control(handler, boiler_on=False, power=1.0, at=1000.0)
     await _control(handler, boiler_on=False, power=1.0, at=1000.0 + BOILER_PAUSE_CONFIRM_S)
     _boiler_changes(handler, on=True, at=1120.0)
+    _boiler_changes(handler, on=True, at=1120.0 + BOILER_BLINK_S)
     assert algo.dt_est.state == "WAITING_HEAT_RESPONSE"
 
     caplog.set_level(logging.INFO, logger="custom_components.vtherm_smartpi.algo")
@@ -681,7 +754,7 @@ async def test_the_boiler_going_off_drops_the_heating_detection_in_flight(caplog
         handler._on_boiler_change(MagicMock())
 
     assert (algo.dt_est.state, algo.dt_est.last_outcome["heat"], algo.dt_est.last_stop_time) == ("COOLING", "aborted", 1420.0)
-    assert algo.dt_est.last_power == 0.0 and algo.heat_cut_by_the_boiler
+    assert algo.dt_est.last_power == 0.0 and algo.boiler_on is False and algo._dead_time_power() == 0.0
     assert send.called
     assert "heat stopped with the central boiler (heating dead-time detection aborted)" in caplog.text
 

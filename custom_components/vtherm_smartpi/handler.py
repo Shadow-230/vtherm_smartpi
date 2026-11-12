@@ -8,7 +8,7 @@ from homeassistant.util import slugify
 from homeassistant.components.sensor import DOMAIN as SENSOR_DOMAIN
 from homeassistant.helpers import entity_registry as er
 from homeassistant.core import Event, callback
-from homeassistant.helpers.event import async_track_state_change_event, async_track_time_interval
+from homeassistant.helpers.event import async_call_later, async_track_state_change_event, async_track_time_interval
 from homeassistant.helpers.dispatcher import async_dispatcher_send
 from datetime import timedelta
 
@@ -46,7 +46,7 @@ from .const import (
 from .hvac_mode import VThermHvacMode_OFF, VThermHvacMode_HEAT, VThermHvacMode_COOL
 from .commons import write_event_log
 from .valve_config_check import apply_valve_config_check, clear_valve_config_issues
-from .boiler_call import BOILER_PAUSE_CONFIRM_S, central_boiler_entity_id, central_boiler_on
+from .boiler_call import BOILER_BLINK_S, BOILER_PAUSE_CONFIRM_S, central_boiler_entity_id, central_boiler_on
 from .smartpi.valve_curve import ValveCurveParams
 
 if TYPE_CHECKING:
@@ -76,9 +76,15 @@ class SmartPIHandler:
         # Since when SmartPI has called with the central boiler off, without a break (monotonic
         # time), None while it does not.
         self._boiler_off_since: float | None = None
-        # Whether the central boiler was on at the last check while SmartPI called: the room was
-        # heated by it, so the boiler going off stops the room's heat.
-        self._heated_by_the_boiler: bool = False
+        # The central boiler's state as last read (None: not counted, or unreadable), since when
+        # (monotonic time), and whether the check scheduled for it found it held (``_follow_the_boiler``).
+        self._boiler_read: bool | None = None
+        self._boiler_read_since: float = 0.0
+        self._boiler_held: bool = False
+        # When the boiler last went off for the dead-time estimator (``SmartPI.boiler_on``).
+        self._boiler_seen_off_at: float | None = None
+        # The check scheduled once a boiler's start has held ``BOILER_BLINK_S``.
+        self._boiler_check_remove = None
         # The listener of Versatile Thermostat's central boiler state (``_listen_to_the_boiler``).
         self._boiler_listener_remove = None
         self._valve_linearization_configured: bool = False
@@ -237,6 +243,7 @@ class SmartPIHandler:
         if self._boiler_listener_remove is not None:
             self._boiler_listener_remove()
             self._boiler_listener_remove = None
+        self._cancel_the_boiler_check()
         clear_valve_config_issues(t)
 
     def _remove_receipt_callback(self) -> None:
@@ -547,35 +554,21 @@ class SmartPIHandler:
             async_dispatcher_send(t.hass, diag_update_signal(t.unique_id))
 
     def _update_boiler_learning_pause(self, algo: SmartPI) -> bool:
-        """Pause SmartPI's learning while it calls for heat and the central boiler is off, or
-        resume it; whether the pause changed or the room's heat stopped or restarted with the boiler.
+        """Give SmartPI the central boiler's state for its dead-time estimator, and pause SmartPI's
+        learning while it calls for heat and the boiler is off, or resume it; whether the room's
+        heat changed with the boiler or the pause changed.
 
         The pause starts once this has held without a break for ``BOILER_PAUSE_CONFIRM_S``:
         when a thermostat's own start turns the boiler on, Versatile Thermostat does so only
-        once the thermostat's device reports it. Learning resumes at once; a resume because the
-        boiler starts while SmartPI calls starts the dead-time detection from that moment. A
-        change is published at once. The boiler going off while SmartPI calls, after it heated
-        the room, is the end of the room's heat (``SmartPI.heat_stopped_with_the_boiler``) until
-        the boiler heats it again; a room that waits for a boiler that has not heated it records
-        no stop.
+        once the thermostat's device reports it. Checks in that time must not pause. Learning
+        resumes at once. A change is published at once.
         """
         now = time.monotonic()
+        t = self._thermostat
+        counted = getattr(t, "is_used_by_central_boiler", False) is True
+        boiler_on = central_boiler_on(t.hass) if counted else None
+        heat_changed = self._follow_the_boiler(algo, boiler_on, now)
         calls = self._calls_for_boiler_heat(algo)
-        boiler_on = central_boiler_on(self._thermostat.hass) if calls else None
-        stopped = calls and boiler_on is False and self._heated_by_the_boiler
-        if stopped:
-            algo.heat_stopped_with_the_boiler(current_temp=self._thermostat.current_temperature)
-            self._should_publish_intermediate = True
-        # The boiler heats again the room it had stopped heating, before learning paused (a
-        # paused room restarts at its resume).
-        restarted = calls and boiler_on is True and algo.heat_cut_by_the_boiler and not algo.boiler_learning_paused
-        if restarted:
-            algo.heat_restarts_with_the_boiler(current_temp=self._thermostat.current_temperature)
-            self._should_publish_intermediate = True
-        if not calls:
-            self._heated_by_the_boiler = False
-        elif boiler_on is not None:
-            self._heated_by_the_boiler = boiler_on
         if not (calls and boiler_on is False):
             self._boiler_off_since = None
         elif self._boiler_off_since is None:
@@ -584,10 +577,76 @@ class SmartPIHandler:
             algo.boiler_learning_paused or now - self._boiler_off_since >= BOILER_PAUSE_CONFIRM_S
         )
         if paused == algo.boiler_learning_paused:
-            return bool(stopped or restarted)
-        algo.set_boiler_learning_paused(paused, boiler_started=calls and boiler_on is True, current_temp=self._thermostat.current_temperature)
+            return heat_changed
+        algo.set_boiler_learning_paused(paused)
         self._should_publish_intermediate = True
         return True
+
+    def _follow_the_boiler(self, algo: SmartPI, boiler_on: bool | None, now: float) -> bool:
+        """Give SmartPI the boiler's state its dead-time estimator follows
+        (``SmartPI.set_boiler_state``); whether the room's heat stopped, started or came back.
+
+        Versatile Thermostat can switch its boiler off and on again within milliseconds, a blink.
+        A stop counts at once. A start counts once the boiler has run ``BOILER_BLINK_S`` without a
+        break, checked then while the boiler's changes are followed, or at the next calculation;
+        it is fed from the boiler's start. A boiler back within ``BOILER_BLINK_S`` of its stop
+        blinked: the room's heat did not stop. A state that becomes known or unknown counts at
+        once.
+        """
+        if boiler_on != self._boiler_read:
+            self._boiler_read, self._boiler_read_since, self._boiler_held = boiler_on, now, False
+            self._schedule_the_boiler_check(boiler_on)
+        followed = algo.boiler_on
+        seen = boiler_on
+        if (
+            boiler_on is True
+            and followed is False
+            and not self._boiler_held
+            and now - self._boiler_read_since < BOILER_BLINK_S
+        ):
+            seen = followed
+        if seen == followed:
+            return False
+        blink = (
+            seen is True
+            and followed is False
+            and self._boiler_seen_off_at is not None
+            and self._boiler_read_since - self._boiler_seen_off_at < BOILER_BLINK_S
+        )
+        if seen is False:
+            self._boiler_seen_off_at = now
+        changed = algo.set_boiler_state(
+            seen,
+            current_temp=self._thermostat.current_temperature,
+            since=self._boiler_read_since,
+            blink=blink,
+        )
+        if changed:
+            self._should_publish_intermediate = True
+        return changed
+
+    def _schedule_the_boiler_check(self, boiler_on: bool | None) -> None:
+        """Check the boiler's start once it has held ``BOILER_BLINK_S``, while its changes are
+        followed (``_listen_to_the_boiler``); a new change cancels the check."""
+        self._cancel_the_boiler_check()
+        if boiler_on is not True or self._boiler_listener_remove is None:
+            return
+        since = self._boiler_read_since
+
+        @callback
+        def _held(_now) -> None:
+            if self._boiler_read is not True or self._boiler_read_since != since:
+                return  # the boiler changed since: a later check is due, if any
+            self._boiler_check_remove = None
+            self._boiler_held = True
+            self._on_boiler_change(None)
+
+        self._boiler_check_remove = async_call_later(self._thermostat.hass, BOILER_BLINK_S, _held)
+
+    def _cancel_the_boiler_check(self) -> None:
+        if self._boiler_check_remove is not None:
+            self._boiler_check_remove()
+            self._boiler_check_remove = None
 
     def _calls_for_boiler_heat(self, algo: SmartPI) -> bool:
         """True while SmartPI calls for heat for a thermostat that Versatile Thermostat counts
@@ -600,7 +659,8 @@ class SmartPIHandler:
 
     def _listen_to_the_boiler(self) -> None:
         """Follow the changes of Versatile Thermostat's central boiler state, once its entity
-        exists, so that the pause is checked at the moment the boiler starts or stops."""
+        exists, so that its state and the pause are checked at the moment the boiler starts or
+        stops."""
         t = self._thermostat
         if self._boiler_listener_remove is not None or getattr(t, "is_used_by_central_boiler", False) is not True:
             return
@@ -609,8 +669,9 @@ class SmartPIHandler:
             self._boiler_listener_remove = async_track_state_change_event(t.hass, [entity_id], self._on_boiler_change)
 
     @callback
-    def _on_boiler_change(self, _event: Event) -> None:
-        """The boiler started or stopped: the pause is checked now, not at the next calculation."""
+    def _on_boiler_change(self, _event: Event | None) -> None:
+        """The boiler started or stopped: its state and the pause are checked now, not at the
+        next calculation."""
         t = self._thermostat
         algo = t.prop_algorithm if isinstance(t.prop_algorithm, SmartPI) else None
         if algo is not None and self._update_boiler_learning_pause(algo):

@@ -233,7 +233,7 @@ for a background command.
 | BP30 | Fresh, North off | West and East call right after the reset, so SmartPI measures no heating dead time (600 s after a reset); the boiler on, West heats for 30 minutes and stops | without a reliable heating dead time SmartPI arms no detection of West's passive response: for five calculations no WAITING_COOL_RESPONSE and no passive outcome. | `boiler-count` | fresh | 38 min | 66 min | — | no | no | test_boiler_call.py |
 | BP31 | West learned (heating dead time 780 s, no response lag published), East learned, North off | West and East call, the boiler on; West heats for 5 minutes, shorter than its dead time, and stops; after 600 s without heat it calls again, heats for 20 minutes and stops | after the short heating SmartPI arms no detection of West's passive response for 300 s, nor the boiler's stop one of East's (learned, heated 5 minutes as well); after the long one the detection arms and ends detected, and SmartPI's log gives a passive dead time of at least 60 s. | `boiler-count` | learned | 59 min | 2.3 h | the passive response's time: how long the room keeps warming after the stop | yes | no | test_boiler_call.py |
 | BP32 | West learned with its response lag published (780 s, heating periods of 2 h, so a settling time of 2340 s), East learned, North off | West and East call, the boiler on; West heats for 25 minutes, longer than its dead time but shorter than its settling time, and stops | SmartPI arms no detection of West's passive response for 300 s. | `boiler-count` | learned | 32 min | 61 min | — | no | no | test_boiler_call.py |
-| BP33 | East learned (heating dead time 780 s, no response lag published), West and North not calling | VTherm's threshold lowered to 1 device, East calls and heats 20 minutes with the boiler on; the threshold back to 2 turns the boiler off while East calls, and East stops itself 20-59 s later, before its learning pause | SmartPI times East's passive response from the boiler's stop, not from East's own stop: exactly one "Cool Deadtime detected" line after the boiler's stop, whose start lies within 1 s of the boiler's stop; the detection goes on without a break, ends detected with at least 60 s, and the threshold is back to 2. | `boiler-count` | learned | 42 min | 110 min | the passive response's time: how long the room keeps warming after the boiler's stop | no | no | test_boiler_call.py |
+| BP33 | East learned (heating dead time 780 s, no response lag published), West and North not calling | VTherm's threshold lowered to 1 device, East calls and heats 20 minutes with the boiler on; the threshold back to 2 turns the boiler off while East calls, East stops itself 20-59 s later, before its learning pause, and calls again 120 s after its stop, the boiler still off (East alone is below the threshold) | SmartPI times East's passive response from the boiler's stop, and neither East's own stop nor its new call changes it: exactly one "Cool Deadtime detected" line after the boiler's stop, of at least 60 s, whose start lies within 1 s of the boiler's stop; the detection goes on without a break through the new call (its age never falls) and ends detected; East never waits for a heating response and the log has no "Heat Deadtime detected" line while the boiler stays off; the threshold is back to 2. | `boiler-count` | learned | 42 min | 112 min | the passive response's time: how long the room keeps warming after the boiler's stop | no | no | test_boiler_call.py |
 <!-- end of catalogue -->
 
 ## 5. Known points
@@ -250,7 +250,7 @@ for a background command.
 - BP26 measures a heating dead time from a fresh start: one detection on the bench spreads by
   hundreds of seconds, so its value is recorded against 780 s and 900 s, not judged; it passes on
   the detection armed at the boiler's start counting from it and ending detected with at least
-  60 s (the pause leaves "aborted" for the detection armed at West's call, which is not read).
+  60 s (nothing arms at West's call: SmartPI's estimator sees no power until the boiler starts).
   SmartPI measures no start within 600 s of a reset of learning, but a room can still be warming
   then, so BP26 itself waits before West's start until West's valve has been closed for 600 s,
   its learning was reset 600 s before, and its room is 0.1 °C below its highest reading since: a
@@ -279,11 +279,17 @@ for a background command.
   11e3071), its typical time here.
 - BP33 lowers VTherm's threshold to 1 device so that the boiler heats East alone, then puts it
   back to 2 while East calls: the boiler goes off and East stops itself 20-59 s later, before its
-  learning pause. East's own stop then changes nothing for SmartPI's estimator, which times East's
-  passive response from the boiler's stop. The check reads the start of the only passive dead time
-  in the log (the line's time less the dead time and the drop's delay, both logged to 0.1 s) and
-  East's stop from SmartPI's "East - Target change detected" line, both on Home Assistant's clock
-  like the boiler's change. West does not call, North is off.
+  learning pause, then calls again 120 s after its stop, the boiler still off (East alone stays
+  below the threshold). SmartPI's estimator sees no power while the boiler is off, so East's own
+  stop and its new call change nothing: it times East's passive response from the boiler's stop.
+  The check reads the start of the only passive dead time in the log (the line's time less the
+  dead time and the drop's delay, both logged to 0.1 s) and East's stop from SmartPI's "East -
+  Target change detected" line, both on Home Assistant's clock like the boiler's change. That the
+  detection goes on through the new call is read from East's diagnostics: its age
+  (`analysis.deadtime.waiting_elapsed_s`) never falls, as it would for a new detection. A second
+  run starts with East's outcome "detected" from the first (a learned start keeps it), so the
+  outcome alone proves nothing then: the run notes it, and the log's line decides. West does not
+  call, North is off.
 - The boiler's stop is a stop of heat for every room it heated that still calls: BP27 and BP31
   check that it arms no passive detection of East after a short heating (fresh in BP27, learned
   in BP31). In BP13's step C the boiler goes off while West calls: West may get a passive
