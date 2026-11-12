@@ -10,8 +10,9 @@ need; everything else keeps VTherm's defaults:
    boiler, with the role's activation delay; the safety delay of the test rooms' sensors
    (pack.SAFETY_DELAY_MIN);
 2. SmartPI's defaults entry, before the thermostats, so that they find SmartPI's algorithm;
-3. one thermostat per room, with SmartPI: its sensor, its device and the device's power, whether
-   the central boiler counts it; power management unticked (VTherm ticks it for a device with a
+3. one thermostat per room of the role, with SmartPI: its sensor, its device (a valve, or a
+   switch for an electric heater or a relay) and the device's power, whether the central boiler
+   counts it; power management unticked (VTherm ticks it for a device with a
    power, and warns without a power manager); for a valve, VTherm's opening filters off, as
    SmartPI's repairs advise; West's window sensor (VTherm turns West off while the window is
    open);
@@ -38,7 +39,6 @@ from pack import (  # noqa: E402
     BOILER_SWITCH,
     OUTDOOR_SENSOR,
     ROLES,
-    ROOMS,
     SAFETY_DELAY_MIN,
     SMARTPI,
     SMARTPI_DEFAULTS,
@@ -118,7 +118,7 @@ async def set_up(api: Any, role: Role, say: Any = print) -> None:
     if SMARTPI_DEFAULTS not in {e["title"] for e in await api.entries(SMARTPI)}:
         await run_flow(api, SMARTPI, [])
         say(f"SmartPI: {SMARTPI_DEFAULTS}")
-    for room in ROOMS:
+    for room in role.rooms:
         if room.name in vt_titles:
             continue
         await run_flow(api, VT, thermostat_steps(room, role))

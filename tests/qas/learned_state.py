@@ -1,4 +1,4 @@
-"""Write the helper's learned SmartPI states of the rooms West and East (custom_components/smartpi_test_helper/states/<room>.json).
+"""Write the helper's learned SmartPI states of the rooms West and East, and of North as a radiator behind a relay (custom_components/smartpi_test_helper/states/<name>.json).
 
     python tests/qas/learned_state.py           # write the files
     python tests/qas/learned_state.py --check   # exit 1 when a file is not what this gives
@@ -12,7 +12,8 @@ that each is up to date and loads into SmartPI as its room's learned model.
 
 One variant, ``west_settled.json``, has West's response lag published as well (its mean residence
 time, the radiator's delay plus its lag, from three agreeing estimates) and heating periods of two
-hours: SmartPI's settling time of a heating is then three lags (BP29).
+hours: SmartPI's settling time of a heating is then three lags (BP29). Another, ``north_relay.json``,
+is North of the role boiler-relay, a radiator behind a relay (BP34, BP35).
 """
 
 from __future__ import annotations
@@ -28,7 +29,7 @@ for path in (HERE, HERE.parents[1]):
     if str(path) not in sys.path:
         sys.path.insert(0, str(path))
 
-from pack import Room, room  # noqa: E402
+from pack import RELAY_NORTH, Room, room  # noqa: E402
 
 ROOMS = (room("West"), room("East"))
 STATES = HERE / "custom_components" / "smartpi_test_helper" / "states"
@@ -36,6 +37,7 @@ LEARNING_START = "2026-01-01T00:00:00"
 
 
 SETTLED = "west_settled"  # West with its response lag published (BP29)
+RELAY = "north_relay"  # North of boiler-relay, a radiator behind a relay (BP34, BP35)
 SETTLED_HEATING_S = 2 * 3600.0  # its heating periods: half their median is longer than three lags
 LAG_UNCERTAINTY_S = 10.0  # each estimate's standard deviation
 
@@ -46,6 +48,15 @@ def file(r: Room) -> pathlib.Path:
 
 def settled_file() -> pathlib.Path:
     return STATES / f"{SETTLED}.json"
+
+
+def relay_file() -> pathlib.Path:
+    return STATES / f"{RELAY}.json"
+
+
+def loaded() -> list[tuple[Room, pathlib.Path]]:
+    """Each room's learned model and its file, as the helper loads it."""
+    return [(r, file(r)) for r in ROOMS] + [(RELAY_NORTH, relay_file())]
 
 
 def lag_s(r: Room) -> float:
@@ -100,7 +111,7 @@ def text(r: Room, settled: bool = False) -> str:
 
 def files() -> list[tuple[pathlib.Path, str]]:
     """Every file and the text it must hold."""
-    return [(file(r), text(r)) for r in ROOMS] + [(settled_file(), text(room("West"), settled=True))]
+    return [(path, text(r)) for r, path in loaded()] + [(settled_file(), text(room("West"), settled=True))]
 
 
 def main(argv: list[str]) -> int:
@@ -111,9 +122,9 @@ def main(argv: list[str]) -> int:
             return 1
         return 0
     STATES.mkdir(parents=True, exist_ok=True)
-    for r in ROOMS:
-        file(r).write_text(text(r), encoding="utf-8")
-        print(f"{file(r).name}: {model(r)}")
+    for r, path in loaded():
+        path.write_text(text(r), encoding="utf-8")
+        print(f"{path.name}: {model(r)}")
     settled_file().write_text(text(room("West"), settled=True), encoding="utf-8")
     print(f"{settled_file().name}: {model(room('West'))}, response lag {lag_s(room('West')):.0f} s")
     return 0

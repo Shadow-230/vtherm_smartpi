@@ -64,10 +64,11 @@ checks both files are up to date.
 
 **The test rooms** (`smartpi_test_rooms`). Each room is one thermal mass:
 `dT/dt = gain * p - loss * (T - T_out)`, the model SmartPI learns. `p` is the heater's output,
-after its delay and through its lag. A water radiator gets heat only while the boiler's switch is
-on. The outdoor temperature moves by ±0.2 °C around 3 °C, so its sensor never holds one value
+after its delay and through its lag. A water radiator, behind a valve or behind a relay, gets heat
+only while the boiler's switch is on. The outdoor temperature moves by ±0.2 °C around 3 °C, so its sensor never holds one value
 for hours. Entities: each room's temperature sensor (0.1 °C, written when it changes), its valve
-or heater switch, the outdoor temperature sensor and the boiler's switch. One tick every 7 s.
+or its switch (an electric heater's, or a relay's), the outdoor temperature sensor and the
+boiler's switch. One tick every 7 s.
 One service changes the rooms in place: `smartpi_test_rooms.set_valve_report_delay` (`seconds`):
 a valve takes and reports a new opening only that long after it was set, as a real valve head
 moves for seconds before it reports (0 s by default, which reports at once).
@@ -79,6 +80,7 @@ moves for seconds before it reports (0 s by default, which reports at once).
 | West | water radiator, valve | counted | `climate.west` |
 | East | water radiator, valve | counted | `climate.east` |
 | North | electric heater, switch | not counted | `climate.north` |
+| North in `boiler-relay` | water radiator behind an on/off actuator, a relay (switch) | counted | `climate.north` |
 
 | Role | Central boiler | Devices |
 |---|---|---|
@@ -87,6 +89,7 @@ moves for seconds before it reports (0 s by default, which reports at once).
 | `boiler-delay` | threshold of 2 active devices, activation delay 120 s | 2000 W each |
 | `boiler-levels` | threshold of 600 W: West alone with its valve fully open is below it, East alone or both reach it | West 300 W, East 900 W, North 2000 W |
 | `boiler-levels-delay` | as `boiler-levels`, activation delay 120 s | as `boiler-levels` |
+| `boiler-relay` | threshold of 1 active device: North alone keeps the boiler on | 2000 W each |
 
 In every role West has a window sensor, `input_boolean.west_window`.
 
@@ -122,6 +125,16 @@ power levels of `boiler-levels` let the power alone decide: West's 300 W alone s
 East's 900 W alone or both reach it (BP13). With the power, VTherm counts each device's power
 times its valve opening for the next cycle, so a partly open valve counts as that share of the
 device; with the device count, any open valve counts as a whole device.
+
+**A room behind a relay** (BP34, BP35) runs on `boiler-relay`. SmartPI drives a switch in cycles:
+at a command of 60 % the relay is on for 60 % of each 5-minute cycle, a pulse whose width follows
+the controller's output (Åström and Hägglund 1995, 3.4, p. 78–79, equation 3.23). VTherm counts a
+switch only while it is on, so with North alone the boiler goes off in each off part of North's
+cycle, although North's own command, not a lack of heat, made that off part. BP34 checks the
+learning pause in a modulating cycle, BP35 the dead-time estimator's heating period. Both expect
+what SmartPI's documentation promises, which the plugin of `qas` a6d0f78 does not keep
+(`technical_doc.md` 3.8, limits): they are written to show that, and to pass once it is fixed.
+In this role North does not call in the start state, which needs the boiler off.
 
 **A thermostat's own start** (BP25) runs on `boiler-count`: with the device count VTherm counts
 West only once its valve reports the new opening, and the valves' report delay of 15 s gives the
@@ -234,6 +247,8 @@ for a background command.
 | BP31 | West learned (heating dead time 780 s, no response lag published), East learned, North off | West and East call, the boiler on; West heats for 5 minutes, shorter than its dead time, and stops; after 600 s without heat it calls again, heats for 20 minutes and stops | after the short heating SmartPI arms no detection of West's passive response for 300 s, nor the boiler's stop one of East's (learned, heated 5 minutes as well); after the long one the detection arms and ends detected, and SmartPI's log gives a passive dead time of at least 60 s. | `boiler-count` | learned | 59 min | 2.3 h | the passive response's time: how long the room keeps warming after the stop | yes | no | test_boiler_call.py |
 | BP32 | West learned with its response lag published (780 s, heating periods of 2 h, so a settling time of 2340 s), East learned, North off | West and East call, the boiler on; West heats for 25 minutes, longer than its dead time but shorter than its settling time, and stops | SmartPI arms no detection of West's passive response for 300 s. | `boiler-count` | learned | 32 min | 61 min | — | no | no | test_boiler_call.py |
 | BP33 | East learned (heating dead time 780 s, no response lag published), West and North not calling | VTherm's threshold lowered to 1 device, East calls and heats 20 minutes with the boiler on; the threshold back to 2 turns the boiler off while East calls, East stops itself 20-59 s later, before its learning pause, and calls again 120 s after its stop, the boiler still off (East alone is below the threshold) | SmartPI times East's passive response from the boiler's stop, and neither East's own stop nor its new call changes it: exactly one "Cool Deadtime detected" line after the boiler's stop, of at least 60 s, whose start lies within 1 s of the boiler's stop; the detection goes on without a break through the new call (its age never falls) and ends detected; East never waits for a heating response and the log has no "Heat Deadtime detected" line while the boiler stays off; the threshold is back to 2. | `boiler-count` | learned | 42 min | 112 min | the passive response's time: how long the room keeps warming after the boiler's stop | no | no | test_boiler_call.py |
+| BP34 | North learned (a water radiator behind a relay, the boiler's threshold one device), West and East not calling | North's setpoint 1 degC above its room, so that SmartPI modulates: the relay is on for part of each 5-minute cycle and off for the rest, and VTherm's boiler, kept on by North alone, goes off in each off part | the role shows the case: the boiler goes off at least 3 times in 30 minutes while North's command stays above 0; North's own off part is not a lack of heat: North never pauses (diagnostics and SmartPI's log) and SmartPI logs no "North - SmartPI heat stopped with the central boiler" line. | `boiler-relay` | fresh | 30 min | 52 min | — | no | no | test_boiler_call.py |
+| BP35 | North learned (a water radiator behind a relay, the boiler's threshold one device), West and East not calling; North settled, 600 s after its learned state was loaded and its room not warming | North's setpoint 2 degC above its room: SmartPI heats at 100 %, then modulates, the relay off in part of each cycle and VTherm's boiler with it; North heats two cycles more and stops | North's heating counts from the step, not from the relay's last start: no "North - SmartPI heat stopped with the central boiler" line while North called; North's stop arms a detection of its passive response, shown within 495 s, which goes on without a break and ends detected with at least 60 s. | `boiler-relay` | fresh | 82 min | 4 h | when SmartPI starts to modulate, and the passive response's time | yes | no | test_boiler_call.py |
 <!-- end of catalogue -->
 
 ## 5. Known points
@@ -295,6 +310,19 @@ for a background command.
   in BP31). In BP13's step C the boiler goes off while West calls: West may get a passive
   detection from the boiler's stop during its pause, a real response of the room to the end of
   its heat; the trace's check of the pauses looks at the heating side only.
+- BP34 and BP35 run on `boiler-relay` and are written to fail on the plugin of `qas` a6d0f78,
+  which counts the off part of a relay's own cycle as the boiler cutting the room's heat
+  (`technical_doc.md` 3.8, limits); they pass once that is fixed. Their values come from the
+  pack's rooms run locally with SmartPI and VTherm (`test_qas_instance.py`), not from the bench:
+  - BP34: 1 °C above the room, SmartPI modulates at 50-65 %, so the relay's off part (about
+    100-150 s of the 5-minute cycle) is longer than the pause's 59 s; on a6d0f78 North paused
+    and logged "heat stopped with the central boiler" in every cycle;
+  - BP35: 2 °C above the room, SmartPI heats at 100 % for about 40 minutes and then modulates;
+    a start at 80-99 %, which the estimator times and the first off part would end, needs a step
+    within a few tenths of a degree that depends on the room's temperature, so BP35 waits for the
+    modulation instead. On a6d0f78 each off part was a stop and each on part a new start, so the
+    room's real stop armed no passive detection; with the boiler kept on by East, as the fix
+    should behave, the passive dead time came out detected (1008 s).
 - BP30 has West and East call right after the reset, so that SmartPI measures no heating dead time
   in its 30 minutes of heat; without one, no passive response is timed.
 - SmartPI counts a heating from its committed power, up to a cycle (5 min) after the valve opens

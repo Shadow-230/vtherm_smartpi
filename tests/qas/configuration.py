@@ -20,7 +20,7 @@ HERE = pathlib.Path(__file__).resolve().parent
 if str(HERE) not in sys.path:
     sys.path.insert(0, str(HERE))
 
-from pack import HELPER_DOMAIN, ROLES, ROOMS, ROOMS_DOMAIN, WEST_WINDOW, Role  # noqa: E402
+from pack import HELPER_DOMAIN, ROLES, ROOMS_DOMAIN, WEST_WINDOW, Role  # noqa: E402
 
 CONFIG = HERE / "config"
 
@@ -35,7 +35,7 @@ def configuration(role: Role) -> dict[str, Any]:
             "delay_min": r.delay_min,
             "lag_min": r.lag_min,
         }
-        for r in ROOMS
+        for r in role.rooms
     }
     config: dict[str, Any] = {
         "default_config": None,

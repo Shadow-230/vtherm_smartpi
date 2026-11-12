@@ -64,9 +64,9 @@ def test_no_other_role_configuration() -> None:
     assert {p.stem for p in configuration.CONFIG.glob("*.yaml")} == set(ROLES)
 
 
-@pytest.mark.parametrize("room", learned_state.ROOMS, ids=lambda r: r.key)
-def test_each_learned_state_is_up_to_date(room) -> None:
-    assert learned_state.file(room).read_text(encoding="utf-8") == learned_state.text(room), "run python tests/qas/learned_state.py"
+@pytest.mark.parametrize(("room", "path"), learned_state.loaded(), ids=lambda v: getattr(v, "stem", ""))
+def test_each_learned_state_is_up_to_date(room, path) -> None:
+    assert path.read_text(encoding="utf-8") == learned_state.text(room), "run python tests/qas/learned_state.py"
 
 
 def test_no_other_learned_state() -> None:
@@ -92,13 +92,13 @@ def test_the_settled_variant_is_up_to_date_and_publishes_west_s_response_lag() -
     assert SETTLED_HEAT_S >= lag.active_settle_s + 5 * RECALC_S
 
 
-@pytest.mark.parametrize("room", learned_state.ROOMS, ids=lambda r: r.key)
-def test_each_learned_state_loads_as_its_room_s_model(room) -> None:
+@pytest.mark.parametrize(("room", "path"), learned_state.loaded(), ids=lambda v: getattr(v, "stem", ""))
+def test_each_learned_state_loads_as_its_room_s_model(room, path) -> None:
     """Loaded into SmartPI, the state gives the room's a and b, its dead times reliable, and SmartPI
     past its first phase at its first calculation."""
     model = learned_state.model(room)
     smartpi = SmartPI(hass=MagicMock(), cycle_min=5, minimal_activation_delay=0, minimal_deactivation_delay=0, name="QAS")
-    smartpi.load_state(json.loads(learned_state.file(room).read_text(encoding="utf-8")))
+    smartpi.load_state(json.loads(path.read_text(encoding="utf-8")))
 
     smartpi.calculate(target_temp=20.0, current_temp=19.5, ext_current_temp=3.0, slope=0.0, hvac_mode=VThermHvacMode_HEAT)
 
@@ -154,11 +154,14 @@ def test_the_steps_of_the_pause_run_on_the_three_roles() -> None:
         ("boiler-delay", False, False, True),
         ("boiler-levels", False, True, True),
         ("boiler-levels-delay", False, True, True),
+        ("boiler-relay", True, True, True),
     ],
 )
 def test_what_each_role_makes_of_the_calls(name: str, west: bool, east: bool, both: bool) -> None:
-    """West alone is below every role's threshold; East alone reaches only the 600 W of the levels
-    (900 W); both reach every threshold. A thermostat calling below it is due to pause."""
+    """West alone is below every role's threshold but boiler-relay's single device; East alone
+    reaches only the 600 W of the levels (900 W) and that device; both reach every threshold. A
+    thermostat calling below it is due to pause. (The pack's own steps follow West and East;
+    boiler-relay's scenarios check North themselves.)"""
     bench = Bench(MagicMock(), Ids({}, None, None, None, None, None), ROLES[name])
     for calling, reaches in (({WEST}, west), ({EAST}, east), ({WEST, EAST}, both)):
         bench.calling = set(calling)
@@ -529,6 +532,29 @@ def test_the_pack_s_pause_confirmation_is_smartpi_s() -> None:
     from custom_components.vtherm_smartpi.boiler_call import BOILER_PAUSE_CONFIRM_S  # noqa: PLC0415
 
     assert PAUSE_CONFIRM_S == BOILER_PAUSE_CONFIRM_S
+
+
+def test_the_relay_role_and_its_scenarios() -> None:
+    """boiler-relay: North a water radiator behind a relay (a switch), counted by the central boiler
+    with a threshold of one device, so that North alone keeps it on; North's learned state is its
+    room's model; BP34 and BP35 run on it alone, North not calling at the start, and every other
+    scenario on another role but BP0."""
+    from pack import RELAY_NORTH  # noqa: PLC0415
+    from scenarios import RELAY_STATE  # noqa: PLC0415
+
+    role = ROLES["boiler-relay"]
+    north = role.room("North")
+    assert north is RELAY_NORTH and (north.heater, north.counted, north.water) == ("relay", True, True)
+    assert north.device == "switch.smartpi_test_rooms_north_heater"
+    assert (role.count_threshold, role.power_threshold_w, role.boiler_delay_s) == (1, 0.0, 0)
+    assert [r.name for r in role.rooms] == ["West", "East", "North"] and role.room("West") is room("West")
+    assert configuration.configuration(role)["smartpi_test_rooms"]["rooms"]["north"]["heater"] == "relay"
+    assert RELAY_STATE == learned_state.RELAY == learned_state.relay_file().stem
+    assert learned_state.model(north)["deadtime_s"] == 780.0
+    for sid in ("BP34", "BP35"):
+        assert (SCENARIOS[sid].roles, SCENARIOS[sid].north) == (("boiler-relay",), 7.0), sid
+    others = [sid for sid, s in SCENARIOS.items() if "boiler-relay" in s.roles and sid not in ("BP0", "BP34", "BP35")]
+    assert not others, others
 
 
 def test_bp25_runs_twenty_own_starts_with_a_valve_delay() -> None:
