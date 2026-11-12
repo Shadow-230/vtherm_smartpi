@@ -527,6 +527,38 @@ dead time (600 to 1200 s on the test bench). The value is chosen by this
 reasoning, not taken from a publication. A longer wait would let fewer false
 changes through but see the real ones later.
 
+**A room on a relay.** SmartPI drives a switch in cycles: at a command of 60 %
+the relay is on for 60 % of each cycle and off for the rest. Versatile
+Thermostat counts a switch for its boiler only while it is on. So when the relay
+alone keeps the boiler on, the boiler goes off in each off part of the cycle and
+comes back, milliseconds after the relay, at the next on part. That off part is
+the cycle's own: SmartPI's command, which the estimator and the learning see as
+the cycle's average, already counts it. It is not the boiler withholding heat.
+For a thermostat whose device SmartPI drives in on/off cycles (Versatile
+Thermostat's cycle scheduler, not in valve mode), while SmartPI calls:
+
+- the boiler cuts the heat only once the relay has been on for 5 s
+  (`BOILER_BLINK_S`) with the boiler off: Versatile Thermostat has then had the
+  time to start it, and did not (its threshold is not reached, or its
+  activation delay runs). The handler follows the thermostat's own state, which
+  Versatile Thermostat writes at each change of the relay, and checks again 5 s
+  after the relay turns on;
+- after a cut, the heat comes back only while the boiler and the relay are both
+  on. A boiler started by another room in the relay's off part does not heat
+  this room yet: the heat's start counts from the relay's next on part, not up
+  to half a cycle too early (30 minutes in an hour's cycle);
+- in between, the last state holds: in the relay's own off part, and while the
+  boiler may still follow a relay just on. Learning does not pause in a normal
+  cycle, and the estimator sees no stop and no start in it; a cut from outside
+  holds through the relay's on and off parts, without flickering.
+
+When SmartPI does not call, the boiler's state is followed as read, so a new call
+with the boiler off waits for it as any start. A valve is not concerned: it is
+open through the whole cycle while it calls, and Versatile Thermostat counts it
+only once it reports its opening, seconds after the call, so a valve's start
+must count from the boiler's. Nor is a thermostat without a cycle scheduler (a
+climate underlying).
+
 The pause and the boiler's state change nothing but learning. Unlike the user's pause, the pause does not
 restart the regulation's heating episode: the dead-time window in which the
 controller holds its integral counts from the start of the heating, and the
@@ -577,13 +609,9 @@ Limits:
   sample, at most 5 s late.
 - The boiler on, off and on again within 5 s drops a heating detection that was
   still waiting: the stop counts at once.
-- A thermostat on a switch (a relay) that alone keeps the boiler on: Versatile
-  Thermostat counts a switch only while it is on, so the boiler goes off in each
-  off part of SmartPI's cycle, while SmartPI's command stays above 0. Learning
-  then pauses in each off part longer than a calculation period (59 s), and the
-  estimator sees a stop and a start in each cycle, so a heating dead-time
-  measurement may never end. A valve, open through the whole cycle while it
-  calls, is not concerned.
+- A room on a relay whose boiler does not start for it is cut 5 s after the
+  relay turns on, not at once; with several relays on one thermostat, the 5 s
+  count from the first relay on.
 - After a restart of Home Assistant, Versatile Thermostat shows the boiler off
   until it has counted the thermostats again and, with an activation delay,
   until the delay has passed: learning may pause for that time.

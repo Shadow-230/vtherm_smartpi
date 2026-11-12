@@ -33,6 +33,7 @@ REFERENCE_S = 1020.0  # the passive dead time of the reference (the bench's prob
 
 def _handler(heat_start: float = 0.0) -> SmartPIHandler:
     thermostat = FakeThermostatRuntime()
+    thermostat.cycle_scheduler.is_valve_mode = True  # a valve, as the bench's West and East
     thermostat.is_used_by_central_boiler = True
     handler = SmartPIHandler(thermostat)
     with patch("custom_components.vtherm_smartpi.handler.async_dispatcher_send"):
@@ -420,6 +421,7 @@ async def test_an_unknown_boiler_or_one_that_does_not_count_the_room_is_the_auth
 
 def _fresh_handler() -> SmartPIHandler:
     thermostat = FakeThermostatRuntime()
+    thermostat.cycle_scheduler.is_valve_mode = True  # a valve, as the bench's West and East
     thermostat.is_used_by_central_boiler = True
     handler = SmartPIHandler(thermostat)
     with patch("custom_components.vtherm_smartpi.handler.async_dispatcher_send"):

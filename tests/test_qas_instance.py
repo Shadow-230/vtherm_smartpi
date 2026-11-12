@@ -241,7 +241,8 @@ async def test_the_relay_room_alone_keeps_the_boiler_on_in_its_cycle(hass: HomeA
     """boiler-relay: North, a water radiator behind a relay, learned and calling 1 degC above its
     room, alone keeps VTherm's boiler on; SmartPI drives the relay in cycles, VTherm counts it only
     while it is on, so the boiler goes off in each off part of North's cycle while North's command
-    stays above 0 (the case BP34 and BP35 show on the bench), and on with the relay."""
+    stays above 0 (the case BP34 and BP35 show on the bench), and on with the relay. That off part
+    is the relay's own: North never pauses, and SmartPI logs no stop of heat."""
     await _prepare(hass, ROLES["boiler-relay"])
     boiler = er.async_get(hass).async_get_entity_id("binary_sensor", VT, "central_boiler_state")
     relay = f"switch.{ROOMS_DOMAIN}_north_heater"
@@ -251,7 +252,7 @@ async def test_the_relay_room_alone_keeps_the_boiler_on_in_its_cycle(hass: HomeA
     room_c = float(hass.states.get(f"sensor.{ROOMS_DOMAIN}_north_temperature").state)
     await _targets(hass, **{NORTH: round(room_c + 1.0, 1)})
 
-    offs, last, together = 0, None, True
+    offs, last, together, paused = 0, None, True, False
     for _ in range(int(20 * 60 / 7)):
         await _run_for(hass, freezer, 7.0)
         state = hass.states.get(boiler).state
@@ -260,9 +261,41 @@ async def test_the_relay_room_alone_keeps_the_boiler_on_in_its_cycle(hass: HomeA
         if last == "on" and state == "off" and command > 0:
             offs += 1
         last = state
+        paused = paused or _live(hass, NORTH)["learning"]["boiler_paused"]
 
-    assert offs >= 3 and together
+    assert offs >= 3 and together and not paused
     assert _live(hass, WEST)["power"]["current_cycle_percent"] == 0 == _live(hass, EAST)["power"]["current_cycle_percent"]
+
+
+@pytest.mark.parametrize("expected_lingering_timers", [True])
+async def test_a_relay_room_the_boiler_does_not_start_for_stays_cut(hass: HomeAssistant, freezer: Any) -> None:
+    """boiler-relay with the threshold raised to 2 (as BP36): North calls alone and its relay
+    switches in its cycle, the boiler never starts. SmartPI's dead-time estimator sees no power,
+    and North pauses a calculation period after its call and stays paused."""
+    await _prepare(hass, ROLES["boiler-relay"])
+    registry = er.async_get(hass)
+    boiler = registry.async_get_entity_id("binary_sensor", VT, "central_boiler_state")
+    relay = f"switch.{ROOMS_DOMAIN}_north_heater"
+    await hass.services.async_call(HELPER_DOMAIN, "load_learned_state", {"entity_id": NORTH, "state": "north_relay"}, blocking=True)
+    await hass.services.async_call("number", "set_value", {"entity_id": registry.async_get_entity_id("number", VT, COUNT_THRESHOLD_UID), "value": 2}, blocking=True)
+    await _targets(hass, **{WEST: 7.0, EAST: 7.0, NORTH: 7.0})
+    await _run_for(hass, freezer, 10 * 60)
+    room_c = float(hass.states.get(f"sensor.{ROOMS_DOMAIN}_north_temperature").state)
+    await _targets(hass, **{NORTH: round(room_c + 1.0, 1)})
+
+    relay_offs, last, powers, paused = 0, None, set(), []
+    for step in range(int(15 * 60 / 7)):
+        await _run_for(hass, freezer, 7.0)
+        state = hass.states.get(relay).state
+        relay_offs += last == "on" and state == "off"
+        last = state
+        live = _live(hass, NORTH)
+        powers.add(live["analysis"]["deadtime"]["last_power"])
+        paused.append((step * 7.0, live["learning"]["boiler_paused"]))
+        assert hass.states.get(boiler).state == "off"
+
+    assert relay_offs >= 2 and powers == {0.0}
+    assert all(p for at, p in paused if at >= 180.0)
 
 
 @pytest.mark.parametrize("expected_lingering_timers", [True])

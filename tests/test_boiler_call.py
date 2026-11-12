@@ -429,6 +429,7 @@ def test_a_start_that_waited_is_judged_as_the_author_judges_a_start_at_the_boile
 
 def _handler(counted: bool = True) -> SmartPIHandler:
     thermostat = FakeThermostatRuntime()
+    thermostat.cycle_scheduler.is_valve_mode = True  # a valve, as the bench's West and East
     thermostat.is_used_by_central_boiler = counted
     handler = SmartPIHandler(thermostat)
     with patch("custom_components.vtherm_smartpi.handler.async_dispatcher_send"):
