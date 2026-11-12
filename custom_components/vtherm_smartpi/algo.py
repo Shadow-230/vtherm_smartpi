@@ -605,7 +605,16 @@ class SmartPI:
     def _dead_time_power(self) -> float:
         """The power the dead-time estimator sees: SmartPI's committed command, or none while the
         central boiler does not heat the room it heated (``heat_stopped_with_the_boiler``)."""
+        self._end_the_cut_at_a_stop()
         return 0.0 if self._heat_cut_by_the_boiler is not None else self._committed_on_percent
+
+    def _end_the_cut_at_a_stop(self) -> None:
+        """The boiler's cut ends as SmartPI's command falls to 0: the estimator already sees no
+        power, and the room's next call is its own start, one that waits for the boiler while it
+        is off. Checked at each feed, where a command committed within the calculation (the first
+        phase) is seen at once, and at each calculation."""
+        if self._heat_cut_by_the_boiler is not None and self._committed_on_percent <= 0.01:
+            self._heat_cut_by_the_boiler = None
 
     def _feed_dead_time_now(self, power: float, current_temp: float | None) -> bool:
         """One update of the dead-time estimator now, at ``power``, on SmartPI's last filtered
@@ -2068,9 +2077,11 @@ class SmartPI:
         now = time.monotonic()
         self._ext_control = self._ext_control if ext_current_temp is None else ext_current_temp
 
-        # The boiler's cut of the room's heat ends with the thermostat off or a change of mode.
+        # The boiler's cut of the room's heat ends with the thermostat off or a change of mode,
+        # and once SmartPI's command is 0.
         if self._heat_cut_by_the_boiler is not None and str(hvac_mode) != self._heat_cut_by_the_boiler:
             self._heat_cut_by_the_boiler = None
+        self._end_the_cut_at_a_stop()
 
         # --- 0. HVAC mode transition (HEAT↔COOL) → reset integral ---
         # Track active modes BEFORE validation so that missing presets in COOL

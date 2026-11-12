@@ -493,6 +493,38 @@ def test_the_wait_for_a_passive_detection_counts_from_the_stop() -> None:
     assert ARMED_WITHIN_S >= RECALC_S + 124.0 + MARGIN_S
 
 
+def test_the_passive_starts_and_the_setpoint_changes_read_from_smartpi_s_log() -> None:
+    """A passive dead time's start is its line's time less the dead time and the drop's delay; a
+    thermostat's setpoint change is dated by the calculation that saw it."""
+    from steps import logged_cool_starts, logged_target_changes  # noqa: PLC0415
+
+    lines = [
+        "2026-11-12 01:40:30.000 INFO (MainThread) [custom_components.vtherm_smartpi.smartpi.deadtime_estimator] SmartPI: Cool Deadtime detected = 900.0s (drop delayed by 120.0s)",
+        "2026-11-12 01:20:30.000 INFO (MainThread) [custom_components.vtherm_smartpi.smartpi.deadtime_estimator] SmartPI: Heat Deadtime detected = 780.0s (ascension delayed by 60.0s)",
+        "2026-11-12 01:23:30.120 INFO (MainThread) [custom_components.vtherm_smartpi.algo] East - Target change detected (23.00 -> 7.00), invalidating learning window",
+        "2026-11-12 01:23:31.000 INFO (MainThread) [custom_components.vtherm_smartpi.algo] West - Target change detected (7.00 -> 23.00), invalidating learning window",
+    ]
+    assert logged_cool_starts(lines) == [(pytest.approx(_at_on("2026-11-12", "01:40:30")), 900.0, pytest.approx(_at_on("2026-11-12", "01:23:30")))]
+    assert logged_target_changes(lines, "East") == [(pytest.approx(_at_on("2026-11-12", "01:23:30.120")), 23.0, 7.0)]
+
+
+def _at_on(day: str, clock: str) -> float:
+    return datetime.fromisoformat(f"{day}T{clock}+00:00").timestamp()
+
+
+def test_bp33_stops_east_inside_the_window_before_its_pause() -> None:
+    """BP33, on the device count, learned, North off: East heats longer than its dead time, a cycle
+    late; it stops at least 20 s after the boiler's stop and less than the pause's 59 s, and the
+    start of its passive detection is judged within 1 s, far below those 20 s."""
+    from scenarios import CUT_HEAT_S, START_AT_THE_CUT_S, STOP_AFTER_CUT_MIN_S, STOP_AFTER_CUT_S  # noqa: PLC0415
+    from steps import CYCLE_S, STOPPED  # noqa: PLC0415
+
+    s = SCENARIOS["BP33"]
+    assert (s.roles, s.start, s.north, s.boiler_at_end) == (("boiler-count",), "learned", STOPPED, True)
+    assert CUT_HEAT_S - CYCLE_S >= 780.0
+    assert START_AT_THE_CUT_S < STOP_AFTER_CUT_MIN_S <= STOP_AFTER_CUT_S < PAUSE_CONFIRM_S
+
+
 def test_the_pack_s_pause_confirmation_is_smartpi_s() -> None:
     from custom_components.vtherm_smartpi.boiler_call import BOILER_PAUSE_CONFIRM_S  # noqa: PLC0415
 
