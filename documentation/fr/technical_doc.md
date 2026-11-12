@@ -426,12 +426,20 @@ de l'estimateur : à moins de 600 s de l'arrêt de la chaudière, il n'est pas
 mesuré, comme celui d'une pièce qui redemande peu après sa dernière chauffe ;
 après 600 s, il est mesuré depuis le retour de la chaudière. Une détection
 passive encore en attente se termine alors par `aborted`. L'état prend aussi fin
-quand le thermostat est éteint ou change de mode HVAC, lors d'une
+dès que la commande de SmartPI tombe à 0 (la pièce cesse de demander :
+l'estimateur ne voyait déjà plus de puissance, cela ne change donc rien pour
+lui), quand le thermostat est éteint ou change de mode HVAC, lors d'une
 réinitialisation de l'apprentissage et d'un redémarrage (il n'est pas
 sauvegardé). Une pièce qui commence à demander pendant que la chaudière est
 arrêtée, et l'attend, n'entre pas dans cet état : la chaudière ne l'a pas
-chauffée. Le handler sait de quel cas il s'agit : la chaudière était allumée, ou
-non, à sa dernière vérification pendant que SmartPI demandait.
+chauffée. Il en va de même pour une pièce qui redemande, après son propre
+arrêt, pendant que la chaudière est toujours arrêtée : un démarrage propre
+ordinaire qui attend la chaudière. Une détection de chauffe armée à sa demande
+est abandonnée par la pause, et son démarrage compte à partir du démarrage de
+la chaudière. Une nouvelle demande pendant que la chaudière chauffe déjà est un
+démarrage à ce moment, vu dans le même calcul. Le handler sait de quel cas il
+s'agit : la chaudière était allumée, ou non, à sa dernière vérification pendant
+que SmartPI demandait.
 
 La pause ne change rien d'autre que l'apprentissage. Contrairement à la pause
 de l'utilisateur, elle ne redémarre pas l'épisode de chauffe de la régulation :

@@ -4,6 +4,13 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+- Learning pause: the state "the central boiler cut the room's heat" now also
+  ends as soon as SmartPI's command falls to 0. Before, it survived the room's
+  own stop: in SmartPI's first phase, a new call while the boiler already
+  heated was seen by the dead-time estimator a calculation late, and the
+  heating dead time came out 60 s too short. A new call while the boiler is
+  still off is again an ordinary own start that waits for the boiler. See
+  `documentation/en/technical_doc.md`, 3.8.
 - Learning pause: when Versatile Thermostat's central boiler stops heating a
   room that still calls, the dead-time estimator now sees the power fall to 0 at
   that moment and no power until the boiler heats the room again. The cooling

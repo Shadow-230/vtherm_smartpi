@@ -476,12 +476,18 @@ when the boiler comes back within a calculation period, before learning paused.
 The return is a start judged by the estimator's own rules: within 600 s of the
 boiler's stop it is not measured, as a room that calls again shortly after its
 last heating is not; after 600 s it is measured from the boiler's return. A
-passive detection still waiting then ends `aborted`. The state also ends with
-the thermostat off or a change of HVAC mode, a reset of learning, and a restart
-(it is not saved). A room that starts calling while the boiler is off, and waits
-for it, gets no such state: the boiler has not heated it. The handler knows
-which case it is: the boiler was on, or not, at its last check while SmartPI
-called.
+passive detection still waiting then ends `aborted`. The state also ends as
+soon as SmartPI's command falls to 0 (the room stops calling: the estimator
+already saw no power, so this changes nothing for it), with the thermostat off
+or a change of HVAC mode, a reset of learning, and a restart (it is not saved).
+A room that starts calling while the boiler is off, and waits for it, gets no
+such state: the boiler has not heated it. This holds as well for a room that
+calls again, after its own stop, while the boiler is still off: an ordinary own
+start that waits for the boiler. A heating detection armed at its call is
+dropped by the pause, and its start counts from the boiler's start. A call
+again while the boiler already heats is a start at that moment, seen in the
+same calculation. The handler knows which case it is: the boiler was on, or
+not, at its last check while SmartPI called.
 
 The pause changes nothing but learning. Unlike the user's pause, it does not
 restart the regulation's heating episode: the dead-time window in which the

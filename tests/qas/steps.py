@@ -327,7 +327,9 @@ AT_ONCE_S = 1.0  # a resume logged at the boiler's start: within 0.001 s on the 
 HEAT_STOP_LINE = "heat stopped with the central boiler"  # algo.py, heat_stopped_with_the_boiler
 COOL_DETECTED_LINE = "Cool Deadtime detected"  # deadtime_estimator.py: names no thermostat
 _HEAT_STOP = re.compile(r"(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d+) .*?\] (.+?) - SmartPI heat stopped with the central boiler( \(heating dead-time detection aborted\))?")
-_COOL_DETECTED = re.compile(r"(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d+) .*Cool Deadtime detected = ([0-9.]+)s")
+_COOL_DETECTED = re.compile(r"(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d+) .*Cool Deadtime detected = ([0-9.]+)s(?: \(drop delayed by ([0-9.]+)s\))?")
+TARGET_CHANGE_LINE = "Target change detected"  # algo.py: logged by the calculation that sees a new setpoint
+_TARGET_CHANGE = re.compile(r"(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d+) .*?\] (.+?) - Target change detected \(([0-9.]+) -> ([0-9.]+)\)")
 _LOGGED = re.compile(r"(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d+) .*?\] (.+?) - SmartPI learning (paused|resumed) \(central boiler off\)")
 
 
@@ -376,6 +378,29 @@ def logged_cool_dead_times(lines: Iterable[str]) -> list[tuple[float, float]]:
         found = _COOL_DETECTED.search(line)
         if found:
             out.append((_logged_at(found.group(1)), float(found.group(2))))
+    return sorted(out)
+
+
+def logged_cool_starts(lines: Iterable[str]) -> list[tuple[float, float, float]]:
+    """The passive dead times in SmartPI's info lines with the start of each detection: (time of
+    the line, dead time, start), the start being the line's time less the dead time and the drop's
+    delay ("drop delayed by"). Both are logged to 0.1 s."""
+    out = []
+    for line in lines:
+        found = _COOL_DETECTED.search(line)
+        if found and found.group(3) is not None:
+            at, value = _logged_at(found.group(1)), float(found.group(2))
+            out.append((at, value, at - value - float(found.group(3))))
+    return sorted(out)
+
+
+def logged_target_changes(lines: Iterable[str], name: str) -> list[tuple[float, float, float]]:
+    """A thermostat's setpoint changes as SmartPI's calculation saw them: (time, old, new)."""
+    out = []
+    for line in lines:
+        found = _TARGET_CHANGE.search(line)
+        if found and found.group(2) == name:
+            out.append((_logged_at(found.group(1)), float(found.group(3)), float(found.group(4))))
     return sorted(out)
 
 
