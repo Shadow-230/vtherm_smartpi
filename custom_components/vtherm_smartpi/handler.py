@@ -548,22 +548,29 @@ class SmartPIHandler:
 
     def _update_boiler_learning_pause(self, algo: SmartPI) -> bool:
         """Pause SmartPI's learning while it calls for heat and the central boiler is off, or
-        resume it; whether the pause changed or the room's heat stopped with the boiler.
+        resume it; whether the pause changed or the room's heat stopped or restarted with the boiler.
 
         The pause starts once this has held without a break for ``BOILER_PAUSE_CONFIRM_S``:
         when a thermostat's own start turns the boiler on, Versatile Thermostat does so only
         once the thermostat's device reports it. Learning resumes at once; a resume because the
         boiler starts while SmartPI calls starts the dead-time detection from that moment. A
         change is published at once. The boiler going off while SmartPI calls, after it heated
-        the room, is the end of the room's heat (``SmartPI.heat_stopped_with_the_boiler``); a
-        room that waits for a boiler that has not heated it records no stop.
+        the room, is the end of the room's heat (``SmartPI.heat_stopped_with_the_boiler``) until
+        the boiler heats it again; a room that waits for a boiler that has not heated it records
+        no stop.
         """
         now = time.monotonic()
         calls = self._calls_for_boiler_heat(algo)
         boiler_on = central_boiler_on(self._thermostat.hass) if calls else None
         stopped = calls and boiler_on is False and self._heated_by_the_boiler
         if stopped:
-            algo.heat_stopped_with_the_boiler()
+            algo.heat_stopped_with_the_boiler(current_temp=self._thermostat.current_temperature)
+            self._should_publish_intermediate = True
+        # The boiler heats again the room it had stopped heating, before learning paused (a
+        # paused room restarts at its resume).
+        restarted = calls and boiler_on is True and algo.heat_cut_by_the_boiler and not algo.boiler_learning_paused
+        if restarted:
+            algo.heat_restarts_with_the_boiler(current_temp=self._thermostat.current_temperature)
             self._should_publish_intermediate = True
         if not calls:
             self._heated_by_the_boiler = False
@@ -577,7 +584,7 @@ class SmartPIHandler:
             algo.boiler_learning_paused or now - self._boiler_off_since >= BOILER_PAUSE_CONFIRM_S
         )
         if paused == algo.boiler_learning_paused:
-            return stopped
+            return bool(stopped or restarted)
         algo.set_boiler_learning_paused(paused, boiler_started=calls and boiler_on is True, current_temp=self._thermostat.current_temperature)
         self._should_publish_intermediate = True
         return True

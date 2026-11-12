@@ -4,6 +4,19 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+- Learning pause: when Versatile Thermostat's central boiler stops heating a
+  room that still calls, the dead-time estimator now sees the power fall to 0 at
+  that moment and no power until the boiler heats the room again. The cooling
+  (passive) measurement is therefore timed from the boiler's stop when the
+  heating had settled, and the room's own stop shortly after it changes
+  nothing; before, the room's stop within the next minute or so armed it, up to
+  that gap late. The pause keeps this measurement (it drops only a heating
+  measurement). The regulation is unchanged. The state ends when the boiler
+  heats the room again, with the thermostat off or a change of mode, a reset of
+  learning, or a restart. A start the estimator does not measure now also ends
+  a measurement still waiting (outcome `aborted`), as a measured start does: a
+  change of the author's code in `smartpi/deadtime_estimator.py`. See
+  `documentation/en/technical_doc.md`, 3.6 and 3.8.
 - Dead time: the passive response after a stop is timed only once the active
   period has settled: it must have lasted the reliable active dead time and,
   with a published response lag, the settling time of an active learning

@@ -281,6 +281,9 @@ class SmartPI:
         # Learning also pauses while SmartPI calls for heat and Versatile Thermostat's central
         # boiler, which heats this thermostat, is off (set by the handler).
         self._boiler_learning_paused: bool = False
+        # The central boiler stopped heating the room while SmartPI calls (the HVAC mode then, None
+        # otherwise): the dead-time estimator sees no power until the boiler heats the room again.
+        self._heat_cut_by_the_boiler: str | None = None
         self._learning_start_date: Optional[datetime] = datetime.now()
         self._session_learn_ok_count_base: int = 0
         self._session_learn_skip_count_base: int = 0
@@ -411,6 +414,7 @@ class SmartPI:
 
         # Reset Dead Time Estimator
         self.dt_est.reset()
+        self._heat_cut_by_the_boiler = None
         self._t_heat_episode_start = None
         self._t_cool_episode_start = None
         self._learning_restart_ts = None
@@ -555,7 +559,8 @@ class SmartPI:
         recording, since the wait for the boiler is time without heat. The regulation, its
         dead-time window included, is not touched. A resume because the boiler has just started
         (``boiler_started``) is the start of the room's heat (``_heat_starts_now``, with the
-        room's ``current_temp`` as measured); a resume because SmartPI stopped calling is a stop
+        room's ``current_temp`` as measured), also after the boiler cut it
+        (``heat_stopped_with_the_boiler``); a resume because SmartPI stopped calling is a stop
         without heat (``_stop_without_heat``).
         """
         paused = bool(paused)
@@ -568,9 +573,7 @@ class SmartPI:
         if paused:
             self._drop_dead_time_detection()
         elif boiler_started:
-            # The room's heat starts with the boiler, also when a calibration feeds the estimator.
-            self.dt_est.last_start_time = time.monotonic()
-            self._heat_starts_now(current_temp)
+            self._heat_restarts(current_temp)
         else:
             self._stop_without_heat(time.monotonic())
         _LOGGER.info(
@@ -580,27 +583,62 @@ class SmartPI:
         )
 
     def _drop_dead_time_detection(self) -> None:
-        """Drop a dead-time detection in flight, as the estimator does when a new power
-        transition replaces it (outcome ``aborted``); its learned dead times, its last stop and
-        its temperature history stay."""
+        """Drop the detection of the response to SmartPI's call still in flight (heating, in
+        COOL cooling), as the estimator does when a new power transition replaces it (outcome
+        ``aborted``); its learned dead times, its last stop and its temperature history stay. A
+        detection of the passive response to the boiler's cut stays: the room's heat did stop."""
         est = self.dt_est
-        if est.state == "WAITING_HEAT_RESPONSE":
+        if self._last_hvac_mode == VThermHvacMode_COOL:
+            if est.state == "WAITING_COOL_RESPONSE":
+                est.last_outcome["cool"] = "aborted"
+                est.state = "COOLING"
+        elif est.state == "WAITING_HEAT_RESPONSE":
             est.last_outcome["heat"] = "aborted"
             est.state = "HEATING"
-        elif est.state == "WAITING_COOL_RESPONSE":
-            est.last_outcome["cool"] = "aborted"
-            est.state = "COOLING"
 
-    def heat_stopped_with_the_boiler(self) -> None:
+    @property
+    def heat_cut_by_the_boiler(self) -> bool:
+        """Whether the central boiler stopped heating the room while SmartPI calls, and has not
+        heated it again."""
+        return self._heat_cut_by_the_boiler is not None
+
+    def _dead_time_power(self) -> float:
+        """The power the dead-time estimator sees: SmartPI's committed command, or none while the
+        central boiler does not heat the room it heated (``heat_stopped_with_the_boiler``)."""
+        return 0.0 if self._heat_cut_by_the_boiler is not None else self._committed_on_percent
+
+    def _feed_dead_time_now(self, power: float, current_temp: float | None) -> bool:
+        """One update of the dead-time estimator now, at ``power``, on SmartPI's last filtered
+        temperature; whether it was fed. Not while the user's learning is off or a calibration
+        feeds the estimator."""
+        tin = self.tint_filter.t_int_lp
+        if tin is None or not self._learning_enabled or self.calibration_mgr.is_calibrating:
+            return False
+        self.dt_est.update(
+            now=time.monotonic(),
+            tin=tin,
+            tin_raw=current_temp,
+            u_applied=power,
+            hvac_mode=self._last_hvac_mode or VThermHvacMode_HEAT,
+        )
+        return True
+
+    def heat_stopped_with_the_boiler(self, current_temp: float | None = None) -> None:
         """Versatile Thermostat's central boiler went off while SmartPI calls, after it heated the
         room: the room's heat stops now, though SmartPI's command does not. The dead-time estimator
-        records the stop, so its minimum time without heat counts from now, and arms nothing: no
-        passive response is timed, and the start at the boiler's return is judged by the
-        estimator's own rules (``_heat_starts_now``). A heating detection still waiting is
-        dropped, as the estimator drops one at a stop: a later rise would not answer this heat."""
-        self.dt_est.last_stop_time = time.monotonic()
+        sees the power fall to 0 now and its own rules decide: it records the stop, and times the
+        room's passive response from now if the heating had settled (3.6). Until the boiler heats
+        the room again it sees no power (``_dead_time_power``), so the room's own stop changes
+        nothing. A heating detection still waiting is dropped first: a later rise would not
+        answer this heat."""
+        now = time.monotonic()
+        self._heat_cut_by_the_boiler = str(self._last_hvac_mode or VThermHvacMode_HEAT)
         dropped = self.dt_est.state == "WAITING_HEAT_RESPONSE"
         self._drop_dead_time_detection()
+        if not self._feed_dead_time_now(0.0, current_temp) and not self.calibration_mgr.is_calibrating:
+            # Not fed (the user's learning off, no temperature yet): the stop is recorded all the same.
+            self.dt_est.last_stop_time = now
+            self.dt_est.last_power = 0.0
         _LOGGER.info(
             "%s - SmartPI heat stopped with the central boiler%s",
             self._name,
@@ -617,6 +655,20 @@ class SmartPI:
             est.last_power = 0.0
             est.last_stop_time = now
 
+    def heat_restarts_with_the_boiler(self, current_temp: float | None = None) -> None:
+        """The central boiler heats again the room it had stopped heating, before learning paused:
+        the room's heat starts now (``_heat_restarts``)."""
+        if self._heat_cut_by_the_boiler is not None:
+            self._heat_restarts(current_temp)
+
+    def _heat_restarts(self, current_temp: float | None) -> None:
+        """The boiler heats the calling room from now: the estimator sees SmartPI's command again,
+        and the room's heat starts now (``_heat_starts_now``), also when a calibration feeds the
+        estimator."""
+        self._heat_cut_by_the_boiler = None
+        self.dt_est.last_start_time = time.monotonic()
+        self._heat_starts_now(current_temp)
+
     def _heat_starts_now(self, current_temp: float | None = None) -> None:
         """The boiler starts while SmartPI calls: the room's heat starts now. The dead-time
         estimator sees a power step from 0 at this moment, on SmartPI's last filtered
@@ -625,18 +677,13 @@ class SmartPI:
         time without heat) and the trend before the start, from the history it kept. A detection
         counts from the boiler's start, not from the call that waited for it. Not while learning
         is off or a calibration feeds the estimator."""
-        tin = self.tint_filter.t_int_lp
         power = self._committed_on_percent
-        if tin is None or power <= 0.0 or not self._learning_active or self.calibration_mgr.is_calibrating:
+        if power <= 0.0 or not self._learning_active:
             return
+        last_power = self.dt_est.last_power
         self.dt_est.last_power = 0.0
-        self.dt_est.update(
-            now=time.monotonic(),
-            tin=tin,
-            tin_raw=current_temp,
-            u_applied=power,
-            hvac_mode=self._last_hvac_mode or VThermHvacMode_HEAT,
-        )
+        if not self._feed_dead_time_now(power, current_temp):
+            self.dt_est.last_power = last_power
 
     def _learning_episode_start(self, regulation_start: float | None) -> float | None:
         """Learning's episode start: the regulation's, but not before the last change of the
@@ -1416,6 +1463,7 @@ class SmartPI:
         self._session_learn_ok_count_base = self.est.learn_ok_count
         self._session_learn_skip_count_base = self.est.learn_skip_count
         self.dt_est.load_state(state.get("dt_est_state", {}))
+        self._heat_cut_by_the_boiler = None  # runtime only: the boiler's state is read again
         self.gov.load_state(state.get("gov_state", {}))
         self.ctl.load_state(state.get("ctl_state", {}))
         self.sp_mgr.load_state(state.get("sp_mgr_state", {}))
@@ -2020,6 +2068,10 @@ class SmartPI:
         now = time.monotonic()
         self._ext_control = self._ext_control if ext_current_temp is None else ext_current_temp
 
+        # The boiler's cut of the room's heat ends with the thermostat off or a change of mode.
+        if self._heat_cut_by_the_boiler is not None and str(hvac_mode) != self._heat_cut_by_the_boiler:
+            self._heat_cut_by_the_boiler = None
+
         # --- 0. HVAC mode transition (HEAT↔COOL) → reset integral ---
         # Track active modes BEFORE validation so that missing presets in COOL
         # don't intercept the cycle and hide the transition.
@@ -2074,7 +2126,7 @@ class SmartPI:
                         now=now,
                         tin=t_int_lp,
                         tin_raw=current_temp,
-                        u_applied=self._committed_on_percent,
+                        u_applied=self._dead_time_power(),
                         hvac_mode=hvac_mode,
                     )
                 self._last_current_temp = current_temp
@@ -2187,7 +2239,7 @@ class SmartPI:
                 now=now,
                 tin=t_int_lp,
                 tin_raw=current_temp,
-                u_applied=self._committed_on_percent,
+                u_applied=self._dead_time_power(),
                 hvac_mode=hvac_mode,
             )
 
@@ -2270,7 +2322,7 @@ class SmartPI:
                     now=now,
                     tin=t_int_lp,
                     tin_raw=current_temp,
-                    u_applied=self._committed_on_percent,
+                    u_applied=self._dead_time_power(),
                     hvac_mode=hvac_mode,
                 )
 

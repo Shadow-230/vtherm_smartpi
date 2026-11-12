@@ -351,6 +351,8 @@ class DeadTimeEstimator:
                     off_since=self._free_running_since(hvac_mode),
                 )
             else:
+                # A refused start still ends a response waited for, as an allowed one does.
+                self._abort_waiting()
                 self.state = "COOLING" if active_response == "cool" else "HEATING"
                 self._waiting_power_on = None
 

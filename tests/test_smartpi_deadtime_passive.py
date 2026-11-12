@@ -155,3 +155,17 @@ def test_smartpi_gives_the_estimator_the_author_s_settling_time(monkeypatch) -> 
     smartpi.calculate(target_temp=20.0, current_temp=19.0, ext_current_temp=5.0, slope=0.0, hvac_mode=VThermHvacMode_HEAT)
 
     assert smartpi.dt_est.active_settle_s == pytest.approx(3 * LAG_S)
+
+
+@pytest.mark.parametrize(("restart_after_s", "armed_heat"), [(300.0, False), (700.0, True)])
+def test_a_start_ends_a_passive_detection_still_waiting(restart_after_s, armed_heat) -> None:
+    """The power starts again while the passive response is still waited for: the detection ends
+    "aborted", whether the start is refused (less than 600 s without heat) or measured."""
+    est = DeadTimeEstimator()
+    stop = _run_then_stop(est, run_s=15 * 60.0, deadtime_s=LAG_S)
+    assert est.state == "WAITING_COOL_RESPONSE"
+
+    est.update(stop + restart_after_s, 20.0, 1.0)
+
+    assert est.last_outcome["cool"] == "aborted"
+    assert (est.state == "WAITING_HEAT_RESPONSE") is armed_heat
