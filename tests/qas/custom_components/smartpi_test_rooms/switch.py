@@ -1,4 +1,5 @@
-"""The electric heaters' switches, and the boiler's switch that VTherm's central boiler drives."""
+"""The switches of the electric heaters and of the relays, and the boiler's switch that VTherm's
+central boiler drives."""
 
 from __future__ import annotations
 
@@ -16,7 +17,7 @@ async def async_setup_platform(
     hass: HomeAssistant, _config: ConfigType, add: AddEntitiesCallback, _info: DiscoveryInfoType | None = None
 ) -> None:
     hub: Hub = hass.data[DOMAIN]
-    entities: list[SwitchEntity] = [Heater(hub, room) for room, kind in hub.heaters.items() if kind == "electric"]
+    entities: list[SwitchEntity] = [Heater(hub, room) for room, kind in hub.heaters.items() if kind in ("electric", "relay")]
     if hub.sim.has_radiators:
         entities.append(Boiler(hub))
     add(entities)

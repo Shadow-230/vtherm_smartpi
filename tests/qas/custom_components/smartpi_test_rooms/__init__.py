@@ -8,9 +8,9 @@ Set up from YAML::
         west: {heater: radiator, temperature: 19.5, loss: 0.001, gain: 0.04, delay_min: 3, lag_min: 10}
 
 Entities, all ``*.smartpi_test_rooms_*``: each room's temperature sensor and its heater (a valve,
-``number``, for a water radiator; a ``switch`` for an electric heater), the outdoor temperature
-sensor and, with a radiator, the boiler's switch that Versatile Thermostat's central boiler
-drives. The physics is ``model.py``; it runs in real time, one tick every 7 s.
+``number``, for a water radiator; a ``switch`` for an electric heater, and for a relay: a water
+radiator behind an on/off actuator), the outdoor temperature sensor and, with a water emitter, the
+boiler's switch that Versatile Thermostat's central boiler drives. The physics is ``model.py``; it runs in real time, one tick every 7 s.
 
 A scenario service, ``set_valve_report_delay`` (``seconds``): a valve takes a new opening, and
 reports it, only that long after it was set, as a real valve head moves for seconds before it
@@ -39,7 +39,7 @@ UPDATED = f"{DOMAIN}_updated"
 
 _ROOM = vol.Schema(
     {
-        vol.Required("heater"): vol.In(["radiator", "electric"]),
+        vol.Required("heater"): vol.In(["radiator", "electric", "relay"]),
         vol.Optional("temperature", default=19.5): vol.Coerce(float),
         vol.Optional("loss", default=0.001): vol.All(vol.Coerce(float), vol.Range(min=0.0)),
         vol.Optional("gain", default=0.04): vol.All(vol.Coerce(float), vol.Range(min=0.0)),
@@ -59,7 +59,7 @@ class Hub:
     def __init__(self, hass: HomeAssistant, sim: Simulation, heaters: dict[str, str]) -> None:
         self.hass = hass
         self.sim = sim
-        self.heaters = heaters  # room -> "radiator" or "electric"
+        self.heaters = heaters  # room -> "radiator", "electric" or "relay"
         self._start = time.monotonic()
         self.valve_report_delay_s = 0.0
 
@@ -104,7 +104,7 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
             gain=values["gain"],
             delay_s=values["delay_min"] * 60.0,
             lag_min=values["lag_min"],
-            water=values["heater"] == "radiator",
+            water=values["heater"] in ("radiator", "relay"),
         )
         for key, values in conf["rooms"].items()
     }

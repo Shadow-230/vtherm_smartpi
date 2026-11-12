@@ -261,7 +261,8 @@ def snapshot_of(states: dict[str, dict[str, Any]], ids: Ids, now: float) -> dict
             snap[f"{key}.valve"] = _number(device)  # the valve's own opening, in %
             snap[f"{key}.valve_since"] = device.get("last_changed")
         else:
-            snap[f"{key}.heater"] = device.get("state")
+            snap[f"{key}.heater"] = device.get("state")  # the electric heater's or the relay's switch
+            snap[f"{key}.heater_since"] = device.get("last_changed")
     return snap
 
 
@@ -855,8 +856,11 @@ class Bench:
 
     async def start(self, start: str, north: float) -> bool:
         """West's and East's learning as ``start`` declares, North at ``north``, then the settled
-        start state; whether it was reached."""
+        start state; whether it was reached. Where the central boiler counts North (boiler-relay),
+        North does not call: the start state needs the boiler off."""
         self.learning = start
+        if north == CALLING and self.role.room("North").counted:
+            north = STOPPED
         for climate in COUNTED:
             if start == "learned":
                 await self.api.call(HELPER_DOMAIN, "load_learned_state", {"entity_id": climate, "state": KEYS[climate]})

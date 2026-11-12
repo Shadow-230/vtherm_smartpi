@@ -139,7 +139,7 @@ async def test_each_role_is_prepared_through_the_forms(hass: HomeAssistant, capl
 
     registry = er.async_get(hass)
     assert [e.title for e in hass.config_entries.async_entries(SMARTPI)] == ["SmartPI defaults"]
-    for r in ROOMS:
+    for r in role.rooms:
         vt_entry = hass.config_entries.async_get_entry(registry.async_get(r.climate).config_entry_id)
         assert vt_entry.data["proportional_function"] == "smartpi", r.name
         assert vt_entry.data["used_by_controls_central_boiler"] is r.counted, r.name
@@ -150,7 +150,7 @@ async def test_each_role_is_prepared_through_the_forms(hass: HomeAssistant, capl
     assert central.data.get("central_boiler_activation_delay_sec") == role.boiler_delay_s
     west = hass.config_entries.async_get_entry(registry.async_get(WEST).config_entry_id)
     assert west.data.get("window_sensor_entity_id") == WEST_WINDOW
-    for r in ROOMS:
+    for r in role.rooms:
         vt_entry = hass.config_entries.async_get_entry(registry.async_get(r.climate).config_entry_id)
         assert vt_entry.data["device_power"] == role.device_power_w(r.name), r.name
     problems = [
@@ -234,6 +234,35 @@ async def test_the_boiler_pause_end_to_end(hass: HomeAssistant, freezer: Any) ->
     assert paused(WEST) is False
     assert hass.states.get(boiler).state == "on"
     assert room("West").counted and not room("North").counted
+
+
+@pytest.mark.parametrize("expected_lingering_timers", [True])
+async def test_the_relay_room_alone_keeps_the_boiler_on_in_its_cycle(hass: HomeAssistant, freezer: Any) -> None:
+    """boiler-relay: North, a water radiator behind a relay, learned and calling 1 degC above its
+    room, alone keeps VTherm's boiler on; SmartPI drives the relay in cycles, VTherm counts it only
+    while it is on, so the boiler goes off in each off part of North's cycle while North's command
+    stays above 0 (the case BP34 and BP35 show on the bench), and on with the relay."""
+    await _prepare(hass, ROLES["boiler-relay"])
+    boiler = er.async_get(hass).async_get_entity_id("binary_sensor", VT, "central_boiler_state")
+    relay = f"switch.{ROOMS_DOMAIN}_north_heater"
+    await hass.services.async_call(HELPER_DOMAIN, "load_learned_state", {"entity_id": NORTH, "state": "north_relay"}, blocking=True)
+    await _targets(hass, **{WEST: 7.0, EAST: 7.0, NORTH: 7.0})
+    await _run_for(hass, freezer, 10 * 60)
+    room_c = float(hass.states.get(f"sensor.{ROOMS_DOMAIN}_north_temperature").state)
+    await _targets(hass, **{NORTH: round(room_c + 1.0, 1)})
+
+    offs, last, together = 0, None, True
+    for _ in range(int(20 * 60 / 7)):
+        await _run_for(hass, freezer, 7.0)
+        state = hass.states.get(boiler).state
+        together = together and state == hass.states.get(relay).state
+        command = _live(hass, NORTH)["power"]["current_cycle_percent"]
+        if last == "on" and state == "off" and command > 0:
+            offs += 1
+        last = state
+
+    assert offs >= 3 and together
+    assert _live(hass, WEST)["power"]["current_cycle_percent"] == 0 == _live(hass, EAST)["power"]["current_cycle_percent"]
 
 
 @pytest.mark.parametrize("expected_lingering_timers", [True])
