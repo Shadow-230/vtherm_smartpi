@@ -434,10 +434,10 @@ SmartPI does not learn during the room's dead time after the boiler starts
 The pause only pauses learning; it does not wipe what the dead-time detection
 (3.6) knows. The estimator keeps the time the heating last stopped and its
 temperature history, and it keeps recording the temperature during the pause:
-the room gets no heat then, so this is time without heating. When the pause
-starts, it drops a heating detection still waiting (outcome `aborted`); a
-detection of the passive response to the boiler's stop (below) stays. A
-calibration (4.6) does not feed the detection while the boiler is off.
+the room gets no heat then, so this is time without heating. Nothing can arm
+while the boiler is off (below); as a safeguard, the pause's start still drops a
+heating detection waiting (outcome `aborted`). A detection of the passive
+response to the boiler's stop stays.
 
 **The heat the boiler gives.** For a thermostat the boiler counts, the dead-time
 estimator does not see SmartPI's command but the heat the boiler really gives:
@@ -448,8 +448,24 @@ waiting for the next calculation. A change that changes the power the estimator
 sees is fed to it at that moment, on SmartPI's last filtered temperature, and the
 estimator's own rules judge it (3.6), as any stop or start. With a boiler state
 that cannot be read, or a thermostat the boiler does not count, the estimator
-sees the command, as without a boiler. A state that becomes known, or unknown,
-is neither a stop nor a start: the estimator takes the power as it is then.
+sees the command, as without a boiler.
+
+This holds during a calibration (4.6) too. The calibration feeds the estimator
+its own command, and no power while the boiler is off; a change of the boiler
+reaches the estimator at once with the calibration's command. A calibration
+that starts while the boiler is off arms nothing, and its heating counts from
+the boiler's start, as any start (below). Before this, a calibration fed its
+command while the boiler was off, and a stop shortly after the boiler's start
+looked like the end of a settled heating: the test bench measured a false
+passive dead time of 25.7 s.
+
+A state that becomes known, or unknown, is neither a stop nor a start: the
+estimator sees the power at its next feed, by its own rules. One case is
+recorded at once: a state that becomes known as off while the estimator saw
+power (it got SmartPI's command while the state could not be read). The heat
+stopped at a moment that is not known: the stop is recorded, so the minimum time
+without heat counts from it, and a heating detection waiting is dropped, but no
+passive response is timed, as the room may have been cooling for a while.
 
 The cases:
 
@@ -468,9 +484,7 @@ The cases:
   arms, and a passive detection timed from the boiler's stop goes on to its
   end. A room that stops calling during the pause has had no heat since the
   boiler's stop, so no passive response is timed from its own stop: the room is
-  already cooling, and that dead time would come out too short. (A calibration
-  feeds the estimator its own command until the pause starts; the stop that
-  ends the pause is then recorded without a passive detection.)
+  already cooling, and that dead time would come out too short.
 - **The boiler starts while the room calls.** The room's heat starts at the
   boiler's start. This holds for a room that waited for the boiler, and for a
   room whose own call turns the boiler on: its start counts from the boiler's
@@ -500,7 +514,9 @@ then, or at the next calculation, and dates the start from the boiler's start
   SmartPI's command again without a new start, so the heating period goes on
   (3.6), and the passive detection armed at the short stop ends `aborted`. This
   is logged ("SmartPI heat back with the central boiler after a blink (no new
-  start)");
+  start)"). A blink needs a stop the estimator saw, from on to off: the boiler
+  read off for the first time, after a restart of Home Assistant or once its
+  state can be read, is no stop, so its start within 5 s is a start;
 - a start shorter than 5 s is not seen.
 
 5 s is two orders of magnitude longer than the blinks seen, a twelfth of the

@@ -81,7 +81,7 @@ class SmartPIHandler:
         self._boiler_read: bool | None = None
         self._boiler_read_since: float = 0.0
         self._boiler_held: bool = False
-        # When the boiler last went off for the dead-time estimator (``SmartPI.boiler_on``).
+        # When the boiler last went off, from on, for the dead-time estimator (``SmartPI.boiler_on``).
         self._boiler_seen_off_at: float | None = None
         # The check scheduled once a boiler's start has held ``BOILER_BLINK_S``.
         self._boiler_check_remove = None
@@ -589,9 +589,10 @@ class SmartPIHandler:
         Versatile Thermostat can switch its boiler off and on again within milliseconds, a blink.
         A stop counts at once. A start counts once the boiler has run ``BOILER_BLINK_S`` without a
         break, checked then while the boiler's changes are followed, or at the next calculation;
-        it is fed from the boiler's start. A boiler back within ``BOILER_BLINK_S`` of its stop
-        blinked: the room's heat did not stop. A state that becomes known or unknown counts at
-        once.
+        it is fed from the boiler's start. A boiler back within ``BOILER_BLINK_S`` of a stop the
+        estimator saw (on, then off) blinked: the room's heat did not stop. A first reading off,
+        after a restart or once the state can be read, is no such stop. A state that becomes
+        known or unknown counts at once.
         """
         if boiler_on != self._boiler_read:
             self._boiler_read, self._boiler_read_since, self._boiler_held = boiler_on, now, False
@@ -614,7 +615,8 @@ class SmartPIHandler:
             and self._boiler_read_since - self._boiler_seen_off_at < BOILER_BLINK_S
         )
         if seen is False:
-            self._boiler_seen_off_at = now
+            # A blink needs a stop the estimator saw: on, then off; not a state just read off.
+            self._boiler_seen_off_at = now if followed is True else None
         changed = algo.set_boiler_state(
             seen,
             current_temp=self._thermostat.current_temperature,

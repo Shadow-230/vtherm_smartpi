@@ -330,6 +330,7 @@ BOILER_PAUSE_LINE = "(central boiler off)"  # algo.py, set_boiler_learning_pause
 AT_ONCE_S = 1.0  # a resume logged at the boiler's start: within 0.001 s on the bench
 HEAT_STOP_LINE = "heat stopped with the central boiler"  # algo.py, _heat_stops_with_the_boiler
 HEAT_DETECTED_LINE = "Heat Deadtime detected"  # deadtime_estimator.py: names no thermostat
+BLINK_LINE = "heat back with the central boiler after a blink"  # algo.py, _heat_back_after_a_blink
 COOL_DETECTED_LINE = "Cool Deadtime detected"  # deadtime_estimator.py: names no thermostat
 _HEAT_STOP = re.compile(r"(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d+) .*?\] (.+?) - SmartPI heat stopped with the central boiler( \(heating dead-time detection aborted\))?")
 _COOL_DETECTED = re.compile(r"(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d+) .*Cool Deadtime detected = ([0-9.]+)s(?: \(drop delayed by ([0-9.]+)s\))?")

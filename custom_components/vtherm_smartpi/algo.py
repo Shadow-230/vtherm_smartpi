@@ -558,9 +558,8 @@ class SmartPI:
         the dead-time estimator keeps its last stop and its temperature history, which it keeps
         recording, since the wait for the boiler is time without heat. The regulation, its
         dead-time window included, is not touched. The estimator sees the boiler's state
-        itself (``set_boiler_state``): a resume because the boiler has started changes nothing
-        for it; a resume because SmartPI stopped calling is a stop without heat
-        (``_stop_without_heat``).
+        itself (``set_boiler_state``), also during a calibration: nothing arms while the boiler
+        is off, and dropping a heating detection at the pause's start is only a safeguard.
         """
         paused = bool(paused)
         if paused == self._boiler_learning_paused:
@@ -571,8 +570,6 @@ class SmartPI:
         self._learning_restart_ts = time.monotonic()
         if paused:
             self._drop_dead_time_detection()
-        else:
-            self._stop_without_heat(time.monotonic())
         _LOGGER.info(
             "%s - SmartPI learning %s (central boiler off)",
             self._name,
@@ -599,10 +596,15 @@ class SmartPI:
         when the boiler does not count this thermostat or its state cannot be read."""
         return self._boiler_on
 
+    def _dead_time_command(self) -> float:
+        """SmartPI's command as the dead-time estimator gets it: the committed one, or during a
+        calibration the calibration's own output, which it feeds the estimator itself."""
+        return self._on_percent if self.calibration_mgr.is_calibrating else self._committed_on_percent
+
     def _dead_time_power(self) -> float:
-        """The power the dead-time estimator sees: SmartPI's committed command, or none while
-        Versatile Thermostat's central boiler, which heats this thermostat, is off."""
-        return 0.0 if self._boiler_on is False else self._committed_on_percent
+        """The power the dead-time estimator sees: SmartPI's command (``_dead_time_command``), or
+        none while Versatile Thermostat's central boiler, which heats this thermostat, is off."""
+        return 0.0 if self._boiler_on is False else self._dead_time_command()
 
     def set_boiler_state(
         self,
@@ -620,8 +622,11 @@ class SmartPI:
         the moment the handler gives it, so its own rules (3.6) judge it: the room's heat stops
         (``_heat_stops_with_the_boiler``) or starts (``_heat_starts_with_the_boiler``, from the
         boiler's start ``since``). A boiler back right after its stop blinked (``blink``): the
-        room's heat did not stop (``_heat_back_after_a_blink``). A state that becomes known, or
-        unknown, is neither a stop nor a start: the estimator takes the power as it is now.
+        room's heat did not stop (``_heat_back_after_a_blink``). This holds during a calibration
+        too, with the calibration's output as the command. A state that becomes known, or
+        unknown, is neither a stop nor a start: the estimator sees the power at its next feed, by
+        its own rules; but a state that becomes known as off, while the estimator saw power,
+        records the stop (``_heat_stopped_at_an_unknown_moment``).
         """
         if on == self._boiler_on:
             return False
@@ -630,8 +635,8 @@ class SmartPI:
         self._boiler_on = on
         after = self._dead_time_power()
         if not known:
-            if not self.calibration_mgr.is_calibrating:
-                self.dt_est.last_power = after
+            if after <= 0.01 < self.dt_est.last_power:
+                self._heat_stopped_at_an_unknown_moment()
             return False
         if (before > 0.01) == (after > 0.01):
             return False
@@ -646,10 +651,10 @@ class SmartPI:
     def _feed_dead_time_now(self, power: float, current_temp: float | None, at: float | None = None) -> bool:
         """One update of the dead-time estimator now, or at the earlier moment ``at`` but not
         before its last temperature sample, at ``power``, on SmartPI's last filtered temperature;
-        whether it was fed. Not while the user's learning is off or a calibration feeds the
-        estimator."""
+        whether it was fed. Not while the user's learning is off, unless a calibration runs: a
+        calibration feeds the estimator in any case."""
         tin = self.tint_filter.t_int_lp
-        if tin is None or not self._learning_enabled or self.calibration_mgr.is_calibrating:
+        if tin is None or not (self._learning_enabled or self.calibration_mgr.is_calibrating):
             return False
         now = time.monotonic()
         if at is not None:
@@ -673,7 +678,7 @@ class SmartPI:
         now = time.monotonic()
         dropped = self.dt_est.state == "WAITING_HEAT_RESPONSE"
         self._drop_dead_time_detection()
-        if not self._feed_dead_time_now(0.0, current_temp) and not self.calibration_mgr.is_calibrating:
+        if not self._feed_dead_time_now(0.0, current_temp):
             # Not fed (the user's learning off, no temperature yet): the stop is recorded all the same.
             self.dt_est.last_stop_time = now
             self.dt_est.last_power = 0.0
@@ -689,9 +694,9 @@ class SmartPI:
         decide whether a detection arms: its power floor, its minimum time without heat since the
         last real stop (the wait for the boiler counts as time without heat) and the trend before
         the start. A detection counts from the boiler's start, not from the call that waited for
-        it."""
-        power = self._committed_on_percent
-        if not self._feed_dead_time_now(power, current_temp, at=since) and not self.calibration_mgr.is_calibrating:
+        it, also a calibration's."""
+        power = self._dead_time_command()
+        if not self._feed_dead_time_now(power, current_temp, at=since):
             # Not fed (the user's learning off, no temperature yet): the start is recorded all the same.
             self.dt_est.last_start_time = time.monotonic() if since is None else since
             self.dt_est.last_power = power
@@ -700,11 +705,8 @@ class SmartPI:
         """The central boiler came back right after its stop: the room's heat did not stop. The
         dead-time estimator sees SmartPI's command again without a new start, so the heating
         period goes on; the detection of the passive response armed at the stop ends ``aborted``,
-        as when a power change replaces a wait (3.B). Not while a calibration feeds the
-        estimator."""
-        if self.calibration_mgr.is_calibrating:
-            return
-        power = self._committed_on_percent
+        as when a power change replaces a wait (3.B)."""
+        power = self._dead_time_command()
         self.dt_est.last_power = power
         self._feed_dead_time_now(power, current_temp)
         _LOGGER.info(
@@ -712,17 +714,16 @@ class SmartPI:
             self._name,
         )
 
-    def _stop_without_heat(self, now: float) -> None:
-        """The boiler pause ends because SmartPI stopped calling: the room got no heat since the
-        boiler's stop. A calibration fed the estimator its own command while the boiler was off,
-        before the pause; the estimator records the stop, so its minimum time without heat counts
-        from now, but arms no detection of the room's passive response, which would time a room
-        already cooling. Otherwise the estimator already sees no power, and this changes
-        nothing."""
+    def _heat_stopped_at_an_unknown_moment(self) -> None:
+        """The boiler's state becomes known, off, while the dead-time estimator saw power (fed
+        SmartPI's command while the state could not be read): the room's heat stopped at a moment
+        not known. The stop is recorded now, so the minimum time without heat counts from it, and
+        a heating detection still waiting is dropped; no passive response is timed, as the room
+        may have been cooling for a while."""
         est = self.dt_est
-        if self._committed_on_percent <= 0.01 < est.last_power:
-            est.last_power = 0.0
-            est.last_stop_time = now
+        self._drop_dead_time_detection()
+        est.last_power = 0.0
+        est.last_stop_time = time.monotonic()
 
     def _learning_episode_start(self, regulation_start: float | None) -> float | None:
         """Learning's episode start: the regulation's, but not before the last change of the
@@ -1384,7 +1385,7 @@ class SmartPI:
             dt_est=self.dt_est,
             max_on_percent=self._linear_max_on(),
             twin_diag=self._last_twin_diag,
-            boiler_paused=self._boiler_learning_paused,
+            boiler_off=self._boiler_on is False,
             filtered_temp=filtered_temp,
         )
 
