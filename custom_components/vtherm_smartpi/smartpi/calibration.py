@@ -243,7 +243,7 @@ class CalibrationManager:
         dt_est: "DeadTimeEstimator",
         max_on_percent: float | None,
         twin_diag: dict | None = None,
-        boiler_paused: bool = False,
+        boiler_off: bool = False,
         filtered_temp: float | None = None,
     ) -> CalibrationResult:
         """
@@ -259,8 +259,8 @@ class CalibrationManager:
             max_on_percent: Maximum on_percent allowed
             twin_diag: Latest thermal twin diagnostics, used to end the cycle
                 with UNREACHABLE when a threshold cannot be reached
-            boiler_paused: True while learning pauses because the central
-                boiler is off; the dead-time estimator is then not fed
+            boiler_off: True while the central boiler, which heats this
+                thermostat, is off: the dead-time estimator then sees no power
 
         Returns:
             CalibrationResult with on_percent (or None if not calibrating)
@@ -354,17 +354,17 @@ class CalibrationManager:
         if max_on_percent is not None and on_percent > max_on_percent:
             on_percent = max_on_percent
 
-        # Feed Estimator (Critical for detection!), unless the central boiler is
-        # off: the room then gets no heat whatever the command.
+        # Feed Estimator (Critical for detection!), with no power while the
+        # central boiler is off: the room then gets no heat whatever the command.
         # The detection runs on the filtered temperature, as in regulation: a
         # raw reading flickering by one sensor step would detect a response at
         # the power step. The raw reading feeds the slope history.
-        if current_temp is not None and not boiler_paused:
+        if current_temp is not None:
             dt_est.update(
                 now=time.monotonic(),
                 tin=current_temp if filtered_temp is None else filtered_temp,
                 tin_raw=current_temp,
-                u_applied=on_percent,
+                u_applied=0.0 if boiler_off else on_percent,
                 hvac_mode=hvac_mode,
             )
 

@@ -35,6 +35,7 @@ from steps import (
     AT_ONCE_S,
     CLOCK_MARGIN_S,
     COOL_DETECTED_LINE,
+    BLINK_LINE,
     HEAT_DETECTED_LINE,
     CONTEXT,
     COUNTED,
@@ -357,19 +358,23 @@ async def BP6(b: Bench) -> None:
 
 HEAT_UP = Wait(0.0, 3600.0)  # BP7: the calibration's heating step (see its note)
 PAUSED_READINGS = Wait(10 * RECALC_S, 10 * RECALC_S)  # BP7: five readings, two calculations apart
+# BP7: West and East watched after the closing, a calibration's stop shortly after the boiler's
+# start: a passive detection would show within a calculation (bench's check of f7101b7: 25.7 s
+# detected on boiler-delay), and SmartPI's diagnostics up to a cycle later.
+AFTER_THE_CLOSING_S = 5 * RECALC_S
 
 
 @scenario(
     "BP7",
     THREE,
-    lambda role: total(PUBLISHED, HEAT_UP, PAUSE_ON_SETPOINT, PAUSED_READINGS, east_joins(role)),
+    lambda role: total(PUBLISHED, HEAT_UP, PAUSE_ON_SETPOINT, PAUSED_READINGS, east_joins(role), Wait(AFTER_THE_CLOSING_S, AFTER_THE_CLOSING_S)),
     PAUSE_TESTS,
     depends="typical when West starts below the calibration's low threshold (setpoint - 0.3 degC), as its setpoint is set 1 degC above the room",
     start="learned",
     boiler_at_end=True,
 )
 async def BP7(b: Bench) -> None:
-    """West learned, its setpoint 1 degC above its room → a forced calibration heats with the boiler off → learning pauses: the calibration arms no dead-time detection and the learned heating dead time stays unchanged; once East calls and the boiler is on, learning resumes."""
+    """West learned, its setpoint 1 degC above its room → a forced calibration heats with the boiler off → learning pauses: the calibration arms no dead-time detection and the learned heating dead time stays unchanged; once East calls and the boiler is on, learning resumes; at the closing (West off and on again, which cancels the calibration, then West and East stop), shortly after the boiler's start, neither West nor East times a passive response for 5 calculations: the heat the boiler gave lasted less than their dead time."""
     snap = await b.snapshot()
     b.check(of(snap, WEST, "phase") == "Stable", f"West learned: phase {of(snap, WEST, 'phase')}, a {of(snap, WEST, 'a')}")
     learned = of(snap, WEST, "deadtime")
@@ -394,6 +399,11 @@ async def BP7(b: Bench) -> None:
         # Off and on again cancels the calibration; the runner then puts the start state back.
         await b.hvac(WEST, "off")
         await b.hvac(WEST, "heat")
+    await b.calls_at(WEST, STOPPED)
+    await b.calls_at(EAST, STOPPED)
+    seen = await b.watch(AFTER_THE_CLOSING_S)
+    for climate in (WEST, EAST):
+        no_passive_response(b, seen, "The closing shortly after the boiler's start", climate)
 
 
 @scenario("BP8", THREE, both_start, END_TO_END, minimum=True, boiler_at_end=True)
@@ -620,7 +630,7 @@ def boiler_back(seen: Sequence[dict[str, Any]], since: float) -> float | None:
     boiler_at_end=True,
 )
 async def BP20(b: Bench) -> None:
-    """West and East learned, both calling, the boiler on, nothing paused → Home Assistant restarts → once SmartPI runs again, VTherm counts their devices again and the boiler comes back; neither pauses, but with an activation delay VTherm shows the boiler off for 120 s, both pause meanwhile and resume once it is back; a, b and the dead times are kept."""
+    """West and East learned, both calling, the boiler on, nothing paused → Home Assistant restarts → once SmartPI runs again, VTherm counts their devices again and the boiler comes back; neither pauses, but with an activation delay VTherm shows the boiler off for 120 s, both pause meanwhile and resume once it is back; a, b and the dead times are kept; SmartPI's log has no "heat back with the central boiler after a blink" line: the boiler first read off after the restart is no stop."""
 
     async def both() -> None:
         await b.calls_at(WEST, CALLING)
@@ -640,6 +650,8 @@ async def BP20(b: Bench) -> None:
     if b.role.boiler_delay_s:
         paused = [f"{NAMES[c]} at {clock(s)}, boiler {s['boiler']}" for s in seen for c in COUNTED if of(s, c, "paused") is True]
         b.note(f"pauses after the restart: {', '.join(paused[:6]) or 'none'}")
+    blinks = await asyncio.to_thread(instance_log, BLINK_LINE, datetime.fromtimestamp(restarted_at, UTC))
+    b.check(not blinks, f"SmartPI's log after the restart: {len(blinks)} lines {BLINK_LINE!r}" + (f", the first: {blinks[0][:160]}" if blinks else ""))
     snap = await b.after("after the restart")
     for climate in COUNTED:
         now = kept(snap, climate)

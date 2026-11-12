@@ -4,6 +4,23 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+- Dead time: two fixes to the estimator's following of the central boiler.
+  - A calibration now feeds the estimator no power while the boiler is off, and
+    the boiler's changes reach the estimator during a calibration too. Before,
+    a calibration that started with the boiler off counted its heating from its
+    own start, so a stop shortly after the boiler's start timed a false passive
+    dead time (25.7 s on the bench). A calibration's heating now counts from the
+    boiler's start.
+  - The boiler read off for the first time, after a restart, is no stop: its
+    start within 5 s is a start, not a blink. Before, no start was recorded and
+    the room's next stop timed no passive response. A state that becomes known
+    as off while the estimator saw power records the stop, without a passive
+    response.
+
+  The pause's start still drops a waiting heating detection, as a safeguard;
+  the stop recorded without heat at the pause's end is gone, as no path feeds
+  power while the boiler is off. See `documentation/en/technical_doc.md`, 3.8.
+
 - Dead time: for a thermostat that Versatile Thermostat's central boiler counts,
   the dead-time estimator now sees the heat the boiler really gives: SmartPI's
   command while the boiler is on, and no power while it is off, at every feed.

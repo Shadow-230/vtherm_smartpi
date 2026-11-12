@@ -377,10 +377,10 @@ La pause ne fait que suspendre l'apprentissage ; elle n'efface pas ce que sait
 la détection du temps mort (3.6). L'estimateur garde l'instant du dernier arrêt
 de la chauffe et son historique de température, et il continue d'enregistrer la
 température pendant la pause : la pièce ne reçoit alors pas de chaleur, c'est
-donc du temps sans chauffe. Au début de la pause, elle abandonne une détection
-de chauffe encore en attente (issue `aborted`) ; une détection de la réponse
-passive à l'arrêt de la chaudière (ci-dessous) reste. Une calibration (4.6)
-n'alimente pas la détection tant que la chaudière est arrêtée.
+donc du temps sans chauffe. Rien ne peut s'armer tant que la chaudière est
+arrêtée (ci-dessous) ; par précaution, le début de la pause abandonne tout de
+même une détection de chauffe en attente (issue `aborted`). Une détection de la
+réponse passive à l'arrêt de la chaudière reste.
 
 **La chaleur que donne la chaudière.** Pour un thermostat que compte la
 chaudière, l'estimateur du temps mort ne voit pas la commande de SmartPI mais la
@@ -393,8 +393,27 @@ puissance vue par l'estimateur lui est transmis à ce moment, sur la dernière
 température filtrée de SmartPI, et les propres règles de l'estimateur en jugent
 (3.6), comme pour tout arrêt ou démarrage. Avec un état de chaudière illisible,
 ou un thermostat que la chaudière ne compte pas, l'estimateur voit la commande,
-comme sans chaudière. Un état qui devient connu, ou inconnu, n'est ni un arrêt
-ni un démarrage : l'estimateur prend la puissance telle qu'elle est alors.
+comme sans chaudière.
+
+Cela vaut aussi pendant une calibration (4.6). La calibration alimente
+l'estimateur avec sa propre commande, et sans puissance tant que la chaudière
+est arrêtée ; un changement de la chaudière parvient à l'estimateur aussitôt,
+avec la commande de la calibration. Une calibration qui commence chaudière
+arrêtée n'arme rien, et sa chauffe compte depuis le démarrage de la chaudière,
+comme tout démarrage (ci-dessous). Auparavant, une calibration alimentait
+l'estimateur avec sa commande chaudière arrêtée, et un arrêt peu après le
+démarrage de la chaudière ressemblait à la fin d'une chauffe établie : le banc
+d'essai a mesuré un faux temps mort passif de 25,7 s.
+
+Un état qui devient connu, ou inconnu, n'est ni un arrêt ni un démarrage :
+l'estimateur voit la puissance à sa prochaine alimentation, selon ses propres
+règles. Un cas est enregistré aussitôt : un état qui devient connu comme arrêté
+alors que l'estimateur voyait une puissance (il recevait la commande de SmartPI
+pendant que l'état était illisible). La chaleur s'est arrêtée à un moment
+inconnu : l'arrêt est enregistré, de sorte que la durée minimale sans chauffe
+compte à partir de lui, et une détection de chauffe en attente est abandonnée,
+mais aucune réponse passive n'est mesurée, car la pièce refroidissait peut-être
+déjà depuis un moment.
 
 Les cas :
 
@@ -416,9 +435,7 @@ Les cas :
   l'arrêt de la chaudière va jusqu'à son terme. Une pièce qui cesse de demander
   pendant la pause n'a reçu aucune chaleur depuis l'arrêt de la chaudière : sa
   réponse passive n'est donc pas mesurée depuis son propre arrêt, car la pièce
-  refroidit déjà et ce temps mort serait trop court. (Une calibration alimente
-  l'estimateur avec sa propre commande jusqu'au début de la pause ; l'arrêt qui
-  termine la pause est alors enregistré sans détection passive.)
+  refroidit déjà et ce temps mort serait trop court.
 - **La chaudière démarre pendant que la pièce demande.** La chaleur de la pièce
   commence au démarrage de la chaudière. Cela vaut pour une pièce qui a attendu
   la chaudière, et pour une pièce dont la propre demande allume la chaudière :
@@ -452,7 +469,11 @@ moment, ou au calcul suivant, et date le démarrage du démarrage de la chaudiè
   clignotement : l'estimateur voit de nouveau la commande de SmartPI sans
   nouveau démarrage, la période de chauffe continue donc (3.6), et la détection
   passive armée lors du court arrêt se termine par `aborted`. C'est journalisé
-  (« SmartPI heat back with the central boiler after a blink (no new start) ») ;
+  (« SmartPI heat back with the central boiler after a blink (no new start) »).
+  Un clignotement suppose un arrêt que l'estimateur a vu, d'allumée à arrêtée :
+  la chaudière lue arrêtée pour la première fois, après un redémarrage de Home
+  Assistant ou une fois son état lisible, n'est pas un arrêt, et son démarrage
+  dans les 5 s est un démarrage ;
 - un démarrage de moins de 5 s n'est pas vu.
 
 5 s est deux ordres de grandeur plus long que les clignotements observés, un
