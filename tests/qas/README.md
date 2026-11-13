@@ -331,6 +331,9 @@ for a background command.
 - BP36 raises VTherm's threshold to 2 devices for 15 minutes, so that the boiler does not start
   for North alone: a real cut. Its log window ends at North's own stop, which ends the pause by
   design (the check of 8904a66 counted that resume, 4 ms after the stop).
+- BP34, BP35 and BP36 read SmartPI's log from North's call as SmartPI logged it ("Target change
+  detected"), not from the bench's time less a margin: run twice in a row, BP36 caught the
+  previous run's stop and resume, 1.8 s before the new call (check of b873c33).
 - BP37 starts West's and East's learning fresh, so that East, whose heating the boiler cuts with
   North's off parts, measures nothing; North's relay state is read every second to stop East in an
   off part. North heats 2 °C above its room, as in BP35: a passive response is timed only after a

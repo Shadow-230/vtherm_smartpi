@@ -1421,10 +1421,20 @@ async def north_learned(b: Bench) -> None:
     await b.load(NORTH, RELAY_STATE)
 
 
-async def north_heat_stops(since: float, until: float) -> list[float]:
-    """North's "heat stopped with the central boiler" lines from ``since`` to ``until``."""
-    lines = await asyncio.to_thread(instance_log, HEAT_STOP_LINE, datetime.fromtimestamp(since, UTC))
-    return [at for at, _ in logged_heat_stops(lines, NAMES[NORTH]) if since - CLOCK_MARGIN_S <= at <= until]
+async def call_logged_at(climate: str, target: float, since: float) -> float:
+    """When SmartPI's calculation saw ``climate``'s call to ``target``, made at ``since`` (its
+    "Target change detected" line), on Home Assistant's clock; ``since`` without the line. A
+    window read from the log starts there: from ``since`` less a margin, it can catch the run
+    before's last lines (BP36 run twice in a row caught North's previous stop, 1.8 s before)."""
+    lines = await asyncio.to_thread(instance_log, TARGET_CHANGE_LINE, datetime.fromtimestamp(since, UTC))
+    return next((at for at, _, new in logged_target_changes(lines, NAMES[climate]) if at >= since - CLOCK_MARGIN_S and abs(new - target) < 0.05), since)
+
+
+async def north_heat_stops(called_at: float, until: float) -> list[float]:
+    """North's "heat stopped with the central boiler" lines from its call, logged at
+    ``called_at`` (``call_logged_at``), to ``until``."""
+    lines = await asyncio.to_thread(instance_log, HEAT_STOP_LINE, datetime.fromtimestamp(called_at, UTC))
+    return [at for at, _ in logged_heat_stops(lines, NAMES[NORTH]) if called_at <= at <= until]
 
 
 @scenario(
@@ -1458,10 +1468,11 @@ async def BP34(b: Bench) -> None:
     )
     paused = [clock(s) for s in seen if of(s, NORTH, "paused") is True]
     b.check(not paused, f"North never paused in its own cycle ({len(paused)} readings paused, the first {', '.join(paused[:3]) or 'none'})")
+    called_at = await call_logged_at(NORTH, target, since)
     lines = await asyncio.to_thread(instance_log, BOILER_PAUSE_LINE, datetime.fromtimestamp(since, UTC))
-    pauses = [at for at, is_paused in logged_pauses(lines, NAMES[NORTH]) if is_paused]
+    pauses = [at for at, is_paused in logged_pauses(lines, NAMES[NORTH]) if is_paused and at >= called_at]
     b.check(not pauses, f"SmartPI's log: {len(pauses)} \"North - SmartPI learning paused\" lines")
-    stops = await north_heat_stops(since, time.time())
+    stops = await north_heat_stops(called_at, time.time())
     b.check(not stops, f"SmartPI's log: {len(stops)} \"North - SmartPI heat stopped with the central boiler\" lines while North called")
 
 
@@ -1499,7 +1510,7 @@ async def BP35(b: Bench) -> None:
     b.note(f"— North stops calling (its passive outcome then: {prior})")
     await b.calls_at(NORTH, STOPPED)
     stopped = time.time()
-    stops = await north_heat_stops(since, stopped)
+    stops = await north_heat_stops(await call_logged_at(NORTH, target, since), stopped)
     b.check(not stops, f"SmartPI's log: {len(stops)} \"North - SmartPI heat stopped with the central boiler\" lines while North called")
     await passive_detection_shown(b, NORTH, stopped, f"North's stop after {(stopped - since) / 60:.0f} minutes of heat")
     await passive_detections_end_detected(b, (NORTH,), stopped, prior={NORTH: prior})
@@ -1542,11 +1553,13 @@ async def BP36(b: Bench) -> None:
         b.check(not powered, f"SmartPI's dead-time estimator saw no power for North in every reading ({', '.join(powered[:3]) or 'none above 0'})")
         unpaused = [clock(s) for s in seen if s["t"] - since >= CUT_PAUSED_AFTER_S and of(s, NORTH, "paused") is not True]
         b.check(not unpaused, f"North paused from {CUT_PAUSED_AFTER_S:.0f} s after its call, in every reading ({', '.join(unpaused[:3]) or 'always'})")
-        # North's own stop ends its pause, by design: the window ends at the stop SmartPI logged.
+        # The window runs from North's call to its own stop, both as SmartPI logged them: the stop
+        # ends the pause by design, and the run before's last lines stay out of it.
+        called_at = await call_logged_at(NORTH, target, since)
         targets = await asyncio.to_thread(instance_log, TARGET_CHANGE_LINE, datetime.fromtimestamp(since, UTC))
-        stop_line = next((at for at, _, new in logged_target_changes(targets, NAMES[NORTH]) if at >= since - CLOCK_MARGIN_S and new == STOPPED), stopped)
+        stop_line = next((at for at, _, new in logged_target_changes(targets, NAMES[NORTH]) if at > called_at and new == STOPPED), stopped)
         lines = await asyncio.to_thread(instance_log, BOILER_PAUSE_LINE, datetime.fromtimestamp(since, UTC))
-        changes = [("paused" if p else "resumed") for at, p in logged_pauses(lines, NAMES[NORTH]) if since - CLOCK_MARGIN_S <= at < stop_line]
+        changes = [("paused" if p else "resumed") for at, p in logged_pauses(lines, NAMES[NORTH]) if called_at <= at < stop_line]
         b.check(changes == ["paused"], f"SmartPI's log while North called, up to its stop: {changes or 'no pause line'} (one pause, no resume)")
     finally:
         await b.calls_at(NORTH, STOPPED)
