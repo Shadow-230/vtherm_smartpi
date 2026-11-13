@@ -740,8 +740,8 @@ class SmartPI:
         """The stop was found after the room's heat had ended, at ``ended_at``: a room on a relay
         whose boiler did not start again at its relay's next on part. The minimum time without
         heat counts from the real end of the heat. A passive response armed now starts late, so it
-        can only come out shorter than it is: as the author's estimator does for a start on weak
-        evidence (0.6.4), it is kept only when it does not lower the published passive dead time;
+        can only come out shorter than it is: as for a start on weak evidence (the estimator's
+        ``_weak_evidence``), it is kept only when it does not lower the published passive dead time;
         without a published value there is nothing to judge it against, and none is timed."""
         est = self.dt_est
         est.last_stop_time = ended_at

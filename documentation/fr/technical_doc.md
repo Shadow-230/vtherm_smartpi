@@ -330,7 +330,7 @@ L'état est publié dans `analysis.learning.response_lag` (`lag_s`, `estimates`,
 
 Le retard est appris sur des épisodes à puissance constante, que fournit le bootstrap par hystérésis. En régulation PWM, le rapport cyclique change d'un cycle à l'autre : une installation déjà sortie du bootstrap en fournit donc rarement.
 
-### 3.8 Pause d'apprentissage pendant que la chaudière centrale est arrêtée
+### 3.8 Chaudière centrale : pause d'apprentissage et chaleur que donne la chaudière
 
 La chaudière centrale de Versatile Thermostat ne chauffe les pièces des
 thermostats qu'elle compte que lorsqu'elle est allumée. Versatile Thermostat
@@ -346,9 +346,16 @@ fois trop long donne un gain environ quatre fois plus petit et une régulation
 bien plus lente. Cela compte surtout pendant que SmartPI apprend à partir de
 ses valeurs par défaut (3.1).
 
+Pour un tel thermostat, SmartPI met donc son apprentissage en pause tant que la
+chaudière est arrêtée (3.8.1), et son estimateur du temps mort voit la chaleur
+que la chaudière donne réellement, et non la commande (3.8.2 à 3.8.4). La
+régulation ne change pas (3.8.5).
+
+#### 3.8.1 La pause d'apprentissage
+
 L'apprentissage (les fenêtres `a`/`b` (3.2), la mesure du retard de réponse
 (3.7) et la détection du temps mort (3.6), y compris pendant une calibration
-(4.6)) se met donc en pause dès que toutes ces conditions sont vraies, sans
+(4.6)) se met en pause dès que toutes ces conditions sont vraies, sans
 interruption, depuis une période de calcul de SmartPI :
 
 - Versatile Thermostat compte le thermostat pour sa chaudière centrale
@@ -380,11 +387,13 @@ la détection du temps mort (3.6). L'estimateur garde l'instant du dernier arrê
 de la chauffe et son historique de température, et il continue d'enregistrer la
 température pendant la pause : la pièce ne reçoit alors pas de chaleur, c'est
 donc du temps sans chauffe. Rien ne peut s'armer tant que la chaudière est
-arrêtée (ci-dessous) ; par précaution, le début de la pause abandonne tout de
+arrêtée (3.8.2) ; par précaution, le début de la pause abandonne tout de
 même une détection de chauffe en attente (issue `aborted`). Une détection de la
 réponse passive à l'arrêt de la chaudière reste.
 
-**La chaleur que donne la chaudière.** Pour un thermostat que compte la
+#### 3.8.2 La chaleur que donne la chaudière
+
+Pour un thermostat que compte la
 chaudière, l'estimateur du temps mort ne voit pas la commande de SmartPI mais la
 chaleur que la chaudière donne réellement : la commande tant que la chaudière
 est allumée, et aucune puissance tant qu'elle est arrêtée
@@ -402,10 +411,7 @@ l'estimateur avec sa propre commande, et sans puissance tant que la chaudière
 est arrêtée ; un changement de la chaudière parvient à l'estimateur aussitôt,
 avec la commande de la calibration. Une calibration qui commence chaudière
 arrêtée n'arme rien, et sa chauffe compte depuis le démarrage de la chaudière,
-comme tout démarrage (ci-dessous). Auparavant, une calibration alimentait
-l'estimateur avec sa commande chaudière arrêtée, et un arrêt peu après le
-démarrage de la chaudière ressemblait à la fin d'une chauffe établie : le banc
-d'essai a mesuré un faux temps mort passif de 25,7 s.
+comme tout démarrage (ci-dessous).
 
 Un état qui devient connu, ou inconnu, n'est ni un arrêt ni un démarrage :
 l'estimateur voit la puissance à sa prochaine alimentation, selon ses propres
@@ -417,8 +423,9 @@ règles. Deux cas sont traités aussitôt :
   peut pas être attribuée : l'observation de l'estimateur repart de la
   puissance qu'il voit alors (une détection en cours est abandonnée, ainsi que
   son historique de température), et sa durée minimale sans chauffe compte à
-  partir de ce moment. Aucune réponse passive n'est mesurée avant qu'une
-  nouvelle chauffe ait été comptée. C'est journalisé (« SmartPI central boiler
+  partir de ce moment : une estimation qui reprend part des valeurs actuelles
+  (référence 4, §8, p. 1178). Aucune réponse passive n'est mesurée avant
+  qu'une nouvelle chauffe ait été comptée. C'est journalisé (« SmartPI central boiler
   state known again: dead-time observation restarted »).
 - **La première lecture arrêtée, alors que l'estimateur voyait une puissance**
   (il recevait la commande de SmartPI avant que l'état soit lisible). La chaleur
@@ -467,9 +474,12 @@ Les cas :
   compte à ce moment, vu par le calcul qui engage la commande (dans la première
   phase, le même calcul).
 
-**Les clignotements de la chaudière.** Versatile Thermostat peut éteindre puis
-rallumer sa chaudière en quelques millisecondes, lorsqu'il recompte les
-équipements (26 à 30 ms lors d'un arrêt sur le banc d'essai). Un arrêt compte
+#### 3.8.3 Les clignotements de la chaudière
+
+Versatile Thermostat peut éteindre puis rallumer sa chaudière en quelques
+millisecondes, lorsqu'il recompte les équipements : 26 à 30 ms lors d'un arrêt,
+mesurés sur une installation d'essai (Home Assistant avec Versatile Thermostat
+10.6 et des pièces simulées). Un arrêt compte
 aussitôt, comme ci-dessus. Un démarrage compte une fois que la chaudière a
 fonctionné `BOILER_BLINK_S` (5 s) sans interruption : le handler le vérifie à ce
 moment, ou au calcul suivant, et date le démarrage du démarrage de la chaudière
@@ -490,12 +500,15 @@ moment, ou au calcul suivant, et date le démarrage du démarrage de la chaudiè
 
 5 s est deux ordres de grandeur plus long que les clignotements observés, un
 douzième du pas de temps de l'estimateur (le calcul de SmartPI, 60 s), et moins
-de 1 % du temps mort d'une pièce (600 à 1200 s sur le banc d'essai). La valeur
+de 1 % du temps mort d'une pièce (600 à 1200 s pour les pièces de cette
+installation). La valeur
 est choisie par ce raisonnement, et non tirée d'une publication. Une attente
 plus longue laisserait passer moins de faux changements mais verrait les vrais
 plus tard.
 
-**Une pièce sur relais.** SmartPI pilote un interrupteur par cycles : à une
+#### 3.8.4 Une pièce sur relais
+
+SmartPI pilote un interrupteur par cycles : à une
 commande de 60 %, le relais est allumé 60 % de chaque cycle et éteint le reste.
 Versatile Thermostat ne compte un interrupteur pour sa chaudière que lorsqu'il
 est allumé. Ainsi, quand le relais maintient seul la chaudière allumée, la
@@ -524,6 +537,21 @@ Thermostat, hors mode vanne), tant que SmartPI demande :
   l'estimateur n'y voit ni arrêt ni démarrage ; une coupure venue de l'extérieur
   tient pendant les parties allumées et éteintes du relais, sans clignoter.
 
+```mermaid
+stateDiagram-v2
+    direction LR
+    state "chaleur" as heat
+    state "pas de chaleur (coupure)" as cut
+    heat --> cut: chaudière arrêtée, relais allumé depuis 5 s
+    heat --> cut: chaudière arrêtée, relais éteint dans la partie allumée de son cycle
+    cut --> heat: chaudière et relais tous deux allumés
+```
+
+Le diagramme montre la chaleur de la pièce, pour l'estimateur du temps mort et
+la pause d'apprentissage, tant que SmartPI demande : tout autre changement
+conserve l'état. Le second chemin vers une coupure est expliqué au paragraphe
+suivant.
+
 La partie éteinte n'appartient au relais que là où le cycle appliqué de SmartPI
 éteint le relais. SmartPI connaît ce cycle par les accusés de chaque commande de
 Versatile Thermostat : le début du cycle, et la durée pendant laquelle le relais
@@ -536,9 +564,11 @@ le début de la partie allumée (Versatile Thermostat signale le début d'un cyc
 juste avant de commuter le relais) jusqu'à 5 s avant sa fin, n'est pas dans sa
 propre partie éteinte : il est indisponible, ou il n'a pas commuté. Sa chaudière
 est alors suivie telle qu'elle est lue, comme pour une vanne : chaudière
-arrêtée, la chaleur s'arrête et l'apprentissage se met en pause. Un actionneur
-qui ne fait pas ce que calcule le régulateur est une raison d'interrompre
-l'adaptation (référence 4, §7, p. 1178).
+arrêtée, la chaleur s'arrête et l'apprentissage se met en pause.
+L'apprentissage suppose que les variations de la température sont causées par
+la commande (référence 4, §5, p. 1175). Un relais qui ne commute pas rompt cette
+hypothèse, comme toute panne d'un actionneur, qu'il faut trouver avant de régler
+un régulateur (référence 5, §6.7, p. 262 et p. 269).
 
 Une coupure trouvée seulement à la partie allumée suivante du relais a commencé
 plus tôt : la chaudière s'est arrêtée pendant la partie éteinte (une autre pièce
@@ -546,13 +576,12 @@ a cessé de demander), et la dernière chaleur de la pièce a pris fin avec la
 dernière partie allumée du relais, tous deux allumés. L'arrêt est daté de ce
 moment, de sorte que la durée minimale sans chauffe compte depuis la vraie fin
 de la chaleur. La réponse passive armée à la coupure commence en retard : elle
-ne peut donc sortir que plus courte qu'elle n'est. Comme l'estimateur de
-l'auteur le fait pour un démarrage sur des indices faibles (3.6), elle n'est
-gardée que si elle n'abaisse pas le temps mort passif publié ; sinon elle est
-ignorée (issue `ignored`). Sans temps mort passif publié, il n'y a rien pour la
-juger, et aucune n'est mesurée. Dans un cycle d'une heure, la partie éteinte dure
-jusqu'à des dizaines de minutes : sur la sonde de revue du banc d'essai, une
-mesure prise depuis la coupure donnait 295 s pour une pièce de 780 s.
+ne peut donc sortir que plus courte qu'elle n'est. Comme pour un démarrage sur
+des indices faibles (3.6), elle n'est gardée que si elle n'abaisse pas le temps
+mort passif publié ; sinon elle est ignorée (issue `ignored`). Sans temps mort
+passif publié, il n'y a rien pour la juger, et aucune n'est mesurée. Dans un
+cycle d'une heure, la partie éteinte dure jusqu'à des dizaines de minutes : une
+mesure prise depuis la coupure pourrait donc sortir bien trop courte.
 
 Quand SmartPI ne demande pas, l'état de la chaudière est suivi tel qu'il est lu :
 une nouvelle demande chaudière arrêtée l'attend donc comme tout démarrage. Une
@@ -562,15 +591,20 @@ quelques secondes après la demande ; le démarrage d'une vanne doit donc compte
 depuis celui de la chaudière. Un thermostat sans planificateur de cycles (un
 climat sous-jacent) n'est pas concerné non plus.
 
+#### 3.8.5 Régulation et diagnostic
+
 La pause et l'état de la chaudière ne changent rien d'autre que
 l'apprentissage. Contrairement à la pause de l'utilisateur, la pause ne redémarre pas l'épisode de chauffe de la régulation :
 la fenêtre de temps mort pendant laquelle le régulateur tient son intégrale
 compte depuis le début de la chauffe, et la commande et l'intégrale sont les
 mêmes que sans la pause. La pause apparaît dans le diagnostic sous
 `learning.boiler_paused`, publié dès qu'il change, et chaque changement est
-journalisé (« SmartPI learning paused (central boiler off) »).
+journalisé (« SmartPI learning paused (central boiler off) »). La puissance
+que voit l'estimateur du temps mort et l'âge de la chauffe en cours sont publiés
+sous `analysis.deadtime.last_power` et `analysis.deadtime.active_elapsed_s`
+(documentation du diagnostic).
 
-Sources :
+#### 3.8.6 Sources
 
 - N'apprendre que lorsque le chauffage fait varier la température. Un
   estimateur suppose que la variation de la sortie est causée par le signal de
@@ -590,8 +624,8 @@ Sources :
   lente. Une constante de temps en boucle fermée égale au temps mort est un bon
   compromis entre rapidité et robustesse (référence 6, p. 296) ; avec trois à
   quatre temps morts, SmartPI est déjà du côté prudent.
-- Après une pause, repartir de données fraîches. Pour un signal saturé,
-  l'estimation est interrompue et « kept off for a while » ensuite
+- Après une pause, repartir de données fraîches. Lorsque le signal mesuré
+  sature, l'estimation est interrompue et « kept off for a while » ensuite
   (référence 4, §7, p. 1178) ; lorsqu'elle reprend, ses signaux « should be
   initialized by actual values » (§8, p. 1178).
 - Un régulateur adaptatif doit trouver pourquoi la régulation a changé avant de
@@ -603,7 +637,7 @@ Sources :
   informatiques) ; l'attente de 5 s pour un démarrage de la chaudière est un tel
   choix.
 
-Limites :
+#### 3.8.7 Limites
 
 - SmartPI suit la commande de Versatile Thermostat à la chaudière, pas le
   brûleur : une chaudière qui ne s'allume pas pour une autre raison (une panne,
@@ -989,6 +1023,7 @@ Avant et pendant chaque phase, le manager vérifie, avec le jumeau thermique, qu
 | `algo.py`                 | `SmartPI`        | façade algorithmique, orchestration complète                             |
 | `handler.py`              | `SmartPIHandler` | pont Home Assistant : timer périodique, services, attributs              |
 | `state_store.py`          | `SmartPIStateStore` | persistance Home Assistant (`Store`) de l'état de l'algorithme        |
+| `boiler_call.py`          | —                | état de la chaudière centrale de Versatile Thermostat, pour la pause d'apprentissage et l'estimateur du temps mort (3.8) |
 
 ### 5.2 Modules `smartpi/` réellement utilisés
 
@@ -1258,6 +1293,8 @@ une acceptation ou un rejet causal sans modifier la décision d’apprentissage.
 | `AB_SETTLE_K_ACTIVE`           | `3`    |
 | `AB_SETTLE_K_PASSIVE`          | `3`    |
 | `AB_SETTLE_ACTIVE_CAP_FRAC`    | `0.5`  |
+| `BOILER_PAUSE_CONFIRM_S`       | `SMARTPI_RECALC_INTERVAL_SEC` − 1 (`59`) |
+| `BOILER_BLINK_S`               | `5`    |
 
 ### 6.2 Régulation
 
@@ -1349,8 +1386,8 @@ La matrice pilote uniquement la mise à jour des gains et l'apprentissage thermi
 1. **Astrom K.J. et Hagglund T.**, travaux sur la régulation PID et l'usage de modèles FOPDT.
 2. **Sundaresan K.R. et Krishnaswamy P.R.**, estimation des paramètres de délai et de constante de temps.
 3. Régression **OLS** avec test t de Student pour la validation de pente.
-4. **Hagglund T. et Astrom K.J.**, Supervision of adaptive control algorithms, *Automatica* 36(8), 2000, 1171–1180 : pause d'apprentissage pendant que la chaudière centrale est arrêtée (3.8).
-5. **Astrom K.J. et Hagglund T.**, *PID Controllers: Theory, Design, and Tuning*, 2e éd., Instrument Society of America, 1995 : la durée minimale OFF après une réinitialisation et la réponse passive après une période active établie (3.6) ; pause d'apprentissage pendant que la chaudière centrale est arrêtée, et l'impulsion d'un actionneur marche/arrêt à chaque cycle (3.8).
+4. **Hagglund T. et Astrom K.J.**, Supervision of adaptive control algorithms, *Automatica* 36(8), 2000, 1171–1180 : la pause d'apprentissage et la chaleur que donne la chaudière centrale (3.8).
+5. **Astrom K.J. et Hagglund T.**, *PID Controllers: Theory, Design, and Tuning*, 2e éd., Instrument Society of America, 1995 : la durée minimale OFF après une réinitialisation et la réponse passive après une période active établie (3.6) ; la pause d'apprentissage, l'impulsion d'un actionneur marche/arrêt à chaque cycle et la panne d'un actionneur (3.8).
 6. **Skogestad S.**, Simple analytic rules for model reduction and PID controller tuning, *Journal of Process Control* 13, 2003, 291–309 : pause d'apprentissage pendant que la chaudière centrale est arrêtée (3.8).
 7. **Ren J., Su M., Zhao X., Liu J. et Song S.**, Experimental study on the dynamic thermal response of a radiant floor system in an office building, *E3S Web of Conferences* 246, 2021, 10003 : la réponse passive après une période active établie (3.6).
 8. **Chen W., Toueg S. et Aguilera M.K.**, On the quality of service of failure detectors, *IEEE Transactions on Computers* 51(5), 2002, 561–579 : l'attente avant qu'un démarrage de la chaudière centrale compte (3.8).
