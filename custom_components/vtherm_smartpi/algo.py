@@ -286,6 +286,9 @@ class SmartPI:
         # thermostat the boiler counts (set by the handler, which filters the boiler's blinks); None
         # when the boiler does not count this thermostat or its state cannot be read.
         self._boiler_on: bool | None = None
+        # Whether the boiler's state has been known since this SmartPI started (an outage of it
+        # is then told from a first reading).
+        self._boiler_was_known: bool = False
         self._learning_start_date: Optional[datetime] = datetime.now()
         self._session_learn_ok_count_base: int = 0
         self._session_learn_skip_count_base: int = 0
@@ -607,12 +610,22 @@ class SmartPI:
         none while Versatile Thermostat's central boiler, which heats this thermostat, is off."""
         return 0.0 if self._boiler_on is False else self._dead_time_command()
 
+    def relay_plan(self) -> tuple[float, float] | None:
+        """The applied cycle in progress, as Versatile Thermostat's command receipts commit it:
+        its start (monotonic time) and how long the device is on from it, the applied command
+        times the cycle; None before a cycle is known."""
+        start = self._current_cycle_start_monotonic
+        if start is None:
+            return None
+        return start, max(0.0, self._committed_on_percent) * self._cycle_min * 60.0
+
     def set_boiler_state(
         self,
         on: bool | None,
         current_temp: float | None = None,
         since: float | None = None,
         blink: bool = False,
+        ended_at: float | None = None,
     ) -> bool:
         """Versatile Thermostat's central boiler state for a thermostat it counts (None when it
         does not count it, or the state cannot be read), as the handler follows it; whether the
@@ -623,10 +636,13 @@ class SmartPI:
         the moment the handler gives it, so its own rules (3.6) judge it: the room's heat stops
         (``_heat_stops_with_the_boiler``) or starts (``_heat_starts_with_the_boiler``, from the
         boiler's start ``since``). A boiler back right after its stop blinked (``blink``): the
-        room's heat did not stop (``_heat_back_after_a_blink``). This holds during a calibration
-        too, with the calibration's output as the command. A state that becomes known, or
-        unknown, is neither a stop nor a start: the estimator sees the power at its next feed, by
-        its own rules; but a state that becomes known as off, while the estimator saw power,
+        room's heat did not stop (``_heat_back_after_a_blink``). A stop found after the room's
+        heat had already ended, at ``ended_at`` (a room on a relay), is timed late
+        (``_heat_stopped_earlier``). This holds during a calibration too, with the calibration's
+        output as the command. A state that becomes known, or unknown, is neither a stop nor a
+        start: the estimator sees the power at its next feed, by its own rules. But a state known
+        again after an outage restarts the estimator's observation, as a restart does
+        (``_boiler_state_known_again``), and a first reading off, while the estimator saw power,
         records the stop (``_heat_stopped_at_an_unknown_moment``).
         """
         if on == self._boiler_on:
@@ -636,13 +652,16 @@ class SmartPI:
         self._boiler_on = on
         after = self._dead_time_power()
         if not known:
-            if after <= 0.01 < self.dt_est.last_power:
+            if on is not None and self._boiler_was_known:
+                self._boiler_state_known_again()
+            elif after <= 0.01 < self.dt_est.last_power:
                 self._heat_stopped_at_an_unknown_moment()
+            self._boiler_was_known = self._boiler_was_known or on is not None
             return False
         if (before > 0.01) == (after > 0.01):
             return False
         if after <= 0.01:
-            self._heat_stops_with_the_boiler(current_temp)
+            self._heat_stops_with_the_boiler(current_temp, ended_at)
         elif blink:
             self._heat_back_after_a_blink(current_temp)
         else:
@@ -670,7 +689,7 @@ class SmartPI:
         )
         return True
 
-    def _heat_stops_with_the_boiler(self, current_temp: float | None) -> None:
+    def _heat_stops_with_the_boiler(self, current_temp: float | None, ended_at: float | None = None) -> None:
         """Versatile Thermostat's central boiler went off while SmartPI calls: the room's heat
         stops now, though SmartPI's command does not. The dead-time estimator sees the power fall
         to 0 now and its own rules decide: it records the stop, and times the room's passive
@@ -683,6 +702,8 @@ class SmartPI:
             # Not fed (the user's learning off, no temperature yet): the stop is recorded all the same.
             self.dt_est.last_stop_time = now
             self.dt_est.last_power = 0.0
+        if ended_at is not None and ended_at < now:
+            self._heat_stopped_earlier(ended_at)
         _LOGGER.info(
             "%s - SmartPI heat stopped with the central boiler%s",
             self._name,
@@ -714,6 +735,35 @@ class SmartPI:
             "%s - SmartPI heat back with the central boiler after a blink (no new start)",
             self._name,
         )
+
+    def _heat_stopped_earlier(self, ended_at: float) -> None:
+        """The stop was found after the room's heat had ended, at ``ended_at``: a room on a relay
+        whose boiler did not start again at its relay's next on part. The minimum time without
+        heat counts from the real end of the heat. A passive response armed now starts late, so it
+        can only come out shorter than it is: as the author's estimator does for a start on weak
+        evidence (0.6.4), it is kept only when it does not lower the published passive dead time;
+        without a published value there is nothing to judge it against, and none is timed."""
+        est = self.dt_est
+        est.last_stop_time = ended_at
+        cool = self._last_hvac_mode != VThermHvacMode_COOL
+        if est.state != ("WAITING_COOL_RESPONSE" if cool else "WAITING_HEAT_RESPONSE"):
+            return
+        published, _ = est.passive_deadtime(self._last_hvac_mode or VThermHvacMode_HEAT)
+        if published is None:
+            est.state = "COOLING" if cool else "HEATING"
+            est._waiting_power_on = None
+        else:
+            est._weak_evidence = True
+
+    def _boiler_state_known_again(self) -> None:
+        """The boiler's state can be read again after it could not: whether the room got heat
+        meanwhile is not known. As after a restart (``DeadTimeEstimator.load_state``), a response
+        spanning the outage is not attributable: the estimator's observation restarts at the power
+        it sees now, and its minimum time without heat counts from now."""
+        est = self.dt_est
+        est.reset_observation(self._dead_time_power())
+        est.last_stop_time = time.monotonic()
+        _LOGGER.info("%s - SmartPI central boiler state known again: dead-time observation restarted", self._name)
 
     def _heat_stopped_at_an_unknown_moment(self) -> None:
         """The boiler's state becomes known, off, while the dead-time estimator saw power (fed

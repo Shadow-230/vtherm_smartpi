@@ -187,6 +187,14 @@ class DeadTimeEstimator:
             return None
         return max(0.0, self._tin_history[-1][0] - start)
 
+    @property
+    def active_elapsed_s(self) -> float | None:
+        """Age of the active period in progress, from the last power start the estimator saw;
+        None while the power is off or no start was seen."""
+        if self.last_start_time is None or self.last_power <= 0.01 or not self._tin_history:
+            return None
+        return max(0.0, self._tin_history[-1][0] - self.last_start_time)
+
     def ensure_hvac_mode(self, hvac_mode: VThermHvacMode | None) -> bool:
         """Ensure persisted transition data uses physical response semantics.
 

@@ -462,12 +462,22 @@ looked like the end of a settled heating: the test bench measured a false
 passive dead time of 25.7 s.
 
 A state that becomes known, or unknown, is neither a stop nor a start: the
-estimator sees the power at its next feed, by its own rules. One case is
-recorded at once: a state that becomes known as off while the estimator saw
-power (it got SmartPI's command while the state could not be read). The heat
-stopped at a moment that is not known: the stop is recorded, so the minimum time
-without heat counts from it, and a heating detection waiting is dropped, but no
-passive response is timed, as the room may have been cooling for a while.
+estimator sees the power at its next feed, by its own rules. Two cases are
+handled at once:
+
+- **The state known again after an outage.** Whether the room got heat while
+  the state could not be read is not known. As after a restart of Home
+  Assistant, a response spanning the outage is not attributable: the
+  estimator's observation restarts at the power it sees then (a detection in
+  progress is dropped, and so is its temperature history), and its minimum
+  time without heat counts from then. No passive response is timed until a
+  new heating has been counted. This is logged ("SmartPI central boiler state
+  known again: dead-time observation restarted").
+- **The first reading off, while the estimator saw power** (it got SmartPI's
+  command before the state could be read). The heat stopped at a moment that
+  is not known: the stop is recorded, so the minimum time without heat counts
+  from it, and a heating detection waiting is dropped, but no passive response
+  is timed, as the room may have been cooling for a while.
 
 The cases:
 
@@ -552,6 +562,32 @@ Thermostat's cycle scheduler, not in valve mode), while SmartPI calls:
   cycle, and the estimator sees no stop and no start in it; a cut from outside
   holds through the relay's on and off parts, without flickering.
 
+The off part is the relay's own only where SmartPI's applied cycle has the relay
+off. SmartPI knows that cycle from Versatile Thermostat's receipts of each
+command: the cycle's start, and how long the relay is on from it, the applied
+command times the cycle, after Versatile Thermostat's own corrections (a pulse
+too short to apply, for example). An on/off actuator gets in each cycle a pulse
+whose width follows the controller's output (reference 5, §3.4, p. 78, equation
+3.23). A relay found off where its cycle has it on, from 5 s into the on part
+(Versatile Thermostat reports a cycle's start just before it switches the relay)
+to 5 s before its end, is not in its own off part: it is unavailable, or it did
+not switch. Its boiler is then followed as read, as for a valve: with the boiler
+off, the heat stops and learning pauses. An actuator that does not do what the
+controller computes is a reason to interrupt the adaptation (reference 4, §7,
+p. 1178).
+
+A cut found only at the relay's next on part started earlier: the boiler went
+off during the off part (another room stopped), and the room's last heat ended
+with the relay's last on part, both on. The stop is dated from then, so the
+minimum time without heat counts from the real end of the heat. The passive
+response armed at the cut starts late, so it can only come out shorter than it
+is. As the author's estimator does for a start on weak evidence (3.6), it is
+kept only when it does not lower the published passive dead time; it is ignored
+otherwise (outcome `ignored`). Without a published passive dead time there is
+nothing to judge it against, and none is timed. In an hour's cycle the off part
+lasts up to tens of minutes: on the test bench's review probe, a measurement
+timed from the cut gave 295 s for a room of 780 s.
+
 When SmartPI does not call, the boiler's state is followed as read, so a new call
 with the boiler off waits for it as any start. A valve is not concerned: it is
 open through the whole cycle while it calls, and Versatile Thermostat counts it
@@ -611,7 +647,13 @@ Limits:
   still waiting: the stop counts at once.
 - A room on a relay whose boiler does not start for it is cut 5 s after the
   relay turns on, not at once; with several relays on one thermostat, the 5 s
-  count from the first relay on.
+  count from the first relay on, and the applied cycle is the first relay's.
+- A cut that starts in a relay's own off part loses its passive measurement when
+  that measurement comes out shorter than the published one, or when there is no
+  published one yet.
+- After an outage of the boiler's state, no passive response is timed until a
+  new heating has been counted, and no active one for the minimum time without
+  heat.
 - After a restart of Home Assistant, Versatile Thermostat shows the boiler off
   until it has counted the thermostats again and, with an activation delay,
   until the delay has passed: learning may pause for that time.
@@ -1320,7 +1362,7 @@ The matrix drives the gain updates and thermal learning only. A regime transitio
 2. **Sundaresan K.R. and Krishnaswamy P.R.**, estimation of delay and time-constant parameters.
 3. **OLS** regression with Student t-test for slope validation.
 4. **Hagglund T. and Astrom K.J.**, Supervision of adaptive control algorithms, *Automatica* 36(8), 2000, 1171–1180: learning pause while the central boiler is off (3.8).
-5. **Astrom K.J. and Hagglund T.**, *PID Controllers: Theory, Design, and Tuning*, 2nd ed., Instrument Society of America, 1995: the minimum OFF duration after a reset and the passive response after a settled active period (3.6); learning pause while the central boiler is off (3.8).
+5. **Astrom K.J. and Hagglund T.**, *PID Controllers: Theory, Design, and Tuning*, 2nd ed., Instrument Society of America, 1995: the minimum OFF duration after a reset and the passive response after a settled active period (3.6); learning pause while the central boiler is off, and an on/off actuator's pulse in each cycle (3.8).
 6. **Skogestad S.**, Simple analytic rules for model reduction and PID controller tuning, *Journal of Process Control* 13, 2003, 291–309: learning pause while the central boiler is off (3.8).
 7. **Ren J., Su M., Zhao X., Liu J. and Song S.**, Experimental study on the dynamic thermal response of a radiant floor system in an office building, *E3S Web of Conferences* 246, 2021, 10003: the passive response after a settled active period (3.6).
 8. **Chen W., Toueg S. and Aguilera M.K.**, On the quality of service of failure detectors, *IEEE Transactions on Computers* 51(5), 2002, 561–579: the wait before a start of the central boiler counts (3.8).

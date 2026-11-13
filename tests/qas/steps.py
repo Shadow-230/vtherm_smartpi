@@ -100,6 +100,7 @@ def times(wait: Wait, n: int) -> Wait:
 # SmartPI pauses once it has called with the boiler off without a break for a calculation period, less
 # 1 s for the timer (boiler_call.BOILER_PAUSE_CONFIRM_S), at its first calculation after that.
 PAUSE_CONFIRM_S = RECALC_S - 1.0
+BLINK_S = 5.0  # boiler_call.BOILER_BLINK_S: a boiler's start, or a relay's cut, counts once it has held this long
 # The thermostat's own change: below from its setpoint's own calculation, paused at the first check a
 # period later: 60-120 s, 90 s on average, as the setpoint falls at any moment of a calculation period
 # (117 pauses on the bench, checks of 7ae0d5e to 11e3071: 60-120 s, mean 84 s, median 85 s); at most
@@ -185,6 +186,7 @@ LIVE = {
     "cool_outcome": "analysis.deadtime.cool_last_outcome",
     "dt_wait": "analysis.deadtime.waiting_elapsed_s",
     "dt_power": "analysis.deadtime.last_power",  # the power the dead-time estimator last saw
+    "dt_active": "analysis.deadtime.active_elapsed_s",  # how long its active period has lasted, None without one
     "accepted_a": "learning.accepted_updates_a",
     "accepted_b": "learning.accepted_updates_b",
     "learn_ok": "analysis.learning.learn_ok_count",

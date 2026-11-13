@@ -74,7 +74,8 @@ est disponible, `twin`.
 | `state` | État du détecteur (`WAITING_HEAT_RESPONSE`, `WAITING_COOL_RESPONSE`, `HEATING`, `COOLING`, `OFF`) |
 | `last_power` | Dernière puissance vue par le détecteur |
 | `waiting_elapsed_s` | Âge de la réponse attendue en secondes, `null` quand aucune détection n'est armée |
-| `heat_last_outcome` / `cool_last_outcome` | Issue de la dernière attente d'une réponse montante / descendante : `detected`, `timeout`, `aborted` (transition de puissance avant détection), `rejected` (la température évoluait déjà dans le sens de la réponse avant le démarrage de la puissance, trop fortement ou trop irrégulièrement pour la mesurer), `ignored` (une mesure plus courte que le temps mort publié, écartée parce que la température évoluait déjà dans le sens de la réponse avant le démarrage ou que la fenêtre avant le démarrage était trop courte pour juger), `null` avant la première |
+| `active_elapsed_s` | Âge de la période active en cours en secondes, depuis le dernier démarrage de puissance vu par le détecteur ; `null` quand la puissance est coupée ou avant un démarrage |
+| `heat_last_outcome` / `cool_last_outcome` | Issue de la dernière attente d'une réponse montante / descendante : `detected`, `timeout`, `aborted` (transition de puissance avant détection), `rejected` (la température évoluait déjà dans le sens de la réponse avant le démarrage de la puissance, trop fortement ou trop irrégulièrement pour la mesurer), `ignored` (une mesure plus courte que le temps mort publié, écartée parce que la température évoluait déjà dans le sens de la réponse avant le démarrage ou que la fenêtre avant le démarrage était trop courte pour juger, ou, pour une pièce sur relais, parce que la mesure a commencé en retard, après une coupure trouvée seulement à la partie allumée suivante du relais), `null` avant la première |
 
 `analysis.learning.response_lag` décrit le retard de réponse utilisé par l'apprentissage de `a` :
 

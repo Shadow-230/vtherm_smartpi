@@ -299,6 +299,53 @@ async def test_a_relay_room_the_boiler_does_not_start_for_stays_cut(hass: HomeAs
 
 
 @pytest.mark.parametrize("expected_lingering_timers", [True])
+async def test_a_cut_that_starts_in_the_relay_s_off_part_shows_5_s_into_its_next_on_part(hass: HomeAssistant, freezer: Any, caplog: pytest.LogCaptureFixture) -> None:
+    """boiler-relay with the threshold at 2 (as BP37): North (relay) and East (valve) call, so the
+    boiler heats with North's relay on; once North modulates above 80 %, East stops in North's
+    off part, and the boiler does not start at North's next on part. SmartPI takes it for a cut
+    5 s into that on part, not before, and the late passive measurement does not lower North's
+    passive dead time. (With off parts of about 12 s the measurement is late by about 17 s only:
+    the unit tests cover an hour's cycle.)"""
+    caplog.set_level(logging.INFO)
+    await _prepare(hass, ROLES["boiler-relay"])
+    registry = er.async_get(hass)
+    relay = f"switch.{ROOMS_DOMAIN}_north_heater"
+    await hass.services.async_call(HELPER_DOMAIN, "load_learned_state", {"entity_id": NORTH, "state": "north_relay"}, blocking=True)
+    await hass.services.async_call("number", "set_value", {"entity_id": registry.async_get_entity_id("number", VT, COUNT_THRESHOLD_UID), "value": 2}, blocking=True)
+    await _targets(hass, **{WEST: 7.0, EAST: 7.0, NORTH: 7.0})
+    await _run_for(hass, freezer, 10 * 60)
+    cool_before = _live(hass, NORTH)["model"]["deadtime_cool_s"]
+    room_c = float(hass.states.get(f"sensor.{ROOMS_DOMAIN}_north_temperature").state)
+    await _targets(hass, **{EAST: 23.0, NORTH: round(room_c + 2.0, 1)})
+    for _ in range(int(90 * 60 / 7)):  # 100 % first, then modulated above 80 %: a passive response is timed after it
+        await _run_for(hass, freezer, 7.0)
+        if 0 < _live(hass, NORTH)["power"]["current_cycle_percent"] < 100:
+            break
+    for _ in range(int(10 * 60 / 1)):
+        if hass.states.get(relay).state == "off":
+            break
+        await _run_for(hass, freezer, 1.0, 1.0)
+    assert hass.states.get(relay).state == "off"
+    await _targets(hass, **{EAST: 7.0})
+    caplog.clear()
+    waited = 0.0
+    while hass.states.get(relay).state == "off" and waited < 10 * 60:
+        await _run_for(hass, freezer, 1.0, 1.0)
+        waited += 1.0
+    assert hass.states.get(relay).state == "on"
+    lines_at: list[float] = []
+    for step in range(30):
+        await _run_for(hass, freezer, 1.0, 1.0)
+        if any("North - SmartPI heat stopped with the central boiler" in r.getMessage() for r in caplog.records) and not lines_at:
+            lines_at.append(step + 1.0)
+    assert lines_at and 4.0 <= lines_at[0] <= 20.0, lines_at
+    await _run_for(hass, freezer, 45 * 60)
+    detected = [float(r.getMessage().split("= ")[1].split("s")[0]) for r in caplog.records if "Cool Deadtime detected" in r.getMessage()]
+    assert all(value >= cool_before for value in detected), detected
+    assert _live(hass, NORTH)["analysis"]["deadtime"]["cool_last_outcome"] in ("ignored", "detected")
+
+
+@pytest.mark.parametrize("expected_lingering_timers", [True])
 async def test_the_pause_with_a_changed_threshold_off_and_window(hass: HomeAssistant, freezer: Any) -> None:
     """As BP10 and BP11 run on the bench, with West paused alone: the threshold lowered to 1 device
     resumes West and starts the boiler, back to 2 pauses it again; West turned off resumes at once,
