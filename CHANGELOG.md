@@ -44,6 +44,12 @@ All notable changes to this project will be documented in this file.
     `analysis.deadtime.active_elapsed_s`.
 - Calibration (`smartpi/calibration.py`): the dead-time estimator gets no power
   while the central boiler is off.
+- Dead time, a room on a valve (any thermostat not on a relay): while it calls
+  and its heat flows, the boiler going off is held as heat for 59 s, as the
+  water in its emitter goes on heating. A boiler back within it is no stop and
+  no start; a boiler still off is a stop dated from the boiler's stop, and so
+  is the passive response it arms, also when the room stops calling during the
+  hold. The pause starts at once then.
 - FF trim: for such a thermostat, the slow feed-forward correction learns from
   no window in which the boiler was off while the applied power was above 0:
   the room then cools under that power, which the trim would read as a room

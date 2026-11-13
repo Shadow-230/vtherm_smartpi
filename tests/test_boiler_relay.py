@@ -300,8 +300,9 @@ async def test_a_relay_s_own_stop_after_a_settled_heating_times_its_passive_resp
 
 async def test_a_thermostat_without_a_cycle_scheduler_follows_the_boiler_as_read() -> None:
     """A climate underlying has no cycle scheduler: the relay's rule does not apply, and the boiler
-    going off while SmartPI calls stops the room's heat at once, its device off or not (SmartPI's
-    calculation is not run here: the test thermostat needs a scheduler for it)."""
+    going off while SmartPI calls stops the room's heat as for a valve, once it has stayed off
+    59 s, dated from its stop, its device off or not (SmartPI's calculation is not run here: the
+    test thermostat needs a scheduler for it)."""
     handler = _relay_handler(scheduler=False)
     algo = handler._thermostat.prop_algorithm
     est = algo.dt_est
@@ -309,6 +310,8 @@ async def test_a_thermostat_without_a_cycle_scheduler_follows_the_boiler_as_read
     est.last_power = 1.0
     loop = _Loop(handler)
     await loop.run([(0.0, "boiler", True), (100.0, "boiler", False)])
+    assert algo.boiler_on is True  # held as heat
+    await loop.run([(100.0 + BOILER_PAUSE_CONFIRM_S, "boiler", False)])
 
     assert not handler._drives_a_relay()
     assert est.last_stop_time == 100.0 and algo.boiler_on is False and algo._dead_time_power() == 0.0

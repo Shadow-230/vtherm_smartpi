@@ -643,8 +643,9 @@ def _heating_room(handler: SmartPIHandler) -> SmartPI:
 
 @pytest.mark.parametrize(("back_after_s", "measured"), [(300.0, False), (700.0, True)])
 async def test_the_boiler_going_off_while_it_heats_the_room_is_the_room_s_stop(back_after_s, measured) -> None:
-    """The boiler heats the calling room, goes off at 1030 s and comes back: the room's heat
-    stopped with it, so the estimator records the stop then and arms nothing; the boiler's
+    """The boiler heats the calling room, goes off at 1030 s and comes back: held as heat for
+    59 s (a valve), then the room's heat stopped with it, so the estimator records the stop at
+    1030 s and arms nothing, and learning pauses at once (59 s since the stop); the boiler's
     return is judged by the estimator's own rules, 600 s without heat: back after 300 s, no
     measurement; after 700 s, a measurement from the boiler's return, as the author's estimator
     gives for a stop at 1030 s and a start at the return."""
@@ -653,9 +654,10 @@ async def test_the_boiler_going_off_while_it_heats_the_room_is_the_room_s_stop(b
     await _control(handler, boiler_on=True, power=1.0, at=1000.0)
 
     _boiler_changes(handler, on=False, at=1030.0)
+    assert algo.boiler_on is True and algo.dt_est.last_power == 1.0  # held as heat
+    await _control(handler, boiler_on=False, power=1.0, at=1090.0)
     assert algo.dt_est.last_stop_time == 1030.0
     assert algo.dt_est.state != "WAITING_COOL_RESPONSE"
-    await _control(handler, boiler_on=False, power=1.0, at=1090.0)
     assert algo.boiler_learning_paused is True
 
     back = 1030.0 + back_after_s
@@ -717,9 +719,10 @@ def test_the_heating_starts_with_the_boiler(learning, monkeypatch) -> None:
 
 async def test_the_boiler_going_off_drops_the_heating_detection_in_flight(caplog) -> None:
     """The heating detection armed at the boiler's start is dropped when the boiler goes off
-    while the room calls ("aborted"), logged and published at once; the estimator sees the power
-    fall to 0 then (5 minutes of heat, no reliable dead time: no passive detection) and no power
-    after it, so a later rise is not timed as a response to heat that has stopped."""
+    while the room calls and stays off 59 s ("aborted"), logged and published at once; the
+    estimator sees the power fall to 0 from the boiler's stop (5 minutes of heat, no reliable dead
+    time: no passive detection) and no power after it, so a later rise is not timed as a response
+    to heat that has stopped."""
     handler = _handler()
     algo = _heating_room(handler)
     algo.dt_est.last_power = 0.0
@@ -730,9 +733,11 @@ async def test_the_boiler_going_off_drops_the_heating_detection_in_flight(caplog
     assert algo.dt_est.state == "WAITING_HEAT_RESPONSE"
 
     caplog.set_level(logging.INFO, logger="custom_components.vtherm_smartpi.algo")
+    _boiler_changes(handler, on=False, at=1420.0)
+    assert algo.dt_est.state == "WAITING_HEAT_RESPONSE"  # held as heat
     with (
-        patch("custom_components.vtherm_smartpi.handler.time.monotonic", return_value=1420.0),
-        patch("custom_components.vtherm_smartpi.algo.time.monotonic", return_value=1420.0),
+        patch("custom_components.vtherm_smartpi.handler.time.monotonic", return_value=1420.0 + BOILER_PAUSE_CONFIRM_S),
+        patch("custom_components.vtherm_smartpi.algo.time.monotonic", return_value=1420.0 + BOILER_PAUSE_CONFIRM_S),
         patch("custom_components.vtherm_smartpi.handler.central_boiler_on", return_value=False),
         patch("custom_components.vtherm_smartpi.handler.async_dispatcher_send") as send,
     ):
