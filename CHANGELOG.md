@@ -44,6 +44,12 @@ All notable changes to this project will be documented in this file.
     `analysis.deadtime.active_elapsed_s`.
 - Calibration (`smartpi/calibration.py`): the dead-time estimator gets no power
   while the central boiler is off.
+- FF trim: for such a thermostat, the slow feed-forward correction learns from
+  no window in which the boiler was off while the applied power was above 0:
+  the room then cools under that power, which the trim would read as a room
+  that needs more power for good. The time is marked in the trim's power trace
+  as power the room did not get (`central_boiler_off`), from the boiler's stop
+  to its start; a mark shorter than 59 s is dropped.
 
 See `documentation/en/technical_doc.md`, 3.6 and 3.8, and
 `documentation/en/diagnostics.md`.

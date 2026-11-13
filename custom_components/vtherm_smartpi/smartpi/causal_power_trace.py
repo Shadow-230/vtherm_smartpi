@@ -61,9 +61,11 @@ class TraceDiscontinuity:
 
 
 # Discontinuity reasons covering an interval whose applied power was not
-# observed: the trace keeps the last known power over it, so a consumer that
-# learns from the realized power must not use a window overlapping it.
-UNOBSERVED_POWER_REASONS = frozenset({"missing_valve_position"})
+# observed, or did not reach the room (``central_boiler_off``: the central
+# boiler that heats the room was off while power was applied): the trace keeps
+# the applied power over it, so a consumer that learns from the realized power
+# must not use a window overlapping it.
+UNOBSERVED_POWER_REASONS = frozenset({"missing_valve_position", "central_boiler_off"})
 
 
 @dataclass(frozen=True)
@@ -323,6 +325,19 @@ class CausalPowerTrace:
         if not isfinite(now) or not str(reason) or self._unobserved_since is not None:
             return
         self._unobserved_since = (now, str(reason))
+
+    def end_unobserved_power(
+        self, now_monotonic: float, reason: str, min_duration_s: float = 0.0
+    ) -> None:
+        """End an open interval of unobserved applied power with `reason` now,
+        before the next observed power, once its cause is known to be over. An
+        interval shorter than `min_duration_s` is dropped, not recorded."""
+        if self._unobserved_since is None or self._unobserved_since[1] != str(reason):
+            return
+        if float(now_monotonic) - self._unobserved_since[0] < min_duration_s:
+            self._unobserved_since = None
+            return
+        self._close_unobserved(float(now_monotonic))
 
     def _close_unobserved(self, now_monotonic: float) -> None:
         if self._unobserved_since is None:

@@ -138,6 +138,7 @@ from .smartpi.timestamp_utils import (
     wall_to_monotonic_ts,
 )
 from .const import HVAC_OFF_REASON_WINDOW_DETECTION
+from .boiler_call import BOILER_PAUSE_CONFIRM_S
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -610,6 +611,26 @@ class SmartPI:
         none while Versatile Thermostat's central boiler, which heats this thermostat, is off."""
         return 0.0 if self._boiler_on is False else self._dead_time_command()
 
+    def _mark_heat_not_delivered(self, since: float | None = None) -> None:
+        """While Versatile Thermostat's central boiler, which heats this thermostat, is off and
+        SmartPI's applied power is above 0, the room does not get that power: the causal power
+        trace marks the time (``central_boiler_off``), so the FF trim learns from no window that
+        overlaps it. The mark ends at the next committed power and is set again while this holds;
+        it starts at ``since`` when the heat is known to have ended earlier (a room on a relay)."""
+        if self._boiler_on is False and self._committed_on_percent > 0.0:
+            now = time.monotonic()
+            start = since if since is not None and since < now else now
+            self._causal_power_trace.mark_unobserved_power(start, "central_boiler_off")
+
+    def _end_heat_not_delivered(self, since: float | None = None) -> None:
+        """The boiler heats again, from ``since`` (its start) or now: the mark of the time
+        without its heat ends then, not at the next committed power, up to a cycle later. A mark
+        shorter than the learning pause's confirmation (``BOILER_PAUSE_CONFIRM_S``) is dropped:
+        a blink of the boiler, or the seconds a room's own start waits for it, as for the pause."""
+        now = time.monotonic()
+        end = since if since is not None and since < now else now
+        self._causal_power_trace.end_unobserved_power(end, "central_boiler_off", BOILER_PAUSE_CONFIRM_S)
+
     def relay_plan(self) -> tuple[float, float] | None:
         """The applied cycle in progress, as Versatile Thermostat's command receipts commit it:
         its start (monotonic time) and how long the device is on from it, the applied command
@@ -650,6 +671,10 @@ class SmartPI:
         known = on is not None and self._boiler_on is not None
         before = self._dead_time_power()
         self._boiler_on = on
+        if on is False:
+            self._mark_heat_not_delivered(ended_at)
+        else:
+            self._end_heat_not_delivered(since)
         after = self._dead_time_power()
         if not known:
             if on is not None and self._boiler_was_known:
@@ -1069,6 +1094,7 @@ class SmartPI:
                 ownership=ownership,
                 quality=trace_quality,
             )
+        self._mark_heat_not_delivered()
         self._update_deadtime_episode_status(linear_power, hvac_mode, now)
         if cycle_start:
             self._setpoint_changed_in_cycle = False
@@ -1082,6 +1108,7 @@ class SmartPI:
             e_eff=e_eff,
             elapsed_ratio=elapsed_ratio,
         )
+        self._mark_heat_not_delivered()
 
         # Cycle accepted -> Count it
         self._cycles_since_reset += 1

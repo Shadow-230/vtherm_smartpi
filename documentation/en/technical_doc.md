@@ -407,7 +407,8 @@ values (3.1).
 
 For such a thermostat, SmartPI therefore pauses its learning while the boiler
 is off (3.8.1), and its dead-time estimator sees the heat the boiler really
-gives, not the command (3.8.2 to 3.8.4). The regulation does not change
+gives, not the command (3.8.2 to 3.8.4). The regulation does not change, and
+the FF trim learns from no window in which the boiler withheld the heat
 (3.8.5).
 
 #### 3.8.1 The learning pause
@@ -633,6 +634,31 @@ off)"). The power the dead-time estimator sees and the age of the heating in
 progress are published as `analysis.deadtime.last_power` and
 `analysis.deadtime.active_elapsed_s` (diagnostics documentation).
 
+**The FF trim.** The slow feed-forward correction (`FFTrim`, 4.2) learns how much
+power the room needs to hold its temperature, from windows of at least 30
+minutes (5.4). It compares the applied power with how the temperature moves:
+a room that cools under a steady power needs more of it. The applied power is
+what Versatile Thermostat applied to the device (the valve's opening, the
+relay's cycle), not the heat the boiler gave. While the boiler is off, the
+room cools under that power, and the trim would read it as a room that needs
+more power for good, and heat it too much once the boiler is back. The trim
+has no learning pause of its own: neither the boiler's pause nor the user's
+stops it. So while the boiler that heats the thermostat is off and the applied
+power is above 0, SmartPI marks the time in the trim's power trace as power
+the room did not get (`central_boiler_off`), as it does for a valve whose
+position is not known (5.4). A trim window that overlaps that time is rejected
+(`causal_power_not_covered`). The rest of the trim, and the command, do not
+change.
+
+The mark follows the boiler's state as the dead-time estimator sees it (3.8.2,
+3.8.4): a relay's own off part is not marked, and a cut found late is marked
+from the room's last heat. It starts when the boiler goes off, or when the
+applied power rises above 0 with the boiler off, and ends at the boiler's
+start. A mark shorter than the pause's confirmation (`BOILER_PAUSE_CONFIRM_S`,
+59 s) is dropped: a blink of the boiler, or the seconds a room's own start
+waits for it, changes the heat little against a window of 30 minutes or more,
+as for the pause.
+
 #### 3.8.6 Sources
 
 - Learn only while the heating moves the temperature. An estimator assumes
@@ -659,6 +685,14 @@ progress are published as `analysis.deadtime.last_power` and
 - An adaptive controller must find out why the control changed before it
   retunes: poor tuning is only one cause (reference 5, §6.7, p. 262 and
   p. 269).
+- A feed-forward that learns needs a good model. Adaptation "has proven
+  particularly useful for feedforward control", because feedforward "requires
+  good models" (reference 5, §6.3, p. 233). An adaptive feed-forward is
+  identified from the measurement, the control signal and the disturbance
+  (reference 5, §6.6, p. 249, equation 6.7): it assumes, as any estimator, that
+  the measurement follows the control signal it sees (reference 4, §5,
+  p. 1175). The boiler's heat withheld breaks that assumption, so the FF trim
+  learns from no such window.
 - Confirm a change before acting on it. A detector of changes is judged by how
   fast it detects the real ones and how well it avoids false ones (reference 8,
   p. 561–562, on failure detectors in computer networks); the wait of 5 s for a
@@ -681,6 +715,10 @@ progress are published as `analysis.deadtime.last_power` and
 - A cut that starts in a relay's own off part loses its passive measurement when
   that measurement comes out shorter than the published one, or when there is no
   published one yet.
+- A boiler off for less than 59 s while the room calls does not stop the FF
+  trim's window; a longer time without heat rejects every window that
+  overlaps it. A room whose boiler is often off while it calls, for minutes at
+  a time, learns its trim more slowly.
 - After an outage of the boiler's state, no passive response is timed until a
   new heating has been counted, and no active one for the minimum time without
   heat.
@@ -1216,7 +1254,10 @@ opening commits nothing and opens an unobserved-power interval
 update, cycle start or cycle end). The trace keeps the last known power over
 that interval, so a trim window overlapping it is rejected
 (`causal_power_not_covered`); a short scheduler gap filled with the previous
-power (`legacy_gap_fill`) stays usable.
+power (`legacy_gap_fill`) stays usable. The same holds, with or without
+receipts, while the central boiler that heats the thermostat is off and the
+applied power is above 0 (`central_boiler_off`, 3.8.5): the power was applied,
+but the room did not get it.
 
 ### 5.5 Published diagnostics
 
@@ -1394,8 +1435,8 @@ The matrix drives the gain updates and thermal learning only. A regime transitio
 1. **Astrom K.J. and Hagglund T.**, work on PID regulation and FOPDT model usage.
 2. **Sundaresan K.R. and Krishnaswamy P.R.**, estimation of delay and time-constant parameters.
 3. **OLS** regression with Student t-test for slope validation.
-4. **Hagglund T. and Astrom K.J.**, Supervision of adaptive control algorithms, *Automatica* 36(8), 2000, 1171–1180: the learning pause and the heat the central boiler gives (3.8).
-5. **Astrom K.J. and Hagglund T.**, *PID Controllers: Theory, Design, and Tuning*, 2nd ed., Instrument Society of America, 1995: the minimum OFF duration after a reset and the passive response after a settled active period (3.6); the learning pause, an on/off actuator's pulse in each cycle and a fault of an actuator (3.8).
+4. **Hagglund T. and Astrom K.J.**, Supervision of adaptive control algorithms, *Automatica* 36(8), 2000, 1171–1180: the learning pause and the heat the central boiler gives, and the FF trim's windows while the boiler is off (3.8).
+5. **Astrom K.J. and Hagglund T.**, *PID Controllers: Theory, Design, and Tuning*, 2nd ed., Instrument Society of America, 1995: the minimum OFF duration after a reset and the passive response after a settled active period (3.6); the learning pause, an on/off actuator's pulse in each cycle, a fault of an actuator and the FF trim's windows while the boiler is off (3.8).
 6. **Skogestad S.**, Simple analytic rules for model reduction and PID controller tuning, *Journal of Process Control* 13, 2003, 291–309: learning pause while the central boiler is off (3.8).
 7. **Ren J., Su M., Zhao X., Liu J. and Song S.**, Experimental study on the dynamic thermal response of a radiant floor system in an office building, *E3S Web of Conferences* 246, 2021, 10003: the passive response after a settled active period (3.6).
 8. **Chen W., Toueg S. and Aguilera M.K.**, On the quality of service of failure detectors, *IEEE Transactions on Computers* 51(5), 2002, 561–579: the wait before a start of the central boiler counts (3.8).

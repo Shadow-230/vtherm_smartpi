@@ -349,7 +349,8 @@ ses valeurs par défaut (3.1).
 Pour un tel thermostat, SmartPI met donc son apprentissage en pause tant que la
 chaudière est arrêtée (3.8.1), et son estimateur du temps mort voit la chaleur
 que la chaudière donne réellement, et non la commande (3.8.2 à 3.8.4). La
-régulation ne change pas (3.8.5).
+régulation ne change pas, et le trim FF n'apprend d'aucune fenêtre où la
+chaudière a retenu la chaleur (3.8.5).
 
 #### 3.8.1 La pause d'apprentissage
 
@@ -604,6 +605,35 @@ que voit l'estimateur du temps mort et l'âge de la chauffe en cours sont publi�
 sous `analysis.deadtime.last_power` et `analysis.deadtime.active_elapsed_s`
 (documentation du diagnostic).
 
+**Le trim FF.** La correction lente de l'anticipation (`FFTrim`, 4.2) apprend
+quelle puissance la pièce demande pour tenir sa température, à partir de
+fenêtres d'au moins 30 minutes (5.4). Elle compare la puissance appliquée à
+l'évolution de la température : une pièce qui refroidit sous une puissance
+constante en demande davantage. La puissance appliquée est celle que Versatile
+Thermostat a appliquée à l'équipement (l'ouverture de la vanne, le cycle du
+relais), pas la chaleur donnée par la chaudière. Pendant que la chaudière est
+arrêtée, la pièce refroidit sous cette puissance : le trim y verrait une pièce
+qui demande plus de puissance pour de bon, et la chaufferait trop une fois la
+chaudière revenue. Le trim n'a pas de pause d'apprentissage propre : ni la
+pause de la chaudière ni celle de l'utilisateur ne l'arrêtent. Donc, pendant
+que la chaudière qui chauffe le thermostat est arrêtée et que la puissance
+appliquée est supérieure à 0, SmartPI marque ce temps dans la trace de
+puissance du trim comme une puissance que la pièce n'a pas reçue
+(`central_boiler_off`), comme il le fait pour une vanne dont la position n'est
+pas connue (5.4). Une fenêtre de trim qui chevauche ce temps est rejetée
+(`causal_power_not_covered`). Le reste du trim, et la commande, ne changent pas.
+
+La marque suit l'état de la chaudière tel que l'estimateur du temps mort le
+voit (3.8.2, 3.8.4) : la partie éteinte propre d'un relais n'est pas marquée,
+et une coupure trouvée en retard est marquée depuis la dernière chaleur de la
+pièce. Elle commence quand la chaudière s'arrête, ou quand la puissance
+appliquée passe au-dessus de 0 chaudière arrêtée, et finit au démarrage de la
+chaudière. Une marque plus courte que la confirmation de la pause
+(`BOILER_PAUSE_CONFIRM_S`, 59 s) est abandonnée : un clignotement de la
+chaudière, ou les secondes pendant lesquelles le démarrage propre d'une pièce
+l'attend, changent peu la chaleur face à une fenêtre de 30 minutes ou plus,
+comme pour la pause.
+
 #### 3.8.6 Sources
 
 - N'apprendre que lorsque le chauffage fait varier la température. Un
@@ -631,6 +661,14 @@ sous `analysis.deadtime.last_power` et `analysis.deadtime.active_elapsed_s`
 - Un régulateur adaptatif doit trouver pourquoi la régulation a changé avant de
   se réajuster : un mauvais réglage n'est qu'une cause parmi d'autres
   (référence 5, §6.7, p. 262 et p. 269).
+- Une anticipation qui apprend a besoin d'un bon modèle. L'adaptation « has
+  proven particularly useful for feedforward control », parce que
+  l'anticipation « requires good models » (référence 5, §6.3, p. 233). Une
+  anticipation adaptative est identifiée à partir de la mesure, du signal de
+  commande et de la perturbation (référence 5, §6.6, p. 249, équation 6.7) :
+  elle suppose, comme tout estimateur, que la mesure suit le signal de commande
+  qu'elle voit (référence 4, §5, p. 1175). La chaleur de la chaudière retenue
+  rompt cette hypothèse : le trim FF n'apprend d'aucune fenêtre de ce genre.
 - Confirmer un changement avant d'agir. Un détecteur de changements se juge à
   la rapidité avec laquelle il détecte les vrais et à la façon dont il évite les
   faux (référence 8, p. 561–562, sur les détecteurs de pannes dans les réseaux
@@ -655,6 +693,10 @@ sous `analysis.deadtime.last_power` et `analysis.deadtime.active_elapsed_s`
 - Une coupure qui commence dans la partie éteinte propre d'un relais perd sa
   mesure passive lorsque cette mesure sort plus courte que celle publiée, ou
   qu'aucune n'est encore publiée.
+- Une chaudière arrêtée moins de 59 s pendant que la pièce demande n'arrête pas
+  la fenêtre du trim FF ; un temps sans chaleur plus long rejette toute fenêtre
+  qui le chevauche. Une pièce dont la chaudière est souvent arrêtée pendant
+  qu'elle demande, des minutes durant, apprend son trim plus lentement.
 - Après une interruption de l'état de la chaudière, aucune réponse passive
   n'est mesurée avant qu'une nouvelle chauffe ait été comptée, ni aucune
   réponse active pendant la durée minimale sans chauffe.
@@ -1208,7 +1250,11 @@ jusqu’à la prochaine puissance observée (mise à jour de vanne, début ou fi
 cycle). La trace conserve la dernière puissance connue sur cet intervalle :
 une fenêtre de trim qui le chevauche est donc rejetée
 (`causal_power_not_covered`) ; un court trou du scheduler comblé par la
-puissance précédente (`legacy_gap_fill`) reste utilisable.
+puissance précédente (`legacy_gap_fill`) reste utilisable. Il en va de même,
+avec ou sans reçus, pendant que la chaudière centrale qui chauffe le thermostat
+est arrêtée et que la puissance appliquée est supérieure à 0
+(`central_boiler_off`, 3.8.5) : la puissance a été appliquée, mais la pièce ne
+l'a pas reçue.
 
 ### 5.5 Diagnostics publiés
 
@@ -1386,8 +1432,8 @@ La matrice pilote uniquement la mise à jour des gains et l'apprentissage thermi
 1. **Astrom K.J. et Hagglund T.**, travaux sur la régulation PID et l'usage de modèles FOPDT.
 2. **Sundaresan K.R. et Krishnaswamy P.R.**, estimation des paramètres de délai et de constante de temps.
 3. Régression **OLS** avec test t de Student pour la validation de pente.
-4. **Hagglund T. et Astrom K.J.**, Supervision of adaptive control algorithms, *Automatica* 36(8), 2000, 1171–1180 : la pause d'apprentissage et la chaleur que donne la chaudière centrale (3.8).
-5. **Astrom K.J. et Hagglund T.**, *PID Controllers: Theory, Design, and Tuning*, 2e éd., Instrument Society of America, 1995 : la durée minimale OFF après une réinitialisation et la réponse passive après une période active établie (3.6) ; la pause d'apprentissage, l'impulsion d'un actionneur marche/arrêt à chaque cycle et la panne d'un actionneur (3.8).
+4. **Hagglund T. et Astrom K.J.**, Supervision of adaptive control algorithms, *Automatica* 36(8), 2000, 1171–1180 : la pause d'apprentissage et la chaleur que donne la chaudière centrale, et les fenêtres du trim FF pendant que la chaudière est arrêtée (3.8).
+5. **Astrom K.J. et Hagglund T.**, *PID Controllers: Theory, Design, and Tuning*, 2e éd., Instrument Society of America, 1995 : la durée minimale OFF après une réinitialisation et la réponse passive après une période active établie (3.6) ; la pause d'apprentissage, l'impulsion d'un actionneur marche/arrêt à chaque cycle, la panne d'un actionneur et les fenêtres du trim FF pendant que la chaudière est arrêtée (3.8).
 6. **Skogestad S.**, Simple analytic rules for model reduction and PID controller tuning, *Journal of Process Control* 13, 2003, 291–309 : pause d'apprentissage pendant que la chaudière centrale est arrêtée (3.8).
 7. **Ren J., Su M., Zhao X., Liu J. et Song S.**, Experimental study on the dynamic thermal response of a radiant floor system in an office building, *E3S Web of Conferences* 246, 2021, 10003 : la réponse passive après une période active établie (3.6).
 8. **Chen W., Toueg S. et Aguilera M.K.**, On the quality of service of failure detectors, *IEEE Transactions on Computers* 51(5), 2002, 561–579 : l'attente avant qu'un démarrage de la chaudière centrale compte (3.8).
