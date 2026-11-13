@@ -529,9 +529,15 @@ def test_bp33_stops_east_inside_the_window_before_its_pause() -> None:
 
 
 def test_the_pack_s_pause_confirmation_is_smartpi_s() -> None:
-    from custom_components.vtherm_smartpi.boiler_call import BOILER_PAUSE_CONFIRM_S  # noqa: PLC0415
+    from steps import BLINK_S  # noqa: PLC0415
+
+    from custom_components.vtherm_smartpi.boiler_call import (  # noqa: PLC0415
+        BOILER_BLINK_S,
+        BOILER_PAUSE_CONFIRM_S,
+    )
 
     assert PAUSE_CONFIRM_S == BOILER_PAUSE_CONFIRM_S
+    assert BLINK_S == BOILER_BLINK_S
 
 
 def test_the_relay_role_and_its_scenarios() -> None:
@@ -551,9 +557,9 @@ def test_the_relay_role_and_its_scenarios() -> None:
     assert configuration.configuration(role)["smartpi_test_rooms"]["rooms"]["north"]["heater"] == "relay"
     assert RELAY_STATE == learned_state.RELAY == learned_state.relay_file().stem
     assert learned_state.model(north)["deadtime_s"] == 780.0
-    for sid in ("BP34", "BP35", "BP36"):
+    for sid in ("BP34", "BP35", "BP36", "BP37"):
         assert (SCENARIOS[sid].roles, SCENARIOS[sid].north) == (("boiler-relay",), 7.0), sid
-    others = [sid for sid, s in SCENARIOS.items() if "boiler-relay" in s.roles and sid not in ("BP0", "BP34", "BP35", "BP36")]
+    others = [sid for sid, s in SCENARIOS.items() if "boiler-relay" in s.roles and sid not in ("BP0", "BP34", "BP35", "BP36", "BP37")]
     assert not others, others
 
 
@@ -587,4 +593,5 @@ def test_the_relay_s_switching_and_the_boiler_s_off_parts_read_from_the_readings
     assert boiler_off_parts(seen, NORTH) == [12.0]
     assert switch_times(seen, NORTH) == ["off 10:00:03", "on 10:00:15"]
     assert LIVE["dt_power"] == "analysis.deadtime.last_power"
+    assert LIVE["dt_active"] == "analysis.deadtime.active_elapsed_s"
 

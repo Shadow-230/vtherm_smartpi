@@ -95,6 +95,12 @@ class SmartPIHandler:
         self._device_check_remove = None
         self._relay_heat: bool | None = None
         self._thermostat_listener_remove = None
+        # A relay: whether the room's heat flows (the relay and the boiler both on), and when it
+        # last stopped flowing; the check scheduled ``BOILER_BLINK_S`` into a cycle's on part.
+        self._heat_flowing: bool = False
+        self._heat_flowed_until: float | None = None
+        self._relay_heat_ended_at: float | None = None
+        self._plan_check_remove = None
         # The listener of Versatile Thermostat's central boiler state (``_listen_to_the_boiler``).
         self._boiler_listener_remove = None
         self._valve_linearization_configured: bool = False
@@ -258,6 +264,7 @@ class SmartPIHandler:
             self._thermostat_listener_remove = None
         self._cancel_the_boiler_check()
         self._cancel_the_device_check()
+        self._cancel_the_plan_check()
         clear_valve_config_issues(t)
 
     def _remove_receipt_callback(self) -> None:
@@ -582,7 +589,7 @@ class SmartPIHandler:
         t = self._thermostat
         counted = getattr(t, "is_used_by_central_boiler", False) is True
         calls = self._calls_for_boiler_heat(algo)
-        boiler_on = self._boiler_heats_the_room(central_boiler_on(t.hass) if counted else None, calls, now)
+        boiler_on = self._boiler_heats_the_room(algo, central_boiler_on(t.hass) if counted else None, calls, now)
         heat_changed = self._follow_the_boiler(algo, boiler_on, now)
         if not (calls and boiler_on is False):
             self._boiler_off_since = None
@@ -604,7 +611,7 @@ class SmartPIHandler:
         scheduler = getattr(self._thermostat, "cycle_scheduler", None)
         return scheduler is not None and getattr(scheduler, "is_valve_mode", None) is False
 
-    def _boiler_heats_the_room(self, boiler_on: bool | None, calls: bool, now: float) -> bool | None:
+    def _boiler_heats_the_room(self, algo: SmartPI, boiler_on: bool | None, calls: bool, now: float) -> bool | None:
         """The boiler's state as it heats the room: the state read, but for a thermostat on a
         relay while SmartPI calls.
 
@@ -616,18 +623,68 @@ class SmartPIHandler:
         while both are on; in between, the last state holds: in the relay's own off part, and
         while the boiler may still follow a relay just on. A heat cut stays cut while the boiler
         comes back in the relay's off part (for another room): the heat starts with the relay.
+
+        The off part is the relay's own only where SmartPI's applied cycle has it off
+        (``SmartPI.relay_plan``, from Versatile Thermostat's command receipts). A relay off where
+        the cycle has it on, ``BOILER_BLINK_S`` into its on part (unavailable, or a pulse
+        Versatile Thermostat left out), follows the boiler as read. A cut found after the room's
+        heat last flowed (both on) is dated from then (``SmartPI.set_boiler_state``, ``ended_at``).
         """
         device_on = self._track_the_device(now)
+        self._follow_the_heat(boiler_on is True and device_on, now)
         if boiler_on is None or not calls or not self._drives_a_relay():
             self._relay_heat = boiler_on
+            self._cancel_the_plan_check()
             return boiler_on
+        before = self._relay_heat
         if boiler_on and device_on:
             self._relay_heat = True
         elif not boiler_on and device_on and (self._device_held or now - (self._device_on_since or now) >= BOILER_BLINK_S):
             self._relay_heat = False
-        elif self._relay_heat is None:
+        elif (not device_on and self._relay_off_against_its_cycle(algo, now)) or self._relay_heat is None:
             self._relay_heat = boiler_on
+        if before is True and self._relay_heat is False and self._heat_flowed_until is not None and self._heat_flowed_until < now - 1.0:
+            self._relay_heat_ended_at = self._heat_flowed_until
         return self._relay_heat
+
+    def _follow_the_heat(self, flows: bool, now: float) -> None:
+        """Whether the room's heat flows (a relay on with the boiler on), and when it last did."""
+        if flows:
+            self._heat_flowing = True
+        elif self._heat_flowing:
+            self._heat_flowing, self._heat_flowed_until = False, now
+
+    def _relay_off_against_its_cycle(self, algo: SmartPI, now: float) -> bool:
+        """Whether the relay is off where SmartPI's applied cycle has it on, ``BOILER_BLINK_S``
+        into its on part and before its end; at the on part's start, the check is scheduled for
+        then (Versatile Thermostat reports a cycle's start just before it switches the relay)."""
+        plan = algo.relay_plan()
+        if plan is None:
+            return False
+        start, on_s = plan
+        if now < start + BOILER_BLINK_S < start + on_s - BOILER_BLINK_S:
+            self._schedule_the_plan_check(start + BOILER_BLINK_S - now)
+            return False
+        return start + BOILER_BLINK_S <= now < start + on_s - BOILER_BLINK_S
+
+    def _schedule_the_plan_check(self, delay: float) -> None:
+        """Check the relay again once its cycle's on part has run ``BOILER_BLINK_S``, while the
+        thermostat's changes are followed."""
+        self._cancel_the_plan_check()
+        if self._thermostat_listener_remove is None:
+            return
+
+        @callback
+        def _due(_now) -> None:
+            self._plan_check_remove = None
+            self._on_boiler_change(None)
+
+        self._plan_check_remove = async_call_later(self._thermostat.hass, max(0.0, delay), _due)
+
+    def _cancel_the_plan_check(self) -> None:
+        if self._plan_check_remove is not None:
+            self._plan_check_remove()
+            self._plan_check_remove = None
 
     def _track_the_device(self, now: float) -> bool:
         """Whether the thermostat's device is on (``is_device_active``), and since when; a check is
@@ -699,11 +756,13 @@ class SmartPIHandler:
         if seen is False:
             # A blink needs a stop the estimator saw: on, then off; not a state just read off.
             self._boiler_seen_off_at = now if followed is True else None
+        ended_at, self._relay_heat_ended_at = self._relay_heat_ended_at, None
         changed = algo.set_boiler_state(
             seen,
             current_temp=self._thermostat.current_temperature,
             since=self._boiler_read_since,
             blink=blink,
+            ended_at=ended_at if seen is False else None,
         )
         if changed:
             self._should_publish_intermediate = True

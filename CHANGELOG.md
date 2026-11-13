@@ -4,6 +4,25 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+- Learning pause and dead time, three gaps found on the bench (check of 8904a66):
+  - a relay's off part is its own only where SmartPI's applied cycle has the
+    relay off (from Versatile Thermostat's command receipts). A relay off where
+    its cycle has it on, 5 s into the on part (unavailable, or a pulse left
+    out), follows the boiler as read: with the boiler off, the heat stops and
+    learning pauses. Before, it held "heat" without end;
+  - a cut found only at the relay's next on part (the boiler went off during the
+    off part) is dated from the room's last heat, and its passive measurement,
+    which starts late, is kept only when it does not lower the published value
+    (outcome `ignored` otherwise, the author's 0.6.4 rule); without a published
+    value none is timed. Before, an hour's cycle gave 295 s for a room of 780 s;
+  - the boiler's state known again after an outage restarts the dead-time
+    estimator's observation, as a restart does: before, a stop after the outage
+    gave a false passive dead time of 0 s.
+
+  The diagnostics publish `analysis.deadtime.active_elapsed_s`, the age of the
+  active period in progress. See `documentation/en/technical_doc.md`, 3.8, and
+  `documentation/en/diagnostics.md`.
+
 - Learning pause and dead time: a room on a relay that alone keeps the central
   boiler on. Versatile Thermostat counts a relay for its boiler only while it is
   on, so the boiler went off in each off part of SmartPI's cycle: learning

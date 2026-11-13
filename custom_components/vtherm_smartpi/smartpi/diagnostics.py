@@ -672,6 +672,7 @@ def _build_analysis(algo: SmartPI, twin_diag: Dict[str, Any]) -> Dict[str, Any]:
             "state": algo.dt_est.state,
             "last_power": algo.dt_est.last_power,
             "waiting_elapsed_s": _round_optional(algo.dt_est.waiting_elapsed_s, 0),
+            "active_elapsed_s": _round_optional(algo.dt_est.active_elapsed_s, 0),
             "heat_last_outcome": algo.dt_est.last_outcome["heat"],
             "cool_last_outcome": algo.dt_est.last_outcome["cool"],
         },

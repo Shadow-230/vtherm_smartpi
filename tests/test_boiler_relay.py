@@ -78,15 +78,22 @@ class _Loop:
                 await result
 
     async def run(self, events: Iterable[tuple[float, str, object]], watch: Callable[[float, str], None] | None = None) -> None:
-        """Each event in time order: ("calc", command), ("relay", on) or ("boiler", on)."""
+        """Each event in time order: ("calc", command), ("cycle", (command, cycle in s): Versatile
+        Thermostat's receipt of a cycle's start), ("relay", on) or ("boiler", on)."""
         algo = self.handler._thermostat.prop_algorithm
-        for at, kind, value in sorted(events, key=lambda e: (e[0], {"calc": 0, "relay": 1, "boiler": 2}[e[1]])):
+        for at, kind, value in sorted(events, key=lambda e: (e[0], {"calc": 0, "cycle": 1, "relay": 2, "boiler": 3}[e[1]])):
             # The checks due before the event run first, on the state before it.
             if kind == "calc":
 
                 def act(v=value):
                     algo._committed_on_percent = v
                     return self.handler.control_heating(force=False)
+
+            elif kind == "cycle":
+
+                def act(v=value):
+                    algo._committed_on_percent, algo._cycle_min = v[0], v[1] / 60.0
+                    algo._current_cycle_start_monotonic = self.now
 
             elif kind == "relay":
 
@@ -131,10 +138,12 @@ def _relay_handler(scheduler: bool = True) -> SmartPIHandler:
 
 def _cycles(cycle_s: float, duty: float, start: float, end: float) -> list[tuple[float, str, object]]:
     """SmartPI's relay in cycles of ``cycle_s`` at ``duty`` from ``start`` to ``end``: on at each
-    cycle's start, off after ``duty`` of it; a calculation every minute at that command."""
+    cycle's start (just after Versatile Thermostat's receipt of it), off after ``duty`` of it; a
+    calculation every minute at that command."""
     events: list[tuple[float, str, object]] = []
     at = start
     while at < end:
+        events.append((at, "cycle", (duty, cycle_s)))
         events.append((at, "relay", True))
         if duty < 1.0:
             events.append((at + duty * cycle_s, "relay", False))
@@ -252,9 +261,10 @@ async def test_a_relay_whose_boiler_waits_for_its_activation_delay_starts_from_t
 
 
 async def test_a_relay_that_the_boiler_stops_following_is_cut_5_s_after_it_turns_on(caplog) -> None:
-    """The relay heats the room, the boiler following it, for 600 s; then the boiler stays off as
-    the relay turns on again (the threshold is no longer reached): the heat stops 5 s after the
-    relay's start, once Versatile Thermostat has had the time to start the boiler."""
+    """The relay heats the room, the boiler following it, for 480 s; then the boiler stays off as
+    the relay turns on again at 600 s (the threshold is no longer reached): the heat is cut 5 s
+    after the relay's start, once Versatile Thermostat has had the time to start the boiler, and
+    the stop counts from the end of the room's last heat, the relay's off at 480 s."""
     caplog.set_level(logging.INFO)
     handler = _relay_handler()
     est = handler._thermostat.prop_algorithm.dt_est
@@ -263,7 +273,7 @@ async def test_a_relay_that_the_boiler_stops_following_is_cut_5_s_after_it_turns
     boiler = [e for e in _following(relay) if e[0] < 600.0]
     await loop.run(relay + boiler)
 
-    assert est.last_stop_time == 600.0 + BOILER_BLINK_S and est.last_power == 0.0
+    assert est.last_stop_time == 480.0 and est.last_power == 0.0
     assert caplog.text.count("heat stopped with the central boiler") == 1
 
 
@@ -307,3 +317,124 @@ def test_only_a_relay_s_cycle_scheduler_out_of_valve_mode_is_a_relay() -> None:
     handler._thermostat.cycle_scheduler = None
     assert not handler._drives_a_relay()
     assert isinstance(handler._thermostat.prop_algorithm, SmartPI)
+
+
+# --- the relay's applied cycle, a cut found late, an outage of the boiler's state (check of 8904a66)
+
+
+def _cooling_after(end: float) -> Callable[[float], float]:
+    """The room flat until its passive response, the room's dead time after the heat's real end,
+    then cooling."""
+    return lambda at: 20.0 if at < end + DEAD else 20.0 - (at - end - DEAD) * 0.0005
+
+
+@pytest.mark.parametrize(("cycle_s", "duty", "followed"), [(300.0, 0.9, 4), (3600.0, 0.85, 2)], ids=["5-minute cycle", "60-minute cycle"])
+async def test_a_cut_found_after_the_relay_s_own_off_part_is_timed_late(cycle_s, duty, followed, caplog) -> None:
+    """The bench's review probe B (check of 8904a66): the boiler follows the relay, then stops
+    following it during an off part (another room stopped): the cut shows only at the relay's next
+    on part, 5 s in. The stop counts from the room's last heat, the relay's off; the passive
+    response armed then starts late, so it can only come out shorter: shorter than the published
+    780 s, it is ignored (0.6.4's rule), where it gave 295 s at an hour's cycle."""
+    caplog.set_level(logging.INFO)
+    handler = _relay_handler()
+    est = handler._thermostat.prop_algorithm.dt_est
+    real_end = (followed - 1) * cycle_s + duty * cycle_s
+    loop = _Loop(handler, _cooling_after(real_end))
+    relay = _cycles(cycle_s, duty, 0.0, real_end + 6000.0)
+    boiler = [e for e in _following(relay) if e[0] < real_end + 1.0]
+    await loop.run(relay + boiler)
+
+    assert est.last_stop_time == real_end
+    assert est.last_outcome["cool"] == "ignored" and list(est._history_cool) == [DEAD] * 6
+    assert "Cool Deadtime detected" not in caplog.text
+
+
+async def test_a_cut_found_late_without_a_published_passive_dead_time_times_none() -> None:
+    """As above, at an hour's cycle, but the room has no published passive dead time: a late
+    measurement has nothing to be judged against, so none is timed; the stop is recorded."""
+    handler = _relay_handler()
+    est = handler._thermostat.prop_algorithm.dt_est
+    est.deadtime_cool_s, est.deadtime_cool_reliable = None, False
+    est._history_cool.clear()
+    real_end = 3600.0 + 0.85 * 3600.0
+    seen: list[str] = []
+    loop = _Loop(handler, _cooling_after(real_end))
+    relay = _cycles(3600.0, 0.85, 0.0, real_end + 6000.0)
+    boiler = [e for e in _following(relay) if e[0] < real_end + 1.0]
+    await loop.run(relay + boiler, lambda _at, _kind: seen.append(est.state))
+
+    assert est.last_stop_time == real_end
+    assert "WAITING_COOL_RESPONSE" not in seen and not est._history_cool
+
+
+async def test_a_relay_off_where_its_cycle_has_it_on_follows_the_boiler(caplog) -> None:
+    """The bench's review probe C: the relay at 100 %, the boiler following it, becomes
+    unavailable at a cycle's start (Versatile Thermostat no longer counts it, the boiler goes
+    off). Its applied cycle has it on: 5 s into the on part the relay's off is no own off part, so
+    the boiler's state counts as read: the heat stops, from its last flow, and learning pauses."""
+    caplog.set_level(logging.INFO)
+    handler = _relay_handler()
+    algo = handler._thermostat.prop_algorithm
+    est = algo.dt_est
+    loop = _Loop(handler)
+    relay = [e for e in _cycles(300.0, 1.0, 0.0, 1500.0) if not (e[1] == "relay" and e[0] >= 600.0)]
+    boiler = [e for e in _following(relay) if e[0] < 600.0]
+    await loop.run(relay + boiler + [(600.0, "relay", False), (600.01, "boiler", False)])
+
+    assert est.last_stop_time == 600.0 and algo._dead_time_power() == 0.0
+    assert algo.boiler_learning_paused and "heat stopped with the central boiler" in caplog.text
+
+
+async def test_a_relay_that_switches_on_just_after_its_cycle_s_start_is_no_cut(caplog) -> None:
+    """Versatile Thermostat reports a cycle's start just before it switches the relay: a relay that
+    turns on 2 s into its on part, the boiler following it, is still the relay's own cycle."""
+    caplog.set_level(logging.INFO)
+    handler = _relay_handler()
+    est = handler._thermostat.prop_algorithm.dt_est
+    loop = _Loop(handler)
+    relay = [(at + 2.0, kind, value) if kind == "relay" and value else (at, kind, value) for at, kind, value in _cycles(300.0, 0.6, 0.0, 1500.0)]
+    await loop.run(relay + _following(relay))
+
+    assert est.last_stop_time == -10_000.0 and "heat stopped" not in caplog.text
+
+
+async def test_an_outage_of_the_boiler_s_state_restarts_the_estimator_s_observation(caplog) -> None:
+    """The bench's review probe D, a room with a valve: 300 s of heat with the boiler on; the
+    boiler's state unknown from 300 to 1500 s (the real boiler off meanwhile); back on at 1500 s;
+    the room's own stop at 1560 s. A response spanning the outage is not attributable: the
+    observation restarts as after a restart, so the stop arms no passive measurement (it gave
+    0.0 s), and the minimum time without heat counts from the boiler's return."""
+    caplog.set_level(logging.INFO)
+    handler = _relay_handler()
+    handler._thermostat.cycle_scheduler.is_valve_mode = True
+    algo = handler._thermostat.prop_algorithm
+    est = algo.dt_est
+    loop = _Loop(handler, lambda at: 20.0 if at < 1080 else 20.0 - (at - 1080) * 0.0005)
+    events = [(0.0, "boiler", True)] + [(t, "calc", 1.0) for t in range(0, 1560, 60)]
+    events += [(300.0, "boiler", None), (1500.0, "boiler", True), (1560.0, "calc", 0.0)]
+    events += [(t, "calc", 0.0) for t in range(1620, 4000, 60)]
+    states: list[str] = []
+    await loop.run(events, lambda at, _kind: states.append(est.state) if at >= 1560.0 else None)
+
+    assert "WAITING_COOL_RESPONSE" not in states and list(est._history_cool) == [DEAD] * 6
+    assert est.last_stop_time == 1560.0 and "dead-time observation restarted" in caplog.text
+
+
+def test_the_age_of_the_active_period_is_published() -> None:
+    """The diagnostics publish how long the active period in progress has lasted, from the last
+    power start the estimator saw (``analysis.deadtime.active_elapsed_s``)."""
+    from custom_components.vtherm_smartpi.smartpi.diagnostics import (
+        build_published_diagnostics,  # noqa: PLC0415
+    )
+
+    handler = _relay_handler()
+    algo = handler._thermostat.prop_algorithm
+    est = algo.dt_est
+    assert est.active_elapsed_s is None
+    est.update(100.0, 19.0, 1.0)
+    est.update(400.0, 19.0, 1.0)
+    assert est.active_elapsed_s == 300.0
+    est.update(500.0, 19.0, 0.0)
+    assert est.active_elapsed_s is None
+    assert "active_elapsed_s" in str(build_published_diagnostics(algo))
+
