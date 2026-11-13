@@ -391,7 +391,7 @@ The lag is learned on constant-power episodes, which the hysteresis bootstrap
 provides. In PWM regulation the duty cycle changes from cycle to cycle, so an
 installation already out of the bootstrap rarely provides one.
 
-### 3.8 Learning pause while the central boiler is off
+### 3.8 Central boiler: learning pause and the heat the boiler gives
 
 Versatile Thermostat's central boiler heats the rooms of the thermostats it
 counts only while it is on. Versatile Thermostat turns it on when the number of
@@ -405,10 +405,17 @@ dead time four times too long gives a gain about four times smaller and a much
 slower regulation. This matters most while SmartPI learns from its default
 values (3.1).
 
+For such a thermostat, SmartPI therefore pauses its learning while the boiler
+is off (3.8.1), and its dead-time estimator sees the heat the boiler really
+gives, not the command (3.8.2 to 3.8.4). The regulation does not change
+(3.8.5).
+
+#### 3.8.1 The learning pause
+
 Learning (the `a`/`b` windows (3.2), the response-lag measurement (3.7) and
-the dead-time detection (3.6), also during a calibration (4.6)) therefore
-pauses once all of these have held, without a break, for one period of
-SmartPI's calculation:
+the dead-time detection (3.6), also during a calibration (4.6)) pauses once
+all of these have held, without a break, for one period of SmartPI's
+calculation:
 
 - Versatile Thermostat counts the thermostat for its central boiler
   (`is_used_by_central_boiler`),
@@ -437,11 +444,13 @@ The pause only pauses learning; it does not wipe what the dead-time detection
 (3.6) knows. The estimator keeps the time the heating last stopped and its
 temperature history, and it keeps recording the temperature during the pause:
 the room gets no heat then, so this is time without heating. Nothing can arm
-while the boiler is off (below); as a safeguard, the pause's start still drops a
+while the boiler is off (3.8.2); as a safeguard, the pause's start still drops a
 heating detection waiting (outcome `aborted`). A detection of the passive
 response to the boiler's stop stays.
 
-**The heat the boiler gives.** For a thermostat the boiler counts, the dead-time
+#### 3.8.2 The heat the boiler gives
+
+For a thermostat the boiler counts, the dead-time
 estimator does not see SmartPI's command but the heat the boiler really gives:
 the command while the boiler is on, and no power while it is off
 (`SmartPI.set_boiler_state()`). The handler reads the boiler's state before each
@@ -456,10 +465,7 @@ This holds during a calibration (4.6) too. The calibration feeds the estimator
 its own command, and no power while the boiler is off; a change of the boiler
 reaches the estimator at once with the calibration's command. A calibration
 that starts while the boiler is off arms nothing, and its heating counts from
-the boiler's start, as any start (below). Before this, a calibration fed its
-command while the boiler was off, and a stop shortly after the boiler's start
-looked like the end of a settled heating: the test bench measured a false
-passive dead time of 25.7 s.
+the boiler's start, as any start (below).
 
 A state that becomes known, or unknown, is neither a stop nor a start: the
 estimator sees the power at its next feed, by its own rules. Two cases are
@@ -470,8 +476,9 @@ handled at once:
   Assistant, a response spanning the outage is not attributable: the
   estimator's observation restarts at the power it sees then (a detection in
   progress is dropped, and so is its temperature history), and its minimum
-  time without heat counts from then. No passive response is timed until a
-  new heating has been counted. This is logged ("SmartPI central boiler state
+  time without heat counts from then: an estimation that starts again begins
+  from current values (reference 4, §8, p. 1178). No passive response is timed
+  until a new heating has been counted. This is logged ("SmartPI central boiler state
   known again: dead-time observation restarted").
 - **The first reading off, while the estimator saw power** (it got SmartPI's
   command before the state could be read). The heat stopped at a moment that
@@ -513,9 +520,12 @@ The cases:
   moment, seen by the calculation that commits the command (in the first
   phase, the same calculation).
 
-**Blinks of the boiler.** Versatile Thermostat can switch its boiler off and on
-again within milliseconds, as it counts the devices again (26 to 30 ms at a
-stop on the test bench). A stop counts at once, as above. A start counts once
+#### 3.8.3 Blinks of the boiler
+
+Versatile Thermostat can switch its boiler off and on again within
+milliseconds, as it counts the devices again: 26 to 30 ms at a stop, measured
+on a test installation (Home Assistant with Versatile Thermostat 10.6 and
+simulated rooms). A stop counts at once, as above. A start counts once
 the boiler has run `BOILER_BLINK_S` (5 s) without a break: the handler checks it
 then, or at the next calculation, and dates the start from the boiler's start
 (not before the estimator's last temperature sample). So:
@@ -533,11 +543,13 @@ then, or at the next calculation, and dates the start from the boiler's start
 
 5 s is two orders of magnitude longer than the blinks seen, a twelfth of the
 estimator's time step (SmartPI's calculation, 60 s), and under 1 % of a room's
-dead time (600 to 1200 s on the test bench). The value is chosen by this
+dead time (600 to 1200 s for the rooms of that installation). The value is chosen by this
 reasoning, not taken from a publication. A longer wait would let fewer false
 changes through but see the real ones later.
 
-**A room on a relay.** SmartPI drives a switch in cycles: at a command of 60 %
+#### 3.8.4 A room on a relay
+
+SmartPI drives a switch in cycles: at a command of 60 %
 the relay is on for 60 % of each cycle and off for the rest. Versatile
 Thermostat counts a switch for its boiler only while it is on. So when the relay
 alone keeps the boiler on, the boiler goes off in each off part of the cycle and
@@ -562,6 +574,20 @@ Thermostat's cycle scheduler, not in valve mode), while SmartPI calls:
   cycle, and the estimator sees no stop and no start in it; a cut from outside
   holds through the relay's on and off parts, without flickering.
 
+```mermaid
+stateDiagram-v2
+    direction LR
+    state "heat" as heat
+    state "no heat (cut)" as cut
+    heat --> cut: boiler off, relay on for 5 s
+    heat --> cut: boiler off, relay off in the on part of its cycle
+    cut --> heat: boiler and relay both on
+```
+
+The diagram shows the room's heat, for the dead-time estimator and the learning
+pause, while SmartPI calls: any other change keeps the state. The second path
+to a cut is explained in the next paragraph.
+
 The off part is the relay's own only where SmartPI's applied cycle has the relay
 off. SmartPI knows that cycle from Versatile Thermostat's receipts of each
 command: the cycle's start, and how long the relay is on from it, the applied
@@ -572,21 +598,21 @@ whose width follows the controller's output (reference 5, §3.4, p. 78, equation
 (Versatile Thermostat reports a cycle's start just before it switches the relay)
 to 5 s before its end, is not in its own off part: it is unavailable, or it did
 not switch. Its boiler is then followed as read, as for a valve: with the boiler
-off, the heat stops and learning pauses. An actuator that does not do what the
-controller computes is a reason to interrupt the adaptation (reference 4, §7,
-p. 1178).
+off, the heat stops and learning pauses. Learning assumes that the changes of
+the temperature are caused by the command (reference 4, §5, p. 1175). A relay
+that does not switch breaks this, like any fault of an actuator, which should be
+found before a controller is tuned (reference 5, §6.7, p. 262 and p. 269).
 
 A cut found only at the relay's next on part started earlier: the boiler went
 off during the off part (another room stopped), and the room's last heat ended
 with the relay's last on part, both on. The stop is dated from then, so the
 minimum time without heat counts from the real end of the heat. The passive
 response armed at the cut starts late, so it can only come out shorter than it
-is. As the author's estimator does for a start on weak evidence (3.6), it is
-kept only when it does not lower the published passive dead time; it is ignored
-otherwise (outcome `ignored`). Without a published passive dead time there is
-nothing to judge it against, and none is timed. In an hour's cycle the off part
-lasts up to tens of minutes: on the test bench's review probe, a measurement
-timed from the cut gave 295 s for a room of 780 s.
+is. As for a start on weak evidence (3.6), it is kept only when it does not
+lower the published passive dead time; it is ignored otherwise (outcome
+`ignored`). Without a published passive dead time there is nothing to judge it
+against, and none is timed. In an hour's cycle the off part lasts up to tens of
+minutes, so a measurement timed from the cut could come out far too short.
 
 When SmartPI does not call, the boiler's state is followed as read, so a new call
 with the boiler off waits for it as any start. A valve is not concerned: it is
@@ -595,15 +621,19 @@ only once it reports its opening, seconds after the call, so a valve's start
 must count from the boiler's. Nor is a thermostat without a cycle scheduler (a
 climate underlying).
 
+#### 3.8.5 Regulation and diagnostics
+
 The pause and the boiler's state change nothing but learning. Unlike the user's pause, the pause does not
 restart the regulation's heating episode: the dead-time window in which the
 controller holds its integral counts from the start of the heating, and the
 command and the integral are the same as without the pause. The pause is shown
 as `learning.boiler_paused` in the diagnostics, published at once when it
 changes, and each change is logged ("SmartPI learning paused (central boiler
-off)").
+off)"). The power the dead-time estimator sees and the age of the heating in
+progress are published as `analysis.deadtime.last_power` and
+`analysis.deadtime.active_elapsed_s` (diagnostics documentation).
 
-Sources:
+#### 3.8.6 Sources
 
 - Learn only while the heating moves the temperature. An estimator assumes
   that the change of the output is caused by the control signal. When another
@@ -622,10 +652,10 @@ Sources:
   it slow. A closed-loop time constant equal to the dead time is a good
   compromise between speed and robustness (reference 6, p. 296); with three
   to four dead times, SmartPI is already on the gentle side.
-- After a pause, start from fresh data. For a saturated signal, the
-  estimation is interrupted and "kept off for a while" afterwards (reference 4,
-  §7, p. 1178); when it starts again, its signals "should be initialized by
-  actual values" (§8, p. 1178).
+- After a pause, start from fresh data. When the measured signal saturates,
+  the estimation is interrupted and "kept off for a while" afterwards
+  (reference 4, §7, p. 1178); when it starts again, its signals "should be
+  initialized by actual values" (§8, p. 1178).
 - An adaptive controller must find out why the control changed before it
   retunes: poor tuning is only one cause (reference 5, §6.7, p. 262 and
   p. 269).
@@ -634,7 +664,7 @@ Sources:
   p. 561–562, on failure detectors in computer networks); the wait of 5 s for a
   start of the boiler is such a choice.
 
-Limits:
+#### 3.8.7 Limits
 
 - SmartPI follows Versatile Thermostat's command to the boiler, not the burner:
   a boiler that does not fire for another reason (a fault, hot water) is not
@@ -1010,6 +1040,7 @@ Before and during each phase the manager checks, with the thermal twin, that the
 | `algo.py`                 | `SmartPI`        | algorithm facade, full orchestration                                     |
 | `handler.py`              | `SmartPIHandler` | Home Assistant bridge: periodic timer, services, attributes              |
 | `state_store.py`          | `SmartPIStateStore` | Home Assistant `Store` persistence of the algorithm state             |
+| `boiler_call.py`          | —                | Versatile Thermostat's central boiler state, for the learning pause and the dead-time estimator (3.8) |
 
 ### 5.2 `smartpi/` modules effectively used
 
@@ -1270,6 +1301,8 @@ acceptance or rejection without changing the learning decision.
 | `AB_SETTLE_K_ACTIVE`           | `3`    |
 | `AB_SETTLE_K_PASSIVE`          | `3`    |
 | `AB_SETTLE_ACTIVE_CAP_FRAC`    | `0.5`  |
+| `BOILER_PAUSE_CONFIRM_S`       | `SMARTPI_RECALC_INTERVAL_SEC` − 1 (`59`) |
+| `BOILER_BLINK_S`               | `5`    |
 
 ### 6.2 Regulation
 
@@ -1361,8 +1394,8 @@ The matrix drives the gain updates and thermal learning only. A regime transitio
 1. **Astrom K.J. and Hagglund T.**, work on PID regulation and FOPDT model usage.
 2. **Sundaresan K.R. and Krishnaswamy P.R.**, estimation of delay and time-constant parameters.
 3. **OLS** regression with Student t-test for slope validation.
-4. **Hagglund T. and Astrom K.J.**, Supervision of adaptive control algorithms, *Automatica* 36(8), 2000, 1171–1180: learning pause while the central boiler is off (3.8).
-5. **Astrom K.J. and Hagglund T.**, *PID Controllers: Theory, Design, and Tuning*, 2nd ed., Instrument Society of America, 1995: the minimum OFF duration after a reset and the passive response after a settled active period (3.6); learning pause while the central boiler is off, and an on/off actuator's pulse in each cycle (3.8).
+4. **Hagglund T. and Astrom K.J.**, Supervision of adaptive control algorithms, *Automatica* 36(8), 2000, 1171–1180: the learning pause and the heat the central boiler gives (3.8).
+5. **Astrom K.J. and Hagglund T.**, *PID Controllers: Theory, Design, and Tuning*, 2nd ed., Instrument Society of America, 1995: the minimum OFF duration after a reset and the passive response after a settled active period (3.6); the learning pause, an on/off actuator's pulse in each cycle and a fault of an actuator (3.8).
 6. **Skogestad S.**, Simple analytic rules for model reduction and PID controller tuning, *Journal of Process Control* 13, 2003, 291–309: learning pause while the central boiler is off (3.8).
 7. **Ren J., Su M., Zhao X., Liu J. and Song S.**, Experimental study on the dynamic thermal response of a radiant floor system in an office building, *E3S Web of Conferences* 246, 2021, 10003: the passive response after a settled active period (3.6).
 8. **Chen W., Toueg S. and Aguilera M.K.**, On the quality of service of failure detectors, *IEEE Transactions on Computers* 51(5), 2002, 561–579: the wait before a start of the central boiler counts (3.8).

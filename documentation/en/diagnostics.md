@@ -72,7 +72,7 @@ available, `twin`.
 | Field | Meaning |
 |---|---|
 | `state` | Detector state (`WAITING_HEAT_RESPONSE`, `WAITING_COOL_RESPONSE`, `HEATING`, `COOLING`, `OFF`) |
-| `last_power` | Last power seen by the detector |
+| `last_power` | Last power seen by the detector; for a thermostat that Versatile Thermostat's central boiler counts, 0 while the boiler is off ([technical documentation, 3.8](technical_doc.md#38-central-boiler-learning-pause-and-the-heat-the-boiler-gives)) |
 | `waiting_elapsed_s` | Age of the response being waited for in seconds, `null` when no detection is armed |
 | `active_elapsed_s` | Age of the active period in progress in seconds, from the last power start the detector saw; `null` while the power is off or before a start |
 | `heat_last_outcome` / `cool_last_outcome` | Outcome of the last wait for a rising / falling response: `detected`, `timeout`, `aborted` (power transition before a detection), `rejected` (the temperature already moved in the direction of the response before the power start, too steeply or too irregularly to measure it), `ignored` (a measurement shorter than the published dead time, dropped because the temperature was already moving in the direction of the response before the start or the window before the start was too short to tell, or, for a room on a relay, because the measurement started late, after a cut found only at the relay's next on part), `null` before the first one |
