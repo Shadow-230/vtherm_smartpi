@@ -199,6 +199,13 @@ LIVE = {
     "a": "model.a",
     "b": "model.b",
     "indoor": "temperature.indoor",
+    # The slow feed-forward correction (FF trim): its output, why it is frozen ("none" when not),
+    # its last applied change, and why its stationary and periodic windows were last rejected.
+    "trim": "analysis.feedforward.u_ff2",
+    "trim_freeze": "analysis.feedforward.ff2_freeze_reason",
+    "trim_transaction": "feedforward.fftrim.last_transaction",
+    "trim_stationary": "feedforward.fftrim.stationary.last_reject_reason",
+    "trim_periodic": "feedforward.fftrim.periodic.last_reject_reason",
 }
 
 

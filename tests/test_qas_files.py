@@ -92,6 +92,30 @@ def test_the_settled_variant_is_up_to_date_and_publishes_west_s_response_lag() -
     assert SETTLED_HEAT_S >= lag.active_settle_s + 5 * RECALC_S
 
 
+def test_the_trusted_variant_lets_west_s_ff_trim_learn() -> None:
+    """``west_trim``: West's learned model trusted for the feed-forward, as after a long learning:
+    its time constant reliable, its A/B confidence good and its feed-forward's warm-up over, so the
+    FF trim is unfrozen once its freeze after the restore (three cycles) has passed (BP39). The
+    other learned states leave the trim frozen (``ab_ab_bad``, check of 785a4c7)."""
+    from custom_components.vtherm_smartpi.smartpi.const import ABConfidenceState  # noqa: PLC0415
+    from scenarios import TRIM_CUT_S, TRIM_STATE, TRIM_WINDOW_S  # noqa: PLC0415
+
+    path = learned_state.trim_file()
+    assert TRIM_STATE == learned_state.TRIM == path.stem
+    assert path.read_text(encoding="utf-8") == learned_state.text(room("West"), trusted=True), "run python tests/qas/learned_state.py"
+
+    def frozen_after(state_path) -> str:
+        smartpi = SmartPI(hass=MagicMock(), cycle_min=5, minimal_activation_delay=0, minimal_deactivation_delay=0, name="QAS")
+        smartpi.load_state(json.loads(state_path.read_text(encoding="utf-8")))
+        for _ in range(5):
+            smartpi.calculate(target_temp=19.5, current_temp=19.5, ext_current_temp=3.0, slope=0.0, hvac_mode=VThermHvacMode_HEAT)
+        return smartpi._ab_confidence.state, smartpi._ff_trim.freeze_reason
+
+    assert frozen_after(path) == (ABConfidenceState.AB_OK, "none")
+    assert frozen_after(learned_state.file(room("West")))[0] == ABConfidenceState.AB_BAD
+    assert TRIM_CUT_S >= TRIM_WINDOW_S + 2 * 780.0
+
+
 @pytest.mark.parametrize(("room", "path"), learned_state.loaded(), ids=lambda v: getattr(v, "stem", ""))
 def test_each_learned_state_loads_as_its_room_s_model(room, path) -> None:
     """Loaded into SmartPI, the state gives the room's a and b, its dead times reliable, and SmartPI
@@ -543,7 +567,7 @@ def test_the_pack_s_pause_confirmation_is_smartpi_s() -> None:
 def test_the_relay_role_and_its_scenarios() -> None:
     """boiler-relay: North a water radiator behind a relay (a switch), counted by the central boiler
     with a threshold of one device, so that North alone keeps it on; North's learned state is its
-    room's model; BP34, BP35 and BP36 run on it alone, North not calling at the start, and every
+    room's model; BP34 to BP38 run on it alone, North not calling at the start, and every
     other scenario on another role but BP0."""
     from pack import RELAY_NORTH  # noqa: PLC0415
     from scenarios import RELAY_STATE  # noqa: PLC0415
@@ -557,9 +581,9 @@ def test_the_relay_role_and_its_scenarios() -> None:
     assert configuration.configuration(role)["smartpi_test_rooms"]["rooms"]["north"]["heater"] == "relay"
     assert RELAY_STATE == learned_state.RELAY == learned_state.relay_file().stem
     assert learned_state.model(north)["deadtime_s"] == 780.0
-    for sid in ("BP34", "BP35", "BP36", "BP37"):
+    for sid in ("BP34", "BP35", "BP36", "BP37", "BP38"):
         assert (SCENARIOS[sid].roles, SCENARIOS[sid].north) == (("boiler-relay",), 7.0), sid
-    others = [sid for sid, s in SCENARIOS.items() if "boiler-relay" in s.roles and sid not in ("BP0", "BP34", "BP35", "BP36", "BP37")]
+    others = [sid for sid, s in SCENARIOS.items() if "boiler-relay" in s.roles and sid not in ("BP0", "BP34", "BP35", "BP36", "BP37", "BP38")]
     assert not others, others
 
 

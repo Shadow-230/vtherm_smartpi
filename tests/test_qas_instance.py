@@ -439,3 +439,84 @@ async def test_the_pause_on_the_levels_of_power(hass: HomeAssistant, freezer: An
     assert hass.states.get(boiler).state == "off"
     await _run_for(hass, freezer, 3 * 60)
     assert paused(WEST) is True and paused(EAST) is False
+
+
+@pytest.mark.parametrize("expected_lingering_timers", [True])
+async def test_a_valve_room_heated_in_a_relay_room_s_cycle_measures_its_dead_time(hass: HomeAssistant, freezer: Any, caplog: pytest.LogCaptureFixture) -> None:
+    """As BP38 on the bench: boiler-relay, North (relay) learned and modulating alone, then the
+    threshold at 2 and East (valve, fresh, at rest) calling at 100 %: the boiler heats East only in
+    North's on parts and goes off in its short off parts while East waits for its response. East's
+    heat is held through them (no stop line, no pause), and its heating dead time is measured
+    (Astrom and Hagglund 1995, 2.4: a step from rest, timed from its onset)."""
+    caplog.set_level(logging.INFO)
+    await _prepare(hass, ROLES["boiler-relay"])
+    registry = er.async_get(hass)
+    boiler = registry.async_get_entity_id("binary_sensor", VT, "central_boiler_state")
+    await hass.services.async_call(HELPER_DOMAIN, "load_learned_state", {"entity_id": NORTH, "state": "north_relay"}, blocking=True)
+    await _targets(hass, **{WEST: 7.0, EAST: 7.0, NORTH: 7.0})
+    await _run_for(hass, freezer, 10 * 60)
+    room_c = float(hass.states.get(f"sensor.{ROOMS_DOMAIN}_north_temperature").state)
+    await _targets(hass, **{NORTH: round(room_c + 2.0, 1)})
+    for _ in range(int(90 * 60 / 7)):
+        await _run_for(hass, freezer, 7.0)
+        if 0 < _live(hass, NORTH)["power"]["current_cycle_percent"] < 100:
+            break
+    assert 0 < _live(hass, NORTH)["power"]["current_cycle_percent"] < 100
+    await hass.services.async_call("number", "set_value", {"entity_id": registry.async_get_entity_id("number", VT, COUNT_THRESHOLD_UID), "value": 2}, blocking=True)
+    await _targets(hass, **{EAST: 23.0})
+    caplog.clear()
+
+    off_parts, off_since, waited, paused, outcome = [], None, 0.0, False, None
+    while waited < 60 * 60:
+        await _run_for(hass, freezer, 2.0, 2.0)
+        waited += 2.0
+        deadtime = _live(hass, EAST)["analysis"]["deadtime"]
+        state = hass.states.get(boiler).state
+        if state == "off" and off_since is None and deadtime["state"] == "WAITING_HEAT_RESPONSE":
+            off_since = waited
+        elif state == "on" and off_since is not None:
+            off_parts.append(waited - off_since)
+            off_since = None
+        paused = paused or _live(hass, EAST)["learning"]["boiler_paused"]
+        outcome = deadtime["heat_last_outcome"]
+        if waited > 120 and deadtime["state"] != "WAITING_HEAT_RESPONSE" and outcome is not None:
+            break
+
+    assert off_parts and max(off_parts) < 59.0, off_parts
+    assert not paused
+    assert not any("East - SmartPI heat stopped" in r.getMessage() for r in caplog.records)
+    assert outcome == "detected"
+    assert _live(hass, EAST)["model"]["deadtime_heat_s"] >= 60.0
+
+
+@pytest.mark.parametrize("expected_lingering_timers", [True])
+async def test_the_ff_trim_is_not_changed_by_a_long_stop_of_the_boiler(hass: HomeAssistant, freezer: Any) -> None:
+    """As BP39 on the bench: boiler-count, West learned with ``west_trim`` (its FF trim unfrozen)
+    holding its room's temperature while East calls, then East stops and the boiler stays off for
+    56 minutes while West calls: West pauses, and its trim is neither changed nor given a new
+    correction (Hagglund and Astrom 2000, 5: adapt only while the measurement follows the control
+    signal)."""
+    await _prepare(hass, ROLES["boiler-count"])
+    boiler = er.async_get(hass).async_get_entity_id("binary_sensor", VT, "central_boiler_state")
+    await hass.services.async_call(HELPER_DOMAIN, "load_learned_state", {"entity_id": WEST, "state": "west_trim"}, blocking=True)
+    await hass.async_block_till_done()
+    hold = float(hass.states.get(f"sensor.{ROOMS_DOMAIN}_west_temperature").state)
+    await _targets(hass, **{WEST: hold, EAST: 23.0, NORTH: 7.0})
+    for _ in range(int(40 * 60 / 30)):
+        await _run_for(hass, freezer, 30.0)
+        if _live(hass, WEST)["analysis"]["feedforward"]["ff2_freeze_reason"] == "none" and hass.states.get(boiler).state == "on":
+            break
+
+    def trim() -> tuple[Any, Any]:
+        live = _live(hass, WEST)
+        return live["analysis"]["feedforward"]["u_ff2"], live["feedforward"]["fftrim"]["last_transaction"]
+
+    assert _live(hass, WEST)["analysis"]["feedforward"]["ff2_freeze_reason"] == "none"
+    before = trim()
+    await _targets(hass, **{EAST: 7.0})
+    for _ in range(int(56 * 60 / 30)):
+        await _run_for(hass, freezer, 30.0)
+        assert hass.states.get(boiler).state == "off"
+        assert _live(hass, WEST)["power"]["current_cycle_percent"] > 0
+        assert trim() == before
+    assert _live(hass, WEST)["learning"]["boiler_paused"] is True
