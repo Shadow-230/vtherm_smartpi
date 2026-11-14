@@ -502,16 +502,26 @@ async def test_the_ff_trim_is_not_changed_by_a_long_stop_of_the_boiler(hass: Hom
     await hass.async_block_till_done()
     hold = float(hass.states.get(f"sensor.{ROOMS_DOMAIN}_west_temperature").state)
     await _targets(hass, **{WEST: hold, EAST: 23.0, NORTH: 7.0})
-    for _ in range(int(40 * 60 / 30)):
-        await _run_for(hass, freezer, 30.0)
-        if _live(hass, WEST)["analysis"]["feedforward"]["ff2_freeze_reason"] == "none" and hass.states.get(boiler).state == "on":
+    def unfrozen() -> bool:
+        live = _live(hass, WEST)
+        windows = live["feedforward"]["fftrim"]
+        return (
+            hass.states.get(boiler).state == "on"
+            and live["analysis"]["feedforward"]["ff2_freeze_reason"] == "none"
+            and not any(str(windows[w]["last_reject_reason"]).startswith("frozen") for w in ("stationary", "periodic"))
+        )
+
+    await _run_for(hass, freezer, 15 * 60, 30.0)  # the trim's freeze after the restore: three cycles
+    for _ in range(int(30 * 60 / 30)):
+        if unfrozen():
             break
+        await _run_for(hass, freezer, 30.0)
+    assert unfrozen()
 
     def trim() -> tuple[Any, Any]:
         live = _live(hass, WEST)
         return live["analysis"]["feedforward"]["u_ff2"], live["feedforward"]["fftrim"]["last_transaction"]
 
-    assert _live(hass, WEST)["analysis"]["feedforward"]["ff2_freeze_reason"] == "none"
     before = trim()
     await _targets(hass, **{EAST: 7.0})
     for _ in range(int(56 * 60 / 30)):

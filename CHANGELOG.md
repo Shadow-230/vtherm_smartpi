@@ -21,7 +21,9 @@ All notable changes to this project will be documented in this file.
   when the room's own call turns it on; a new call while the boiler is off arms
   nothing. A start counts once the boiler has run 5 s; a boiler back within 5 s
   of its stop is a blink and starts nothing (logged "SmartPI heat back with the
-  central boiler after a blink (no new start)"). The boiler's state known again
+  central boiler after a blink (no new start)"), only for a room whose heat
+  flowed at the stop: for a room that starts calling in the blink, or in the
+  5 s after it, the boiler's return is its start. The boiler's state known again
   after an outage restarts the estimator's observation, as a restart does.
 - Dead time, a room on a relay that alone keeps the boiler on: the relay's own
   off part is no cut of heat. The boiler cuts the heat only once the relay has

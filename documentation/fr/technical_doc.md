@@ -529,10 +529,16 @@ moment, ou au calcul suivant, et date le démarrage du démarrage de la chaudiè
   nouveau démarrage, la période de chauffe continue donc (3.6), et la détection
   passive armée lors du court arrêt se termine par `aborted`. C'est journalisé
   (« SmartPI heat back with the central boiler after a blink (no new start) »).
-  Un clignotement suppose un arrêt que l'estimateur a vu, d'allumée à arrêtée :
-  la chaudière lue arrêtée pour la première fois, après un redémarrage de Home
-  Assistant ou une fois son état lisible, n'est pas un arrêt, et son démarrage
-  dans les 5 s est un démarrage ;
+  Un clignotement suppose un arrêt que l'estimateur a vu, d'allumée à arrêtée,
+  pendant que la chaleur de la pièce passait (l'estimateur voyait une
+  puissance) : la chaudière lue arrêtée pour la première fois, après un
+  redémarrage de Home Assistant ou une fois son état lisible, n'est pas un
+  arrêt, et son démarrage dans les 5 s est un démarrage ; et pour une pièce dont
+  la chaleur ne passait pas à l'arrêt de la chaudière (elle ne demandait pas
+  encore, la chaudière chauffait d'autres pièces), le retour de la chaudière est
+  le début de sa chaleur, un démarrage, aussi lorsque la pièce commence à
+  demander pendant le clignotement ou dans les 5 s qui suivent : un temps mort
+  compte depuis le début de l'échelon (référence 5, §2.4, p. 16) ;
 - un démarrage de moins de 5 s n'est pas vu.
 
 5 s est deux ordres de grandeur plus long que les clignotements observés, un
@@ -726,6 +732,9 @@ comme pour la pause.
   avant le dernier échantillon de température de l'estimateur : lorsqu'un
   calcul a échantillonné la température dans les 5 s avant que le démarrage
   soit vu, le démarrage compte depuis cet échantillon, au plus 5 s en retard.
+- Une pièce qui commence à demander dans les 5 s après le démarrage de la
+  chaudière compte son démarrage depuis celui de la chaudière, jusqu'à 5 s avant
+  sa demande.
 - Une pièce sur vanne reçoit moins de chaleur pendant que sa chaudière est
   arrêtée moins de 59 s, ce que l'estimateur ne voit pas. Des arrêts de plus de
   59 s à chaque cycle du relais d'une autre pièce arrêtent toujours la chaleur

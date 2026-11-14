@@ -447,3 +447,38 @@ def test_the_age_of_the_active_period_is_published() -> None:
     assert est.active_elapsed_s is None
     assert "active_elapsed_s" in str(build_published_diagnostics(algo))
 
+
+
+async def test_a_relay_room_that_starts_calling_in_a_blink_of_the_boiler_records_its_start(caplog) -> None:
+    """The boiler, heating another room, goes off for 8 ms while the relay room starts calling: its
+    heat had not flowed, so the boiler's return starts it, and its start is recorded (no "after a
+    blink" line for it)."""
+    caplog.set_level(logging.INFO)
+    handler = _relay_handler()
+    algo = handler._thermostat.prop_algorithm
+    est = algo.dt_est
+    loop = _Loop(handler)
+    events = [(0.0, "boiler", True), (60.0, "calc", 0.0), (100.0, "boiler", False)]
+    events += [(100.002, "cycle", (1.0, 300.0)), (100.002, "relay", True), (100.002, "calc", 1.0), (100.008, "boiler", True), (160.0, "calc", 1.0)]
+
+    await loop.run(events)
+
+    assert est.state == "WAITING_HEAT_RESPONSE" and est.last_start_time == pytest.approx(100.008)
+    assert "after a blink" not in caplog.text
+
+
+async def test_a_relay_room_heating_through_a_blink_of_the_boiler_goes_on_heating(caplog) -> None:
+    """The relay room heats, in the on part of its cycle, and the boiler goes off for 8 ms (a
+    threshold raised, North in the bench's BP38): its heat flowed, so the boiler's return is a
+    blink, logged, with no new start; the heating period goes on."""
+    caplog.set_level(logging.INFO)
+    handler = _relay_handler()
+    algo = handler._thermostat.prop_algorithm
+    est = algo.dt_est
+    loop = _Loop(handler)
+    relay = _cycles(600.0, 1.0, 0.0, 600.0)
+
+    await loop.run(relay + _following(relay) + [(300.0, "boiler", False), (300.008, "boiler", True), (360.0, "calc", 1.0)])
+
+    assert est.last_start_time == pytest.approx(FOLLOW_S) and algo._dead_time_power() == 1.0
+    assert "SmartPI heat back with the central boiler after a blink" in caplog.text
