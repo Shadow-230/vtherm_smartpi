@@ -570,9 +570,14 @@ then, or at the next calculation, and dates the start from the boiler's start
   SmartPI's command again without a new start, so the heating period goes on
   (3.6), and the passive detection armed at the short stop ends `aborted`. This
   is logged ("SmartPI heat back with the central boiler after a blink (no new
-  start)"). A blink needs a stop the estimator saw, from on to off: the boiler
-  read off for the first time, after a restart of Home Assistant or once its
-  state can be read, is no stop, so its start within 5 s is a start;
+  start)"). A blink needs a stop the estimator saw, from on to off, while the
+  room's heat flowed (the estimator saw power): the boiler read off for the
+  first time, after a restart of Home Assistant or once its state can be read,
+  is no stop, so its start within 5 s is a start; and for a room whose heat did
+  not flow at the boiler's stop (it did not call yet, the boiler heated other
+  rooms), the boiler's return is the onset of its heat, a start, also when the
+  room starts calling in the blink or in the 5 s after it: a dead time counts
+  from the onset of the step (reference 5, §2.4, p. 16);
 - a start shorter than 5 s is not seen.
 
 5 s is two orders of magnitude longer than the blinks seen, a twelfth of the
@@ -745,6 +750,8 @@ as for the pause.
   estimator's last temperature sample: when a calculation sampled the
   temperature in the 5 s before the start is seen, the start counts from that
   sample, at most 5 s late.
+- A room that starts calling within 5 s of the boiler's start counts its start
+  from the boiler's start, up to 5 s before its call.
 - A room on a valve gets less heat while its boiler is off for less than 59 s,
   which the estimator does not see. Stops longer than 59 s in every cycle of
   another room's relay still stop the room's heat each time, and such a room

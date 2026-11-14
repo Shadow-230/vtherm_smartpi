@@ -743,3 +743,39 @@ async def test_the_hold_is_checked_59_s_after_the_boiler_s_stop() -> None:
     assert (algo.dt_est.last_stop_time, algo.boiler_on, algo.boiler_learning_paused) == (STOP, False, True)
     # The FF trim's trace marks the time without heat from the boiler's stop too.
     mark.assert_any_call(STOP, "central_boiler_off")
+
+
+async def _idle_with_the_boiler_on(handler: SmartPIHandler) -> SmartPI:
+    """The room without heat for long, not calling, while the boiler heats another room: the
+    estimator follows the boiler on, at no power."""
+    _without_heat(handler)
+    for at in range(100, 1001, 60):
+        algo = await _step(handler, float(at), True, 0.0, temp=T0)
+    assert algo.boiler_on is True and algo.dt_est.last_power == 0.0
+    return algo
+
+
+@pytest.mark.parametrize("call_at", [1030.002, 1032.0], ids=["in the blink", "2 s after the boiler's return"])
+async def test_a_room_that_starts_calling_around_a_blink_of_the_boiler_records_its_start(call_at, caplog) -> None:
+    """The boiler, heating another room, goes off for 8 ms (a threshold raised, the bench's BP38),
+    and the room starts calling in that blink or within 5 s of the boiler's return. Its heat had
+    not flowed, so this is no blink for it: the boiler's return is the onset of its heat, from
+    which a dead time counts (Astrom and Hagglund 1995, 2.4, p. 16). Its start is recorded and its
+    heating detection arms; no "after a blink" line for it."""
+    caplog.set_level(logging.INFO)
+    handler = _handler()
+    algo = await _idle_with_the_boiler_on(handler)
+    est = algo.dt_est
+    _boiler(handler, False, 1030.0)
+    back = 1030.008
+    if call_at < back:
+        await _step(handler, call_at, False, 1.0, temp=T0)
+        _boiler(handler, True, back)
+    else:
+        _boiler(handler, True, back)
+        await _step(handler, call_at, True, 1.0, temp=T0)
+    _boiler(handler, True, back + BOILER_BLINK_S)
+
+    # Dated from the boiler's start (3.8.2); a call within its first 5 s counts from it too, at most 5 s early.
+    assert est.state == "WAITING_HEAT_RESPONSE" and est.last_start_time == pytest.approx(back)
+    assert "after a blink" not in caplog.text

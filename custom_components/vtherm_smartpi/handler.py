@@ -791,7 +791,8 @@ class SmartPIHandler:
         A stop counts at once. A start counts once the boiler has run ``BOILER_BLINK_S`` without a
         break, checked then while the boiler's changes are followed, or at the next calculation;
         it is fed from the boiler's start. A boiler back within ``BOILER_BLINK_S`` of a stop the
-        estimator saw (on, then off) blinked: the room's heat did not stop. A first reading off,
+        estimator saw (on, then off) while the room's heat flowed blinked: the room's heat did not
+        stop. For a room whose heat did not flow, its return is a start. A first reading off,
         after a restart or once the state can be read, is no such stop. A state that becomes
         known or unknown counts at once.
         """
@@ -818,9 +819,12 @@ class SmartPIHandler:
         ended_at, self._relay_heat_ended_at = self._relay_heat_ended_at, None
         stopped_at, self._valve_stopped_at = self._valve_stopped_at, None
         if seen is False:
-            # A blink needs a stop the estimator saw: on, then off; not a state just read off. A
+            # A blink needs a stop the estimator saw: on, then off, while the room's heat flowed
+            # (the estimator saw power); not a state just read off, nor the stop of a boiler that
+            # heated other rooms only: for this room its return is the onset of its heat. A
             # valve's stop held as heat counts from the boiler's stop, not from its confirmation.
-            self._boiler_seen_off_at = (stopped_at if stopped_at is not None else now) if followed is True else None
+            heat_flowed = followed is True and algo._dead_time_power() > 0.01
+            self._boiler_seen_off_at = (stopped_at if stopped_at is not None else now) if heat_flowed else None
         changed = algo.set_boiler_state(
             seen,
             current_temp=self._thermostat.current_temperature,

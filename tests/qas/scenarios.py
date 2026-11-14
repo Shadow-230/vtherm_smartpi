@@ -1738,7 +1738,7 @@ def off_parts_while(seen: Sequence[dict[str, Any]], climate: str, state: str | N
     north=STOPPED,
 )
 async def BP38(b: Bench) -> None:
-    """North learned (a water radiator behind a relay), East fresh, settled (its learning reset at least 600 s before, its room 0.1 degC below its highest reading since) → North calls 2 degC above its room alone (threshold 1) until SmartPI modulates it with off parts under 59 s; then VTherm's threshold raised to 2 devices and East calls at 100 %, so the boiler heats East only in North's on parts → the role shows the case: the boiler goes off in North's off parts while East waits for its response, each off part under 59 s (at least one, or the run decides nothing); East's heat is held through them: no "East - SmartPI heat stopped with the central boiler" line, no pause, its active period never starts again; East's heating detection ends detected, with a dead time of at least 60 s, recorded against the room's true 780 s; the threshold is back to 1."""
+    """North learned (a water radiator behind a relay), East fresh, settled (its learning reset at least 600 s before, its room 0.1 degC below its highest reading since) → North calls 2 degC above its room alone (threshold 1) until SmartPI modulates it with off parts under 59 s; then VTherm's threshold raised to 2 devices and East calls at 100 %, so the boiler heats East only in North's on parts (raising the threshold stops the boiler for milliseconds, and East's call comes in that blink) → the role shows the case: East's start is recorded (its active period published, no "East - SmartPI heat back with the central boiler after a blink" line: its heat had not flowed); the boiler goes off in North's off parts while East waits for its response, each off part under 59 s (at least one, or the run decides nothing); East's heat is held through them: no "heat stopped" line and no pause of East but 59 s after a longer off part, its active period never starts again; East's heating detection ends detected, with a dead time of at least 60 s, recorded against the room's true 780 s; the threshold is back to 1."""
     await north_learned(b)
     room_c = of(await b.snapshot(), NORTH, "indoor")
     if not isinstance(room_c, (int, float)):
@@ -1759,6 +1759,13 @@ async def BP38(b: Bench) -> None:
         b.note("— VTherm's threshold 2 devices; East calls at 100 %")
         await b.calls_at(EAST, CALLING)
         called = time.time()
+        took, snap = await b.until(lambda s: isinstance(of(s, EAST, "dt_active"), (int, float)), BLINK_S + MARGIN_S, 1.0)
+        blinks = [line for line in await asyncio.to_thread(instance_log, BLINK_LINE, datetime.fromtimestamp(called - CLOCK_MARGIN_S, UTC)) if f"] {NAMES[EAST]} - " in line]
+        b.check(
+            took is not None and not blinks,
+            f"East's start recorded: active period {of(snap, EAST, 'dt_active')} s, estimator {of(snap, EAST, 'dt_state')}; "
+            f"{len(blinks)} \"East ... after a blink\" lines (its heat had not flowed)",
+        )
         seen = [await b.snapshot()]
 
         def ended(s: dict[str, Any]) -> bool:
@@ -1776,7 +1783,10 @@ async def BP38(b: Bench) -> None:
         since = datetime.fromtimestamp(called - CLOCK_MARGIN_S, UTC)
         stops = [at for at, _ in logged_heat_stops(await asyncio.to_thread(instance_log, HEAT_STOP_LINE, since), NAMES[EAST]) if at >= called]
         pauses = [at for at, paused in logged_pauses(await asyncio.to_thread(instance_log, BOILER_PAUSE_LINE, since), NAMES[EAST]) if paused and at >= called]
-        b.check(not stops and not pauses, f"East's heat held through the short off parts: {len(stops)} \"heat stopped\" lines, {len(pauses)} pause lines after its start")
+        # A longer off part (North's command fallen) gives East a stop and a pause 59 s after it, as designed.
+        longer = [start for start, length in all_parts if length >= PAUSE_CONFIRM_S]
+        unheld = [clock({"t": at}) for at in stops + pauses if not any(abs(at - start - PAUSE_CONFIRM_S) <= AT_ONCE_S for start in longer)]
+        b.check(not unheld, f"East's heat held through the off parts under {PAUSE_CONFIRM_S:.0f} s: {len(stops)} \"heat stopped\" and {len(pauses)} pause lines, none but 59 s after a longer off part ({', '.join(unheld[:3]) or 'none'})")
         active = [of(s, EAST, "dt_active") for s in seen if of(s, EAST, "dt_state") == WAITING_HEAT and isinstance(of(s, EAST, "dt_active"), (int, float))]
         fell = [f"{a:.0f}→{c:.0f}" for a, c in pairwise(active) if c < a]
         b.check(not fell, f"East's active period never starts again while it waits ({', '.join(fell[:3]) or 'never'})")
@@ -1812,13 +1822,14 @@ TRIM_CUT_S = TRIM_WINDOW_S + 2 * DEADTIME_TRUE_S  # the boiler off: a window, pl
 @scenario(
     "BP39",
     ("boiler-count",),
-    lambda role: total(PUBLISHED, boiler_starts(role), TRIM_UNFROZEN, Wait(TRIM_CUT_S, TRIM_CUT_S)),
+    lambda role: total(PUBLISHED, boiler_starts(role), longest(BOILER_RUNS, TRIM_UNFROZEN), Wait(TRIM_CUT_S, TRIM_CUT_S)),
     PAUSE_TESTS + ", test_boiler_ff_trim.py",
     depends="when the trim's freeze after the state's restore ends",
 )
 async def BP39(b: Bench) -> None:
-    """West learned with its model trusted for the feed-forward (its FF trim learns), its setpoint its room's temperature, and East calling, so the boiler heats → East stops: the boiler goes off while West calls, for 56 minutes (the trim's shortest window, 30 minutes, plus twice West's dead time) → West's trim is unfrozen before the stop; through the stop West pauses and its trim does not change: no new applied correction and the same output (the reasons its windows were rejected are recorded; the mark of the boiler's stop is checked by test_boiler_ff_trim.py)."""
+    """West learned with its model trusted for the feed-forward (its FF trim learns), its setpoint its room's temperature, and East calling, so the boiler heats, for a calculation period at least, until the trim's freeze after the state's restore (three cycles) has ended and its windows collect again → East stops: the boiler goes off while West calls, for 56 minutes (the trim's shortest window, 30 minutes, plus twice West's dead time) → West's trim is unfrozen before the stop; through the stop West pauses and its trim does not change: no new applied correction and the same output (the reasons its windows were rejected are recorded; the mark of the boiler's stop is checked by test_boiler_ff_trim.py)."""
     await b.load(WEST, TRIM_STATE)
+    loaded = time.time()
     snap = await b.snapshot()
     hold_c = of(snap, WEST, "indoor")
     if not isinstance(hold_c, (int, float)):
@@ -1827,8 +1838,28 @@ async def BP39(b: Bench) -> None:
     b.note(f"— West holds {hold_c:g} degC, East calls")
     await b.setpoints(**{WEST: hold_c})
     await b.calls_at(EAST, CALLING)
-    took, snap = await b.until(lambda s: s["boiler"] == "on" and of(s, WEST, "trim_freeze") == "none", TRIM_UNFROZEN.maximum_s + MARGIN_S, 10.0)
-    b.check(took is not None, f"the boiler on and West's FF trim unfrozen: boiler {snap['boiler']}, freeze {of(snap, WEST, 'trim_freeze')}")
+    took, snap = await b.until(lambda s: s["boiler"] == "on", boiler_starts(b.role).maximum_s)
+    b.check(took is not None, f"the boiler on for West and East: {snap['boiler']}")
+    if took is None:
+        return
+    await boiler_runs(b)
+
+    def unfrozen(s: dict[str, Any]) -> bool:
+        # The trim's own freeze after a restore shows in its windows' rejections, not in the
+        # freeze reason (check of 387d79f): read after the restore's three cycles, the boiler on.
+        return (
+            s["t"] - loaded >= TRIM_UNFROZEN.typical_s
+            and s["boiler"] == "on"
+            and of(s, WEST, "trim_freeze") == "none"
+            and not any(str(of(s, WEST, key)).startswith("frozen") for key in ("trim_stationary", "trim_periodic"))
+        )
+
+    took, snap = await b.until(unfrozen, TRIM_UNFROZEN.maximum_s + MARGIN_S, 10.0)
+    b.check(
+        took is not None,
+        f"the boiler on and West's FF trim unfrozen: boiler {snap['boiler']}, freeze {of(snap, WEST, 'trim_freeze')}, "
+        f"windows {of(snap, WEST, 'trim_stationary')} / {of(snap, WEST, 'trim_periodic')}",
+    )
     if took is None:
         return
     before = {name: of(snap, WEST, name) for name in ("trim", "trim_transaction")}
