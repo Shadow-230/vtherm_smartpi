@@ -13,7 +13,11 @@ that each is up to date and loads into SmartPI as its room's learned model.
 One variant, ``west_settled.json``, has West's response lag published as well (its mean residence
 time, the radiator's delay plus its lag, from three agreeing estimates) and heating periods of two
 hours: SmartPI's settling time of a heating is then three lags (BP29). Another, ``north_relay.json``,
-is North of the role boiler-relay, a radiator behind a relay (BP34, BP35).
+is North of the role boiler-relay, a radiator behind a relay (BP34, BP35). A third,
+``west_trim.json``, is West with its model trusted for the feed-forward as after a long learning:
+the history of its loss estimates (``b_hat_hist``) holds its loss, so SmartPI's time constant is
+reliable and its A/B confidence good, and its feed-forward's warm-up is over, so the slow
+feed-forward correction (FF trim) learns (BP39).
 """
 
 from __future__ import annotations
@@ -38,6 +42,7 @@ LEARNING_START = "2026-01-01T00:00:00"
 
 SETTLED = "west_settled"  # West with its response lag published (BP29)
 RELAY = "north_relay"  # North of boiler-relay, a radiator behind a relay (BP34, BP35)
+TRIM = "west_trim"  # West with its model trusted for the feed-forward (BP39)
 SETTLED_HEATING_S = 2 * 3600.0  # its heating periods: half their median is longer than three lags
 LAG_UNCERTAINTY_S = 10.0  # each estimate's standard deviation
 
@@ -54,6 +59,10 @@ def relay_file() -> pathlib.Path:
     return STATES / f"{RELAY}.json"
 
 
+def trim_file() -> pathlib.Path:
+    return STATES / f"{TRIM}.json"
+
+
 def loaded() -> list[tuple[Room, pathlib.Path]]:
     """Each room's learned model and its file, as the helper loads it."""
     return [(r, file(r)) for r in ROOMS] + [(RELAY_NORTH, relay_file())]
@@ -68,9 +77,10 @@ def model(r: Room) -> dict[str, float]:
     return {"a": r.gain, "b": r.loss, "deadtime_s": 60.0 * (r.delay_min + r.lag_min)}
 
 
-def state(r: Room, settled: bool = False) -> dict[str, Any]:
+def state(r: Room, settled: bool = False, trusted: bool = False) -> dict[str, Any]:
     """SmartPI's saved state with the room's model learned; ``settled``: its response lag
-    published too."""
+    published too; ``trusted``: its model trusted for the feed-forward (its loss estimates' history
+    full, the feed-forward's warm-up over)."""
     from custom_components.vtherm_smartpi.algo import SmartPI  # noqa: PLC0415
     from custom_components.vtherm_smartpi.smartpi.const import AB_HISTORY_SIZE  # noqa: PLC0415
 
@@ -89,6 +99,9 @@ def state(r: Room, settled: bool = False) -> dict[str, Any]:
         setattr(dt_est, f"deadtime_{channel}_s", values["deadtime_s"])
         setattr(dt_est, f"deadtime_{channel}_reliable", True)
         getattr(dt_est, f"_history_{channel}").extend([values["deadtime_s"]] * 6)
+    if trusted:
+        est._b_hat_hist.extend([values["b"]] * est._b_hat_hist.maxlen)
+        algo._cycles_since_reset = algo.ff_warmup_cycles
     if settled:
         algo.learn_win.response_lag.load_state(
             {
@@ -105,13 +118,16 @@ def state(r: Room, settled: bool = False) -> dict[str, Any]:
     return saved
 
 
-def text(r: Room, settled: bool = False) -> str:
-    return json.dumps(state(r, settled), indent=1, sort_keys=True) + "\n"
+def text(r: Room, settled: bool = False, trusted: bool = False) -> str:
+    return json.dumps(state(r, settled, trusted), indent=1, sort_keys=True) + "\n"
 
 
 def files() -> list[tuple[pathlib.Path, str]]:
     """Every file and the text it must hold."""
-    return [(path, text(r)) for r, path in loaded()] + [(settled_file(), text(room("West"), settled=True))]
+    return [(path, text(r)) for r, path in loaded()] + [
+        (settled_file(), text(room("West"), settled=True)),
+        (trim_file(), text(room("West"), trusted=True)),
+    ]
 
 
 def main(argv: list[str]) -> int:
@@ -127,6 +143,8 @@ def main(argv: list[str]) -> int:
         print(f"{path.name}: {model(r)}")
     settled_file().write_text(text(room("West"), settled=True), encoding="utf-8")
     print(f"{settled_file().name}: {model(room('West'))}, response lag {lag_s(room('West')):.0f} s")
+    trim_file().write_text(text(room("West"), trusted=True), encoding="utf-8")
+    print(f"{trim_file().name}: {model(room('West'))}, trusted for the feed-forward")
     return 0
 
 
