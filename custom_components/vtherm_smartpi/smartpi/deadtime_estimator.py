@@ -18,6 +18,7 @@ from ..hvac_mode import (
 from .const import (
     DEADTIME_ACTIVE_TIMEOUT_S,
     DEADTIME_PASSIVE_TIMEOUT_S,
+    DEADTIME_RAW_CONFIRM_S,
     TIN_HISTORY_MAX_SAMPLES,
     TIN_HISTORY_RETENTION_MIN,
 )
@@ -77,6 +78,22 @@ class DeadTimeEstimator:
         # active response is waited for; 0.0 for a passive response or a room
         # without a trend in the direction of the response.
         self._trend_slope: float = 0.0
+        # The raw reading last confirmed (DEADTIME_RAW_CONFIRM_S), and a step from
+        # it not confirmed yet: (reading, since when). A step that comes back is
+        # a quantisation toggle, ignored by the tracking.
+        self._raw_confirmed: float | None = None
+        self._raw_pending: tuple[float, float] | None = None
+        # The direction of the last confirmed move (+1, -1, 0) and when it was confirmed.
+        self._raw_direction: int = 0
+        self._raw_confirmed_at: float | None = None
+        # While a step is not confirmed, and after a toggle until the filtered temperature
+        # is back: the filtered temperature before the step, and the step's direction. The
+        # tracking does not follow the filtered temperature past it (_tracked).
+        self._toggle_hold: tuple[float, int] | None = None
+        self._last_tin: float | None = None
+        # The confirmed raw reading when the wait in progress was armed while a step was not
+        # confirmed yet; None otherwise (_rebase_after_confirmed_step).
+        self._armed_on_step: float | None = None
         # The armed active response follows a temperature already moving in
         # the direction of the response, or a window too short to evaluate
         # its trend: weak evidence, which never shortens the published value.
@@ -152,6 +169,13 @@ class DeadTimeEstimator:
         self._near_extreme_time = None
         self._trend_slope = 0.0
         self._weak_evidence = False
+        self._raw_confirmed = None
+        self._raw_pending = None
+        self._raw_direction = 0
+        self._raw_confirmed_at = None
+        self._toggle_hold = None
+        self._last_tin = None
+        self._armed_on_step = None
         self.last_outcome = {"heat": None, "cool": None}
         self._history_heat.clear()
         self._history_cool.clear()
@@ -172,8 +196,62 @@ class DeadTimeEstimator:
         self._near_extreme_time = None
         self._trend_slope = 0.0
         self._weak_evidence = False
+        self._raw_confirmed = None
+        self._raw_pending = None
+        self._raw_direction = 0
+        self._raw_confirmed_at = None
+        self._toggle_hold = None
+        self._last_tin = None
+        self._armed_on_step = None
         self._tin_history.clear()
         self._tin_lp_history.clear()
+
+    def _confirm_raw(self, now: float, reading: float) -> None:
+        if self._raw_confirmed is not None and abs(reading - self._raw_confirmed) >= 1e-6:
+            self._raw_direction = 1 if reading > self._raw_confirmed else -1
+        self._raw_confirmed, self._raw_confirmed_at, self._raw_pending = reading, now, None
+        self._toggle_hold = None
+
+    def _tracked(self, tin: float, raw_step: int) -> float:
+        """The filtered temperature the trough/peak tracking follows: held at its value before
+        a step not confirmed yet, and after a toggle until it is back there, so that the
+        filter's rise and fall with a toggle is not taken for the room's."""
+        if raw_step != 0 and self._toggle_hold is None and self._last_tin is not None:
+            self._toggle_hold = (self._last_tin, raw_step)
+        if self._toggle_hold is None:
+            return tin
+        hold, direction = self._toggle_hold
+        if raw_step == 0 and (tin - hold) * direction <= 0.005:
+            self._toggle_hold = None  # the filter is back: the toggle is over
+            return tin
+        return min(tin, hold) if direction > 0 else max(tin, hold)
+
+    def _raw_step(self, now: float, tin_raw: float | None) -> int:
+        """Follow the raw reading's steps: +1 while a rise from the confirmed reading is not
+        confirmed yet, -1 for a fall, 0 otherwise. A step is confirmed once held
+        DEADTIME_RAW_CONFIRM_S, or by a second step the same way, or at once when it goes on
+        with a move confirmed less than DEADTIME_RAW_CONFIRM_S before (the room moves faster
+        than a step per two calculations). A reading back at the confirmed one was a toggle."""
+        if tin_raw is not None:
+            if self._raw_confirmed is None:
+                self._confirm_raw(now, tin_raw)
+            elif abs(tin_raw - self._raw_confirmed) < 1e-6:
+                self._raw_pending = None
+            else:
+                step = 1 if tin_raw > self._raw_confirmed else -1
+                recent = self._raw_confirmed_at is not None and now - self._raw_confirmed_at < DEADTIME_RAW_CONFIRM_S
+                pending = self._raw_pending
+                if step == self._raw_direction and recent:
+                    self._confirm_raw(now, tin_raw)
+                elif pending is not None and (pending[0] - self._raw_confirmed) * step > 0 and abs(tin_raw - self._raw_confirmed) > abs(pending[0] - self._raw_confirmed):
+                    self._confirm_raw(now, tin_raw)  # a second step the same way: a real move
+                elif pending is None or abs(tin_raw - pending[0]) >= 1e-6:
+                    self._raw_pending = (tin_raw, now)
+        if self._raw_pending is not None and now - self._raw_pending[1] >= DEADTIME_RAW_CONFIRM_S:
+            self._confirm_raw(now, self._raw_pending[0])
+        if self._raw_pending is None:
+            return 0
+        return 1 if self._raw_pending[0] > self._raw_confirmed else -1
 
     @property
     def waiting_elapsed_s(self) -> float | None:
@@ -280,6 +358,7 @@ class DeadTimeEstimator:
             self._weak_evidence = trend.toward_response or trend.window_too_short
         self._waiting_power_on = power_on
         self._near_extreme_time = now
+        self._armed_on_step = self._raw_confirmed if self._raw_pending is not None else None
         if response == "cool":
             self.cool_start_time = now
             self.cool_peak_temp = tin
@@ -295,6 +374,30 @@ class DeadTimeEstimator:
             tin,
             self._trend_slope * 3600.0,
         )
+
+    def _rebase_after_confirmed_step(self, response: str, start: float) -> None:
+        """A wait armed while a raw step was not confirmed starts from the filtered temperature
+        before the step (_tracked). If the step comes back, it was a toggle and that level stays.
+        If it is confirmed, the room moved before the start: the trough or peak is taken again
+        from the filtered temperature since the start, as without the confirmation, so that
+        this move is not taken for the response."""
+        if self._armed_on_step is None:
+            return
+        if self._raw_pending is not None and abs(self._raw_confirmed - self._armed_on_step) < 1e-6:
+            return  # not confirmed yet
+        confirmed = abs(self._raw_confirmed - self._armed_on_step) >= 1e-6
+        self._armed_on_step = None
+        if not confirmed:
+            return
+        levels = [(ts, self._detrended(ts, value, start)) for ts, value in self._tin_lp_history if ts >= start]
+        if not levels:
+            return
+        if response == "cool":
+            self.cool_peak_temp = max(value for _, value in levels)
+            self._near_extreme_time = max(ts for ts, value in levels if value >= self.cool_peak_temp - 0.01)
+        else:
+            self.heat_trough_temp = min(value for _, value in levels)
+            self._near_extreme_time = max(ts for ts, value in levels if value <= self.heat_trough_temp + 0.01)
 
     def _detrended(self, ts: float, value: float, start: float) -> float:
         """Return the temperature minus the extrapolated free-running trend."""
@@ -340,6 +443,9 @@ class DeadTimeEstimator:
 
         self._append_history(self._tin_history, now, tin if tin_raw is None else tin_raw)
         self._append_history(self._tin_lp_history, now, tin)
+        raw_step = self._raw_step(now, tin_raw)
+        tin_track = self._tracked(tin, raw_step)
+        self._last_tin = tin
 
         # --- Power Transition Detection ---
 
@@ -372,7 +478,7 @@ class DeadTimeEstimator:
                 self._start_response(
                     response=active_response,
                     now=now,
-                    tin=tin,
+                    tin=tin_track,
                     power_on=True,
                     off_since=self._free_running_since(hvac_mode),
                 )
@@ -415,7 +521,7 @@ class DeadTimeEstimator:
                 self._start_response(
                     response=passive_response,
                     now=now,
-                    tin=tin,
+                    tin=tin_track,
                     power_on=False,
                 )
 
@@ -456,13 +562,16 @@ class DeadTimeEstimator:
                     _LOGGER.debug("DeadTime: Heat Timeout (%.0fs)", elapsed)
                 else:
                     start = self.heat_start_time
-                    level = self._detrended(now, tin, start)
-                    if level < self.heat_trough_temp:
+                    self._rebase_after_confirmed_step("heat", start)
+                    level = self._detrended(now, tin_track, start)
+                    # An unconfirmed fall does not lower the trough, an unconfirmed rise is
+                    # no response yet (_raw_step).
+                    if level < self.heat_trough_temp and raw_step >= 0:
                         self.heat_trough_temp = level
                     if level <= self.heat_trough_temp + 0.01:
                         self._near_extreme_time = now
                     delta = level - self.heat_trough_temp
-                    if delta >= self.detection_threshold:
+                    if delta >= self.detection_threshold and raw_step <= 0:
                         # 3.A Look back for inflection point
                         inflection_time = self._near_extreme_time or now
                         for t_hist, v_hist in reversed(self._tin_lp_history):
@@ -501,16 +610,17 @@ class DeadTimeEstimator:
                     _LOGGER.debug("DeadTime: Cool Timeout (%.0fs)", elapsed)
                 else:
                     start = self.cool_start_time
-                    level = self._detrended(now, tin, start)
-                    # Peak update
-                    if level > self.cool_peak_temp:
+                    self._rebase_after_confirmed_step("cool", start)
+                    level = self._detrended(now, tin_track, start)
+                    # Peak update: an unconfirmed rise does not raise the peak (_raw_step)
+                    if level > self.cool_peak_temp and raw_step <= 0:
                         self.cool_peak_temp = level
                     if level >= self.cool_peak_temp - 0.01:
                         self._near_extreme_time = now
 
-                    # Drop detection
+                    # Drop detection: an unconfirmed fall is no response yet
                     delta = self.cool_peak_temp - level
-                    if delta >= self.detection_threshold:
+                    if delta >= self.detection_threshold and raw_step >= 0:
                         # 3.A Look back for inflection point
                         inflection_time = self._near_extreme_time or now
                         for t_hist, v_hist in reversed(self._tin_lp_history):

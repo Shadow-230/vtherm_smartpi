@@ -9,6 +9,14 @@ All notable changes to this project will be documented in this file.
   SmartPI's next calculation. Before, both reached it up to a calculation period
   (60 s) late, so the heating and the passive dead times came out shorter by as
   much.
+- Dead time, for every thermostat: while a response is waited for, a one-step
+  toggle of the temperature sensor is no longer taken for the room's response.
+  A step of the raw reading counts once held for two periodic calculations
+  (120 s), or followed by a second step the same way; until then the trough or
+  peak tracking holds the filtered temperature at its value before the step. A
+  toggle against the response could shorten a dead time several times (in a
+  simulation, 1440 s to 220 s). The instant of the response is still taken from
+  the history, so a real move is dated as before.
 - Learning: for a thermostat that Versatile Thermostat counts for its central
   boiler, SmartPI pauses learning (room model, response lag and dead time, also
   during a calibration) while it calls for heat and the boiler is off: the room
