@@ -779,3 +779,29 @@ async def test_a_room_that_starts_calling_around_a_blink_of_the_boiler_records_i
     # Dated from the boiler's start (3.8.2); a call within its first 5 s counts from it too, at most 5 s early.
     assert est.state == "WAITING_HEAT_RESPONSE" and est.last_start_time == pytest.approx(back)
     assert "after a blink" not in caplog.text
+
+
+async def test_a_room_with_an_earlier_start_that_calls_in_a_blink_starts_again() -> None:
+    """The room heated from 0 s and stopped at 100 s, then waited without heat while the boiler
+    heated another room. It starts calling in an 8-ms blink of the boiler at 1030 s and stops
+    370 s later, before its heating has settled (its dead time, 780 s). The boiler's return is its
+    new start, which replaces the one at 0 s: its stop arms no passive detection (3.6). Taken for a
+    blink, the start at 0 s would have stayed, the heating would have counted 1400 s, and a passive
+    detection would have armed after too short a heating (check of 387d79f)."""
+    handler = _handler(heat_start=0.0)
+    algo = await _step(handler, 100.0, True, 0.0, temp=T0)
+    est = algo.dt_est
+    assert est.last_stop_time == 100.0 and est.state != "WAITING_COOL_RESPONSE"
+    for at in range(160, 1001, 60):
+        await _step(handler, float(at), True, 0.0, temp=T0)
+
+    _boiler(handler, False, 1030.0)
+    await _step(handler, 1030.002, False, 1.0, temp=T0)
+    _boiler(handler, True, 1030.008)
+    _boiler(handler, True, 1030.008 + BOILER_BLINK_S)
+    assert est.last_start_time == pytest.approx(1030.008)
+    for at in range(1090, 1400, 60):
+        await _step(handler, float(at), True, 1.0, temp=T0)
+    await _step(handler, 1400.0, True, 0.0, temp=T0)
+
+    assert est.last_stop_time == 1400.0 and est.state != "WAITING_COOL_RESPONSE"
