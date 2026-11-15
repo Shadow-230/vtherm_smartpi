@@ -343,6 +343,7 @@ HEAT_DETECTED_LINE = "Heat Deadtime detected"  # deadtime_estimator.py: names no
 BLINK_LINE = "heat back with the central boiler after a blink"  # algo.py, _heat_back_after_a_blink
 COOL_DETECTED_LINE = "Cool Deadtime detected"  # deadtime_estimator.py: names no thermostat
 _HEAT_STOP = re.compile(r"(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d+) .*?\] (.+?) - SmartPI heat stopped with the central boiler( \(heating dead-time detection aborted\))?")
+_HEAT_DETECTED = re.compile(r"(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d+) .*Heat Deadtime detected = ([0-9.]+)s \(ascension delayed by ([0-9.]+)s\)")
 _COOL_DETECTED = re.compile(r"(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d+) .*Cool Deadtime detected = ([0-9.]+)s(?: \(drop delayed by ([0-9.]+)s\))?")
 TARGET_CHANGE_LINE = "Target change detected"  # algo.py: logged by the calculation that sees a new setpoint
 _TARGET_CHANGE = re.compile(r"(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d+) .*?\] (.+?) - Target change detected \(([0-9.]+) -> ([0-9.]+)\)")
@@ -405,6 +406,19 @@ def logged_cool_starts(lines: Iterable[str]) -> list[tuple[float, float, float]]
     for line in lines:
         found = _COOL_DETECTED.search(line)
         if found and found.group(3) is not None:
+            at, value = _logged_at(found.group(1)), float(found.group(2))
+            out.append((at, value, at - value - float(found.group(3))))
+    return sorted(out)
+
+
+def logged_heat_starts(lines: Iterable[str]) -> list[tuple[float, float, float]]:
+    """The heating dead times in SmartPI's info lines with the start of each detection: (time of
+    the line, dead time, start), the start being the line's time less the dead time and the rise's
+    delay ("ascension delayed by"). Both are logged to 0.1 s."""
+    out = []
+    for line in lines:
+        found = _HEAT_DETECTED.search(line)
+        if found:
             at, value = _logged_at(found.group(1)), float(found.group(2))
             out.append((at, value, at - value - float(found.group(3))))
     return sorted(out)

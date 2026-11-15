@@ -81,6 +81,7 @@ from steps import (
     instance_log,
     logged_cool_dead_times,
     logged_cool_starts,
+    logged_heat_starts,
     logged_heat_stops,
     logged_pauses,
     logged_target_changes,
@@ -1710,6 +1711,9 @@ async def BP37(b: Bench) -> None:
 # the dead time counted from the step's onset (p. 16). The check of 785a4c7 (VR1) saw no stop for
 # East in North's off parts under 59 s, but East's measurement was not in it.
 
+# East's heating dead time and the rise's delay are logged to 0.1 s each: the start they give is
+# within 0.2 s of the true one.
+START_DATED_S = 0.2
 NORTH_SHORT_OFF = Wait(MODULATES.typical_s, MODULATES.maximum_s + 2 * CYCLE_S)  # North at 100 % until it modulates, then a cycle with an off part
 EAST_STEP_WATCH = Wait(DETECTION.typical_s, DETECTION.maximum_s)  # East's step until its heating detection ends
 
@@ -1738,7 +1742,7 @@ def off_parts_while(seen: Sequence[dict[str, Any]], climate: str, state: str | N
     north=STOPPED,
 )
 async def BP38(b: Bench) -> None:
-    """North learned (a water radiator behind a relay), East fresh, settled (its learning reset at least 600 s before, its room 0.1 degC below its highest reading since) → North calls 2 degC above its room alone (threshold 1) until SmartPI modulates it with off parts under 59 s; then VTherm's threshold raised to 2 devices and East calls at 100 %, so the boiler heats East only in North's on parts (raising the threshold stops the boiler for milliseconds, and East's call comes in that blink) → the role shows the case: East's start is recorded, from the boiler's return (its active period published, at most the time since the boiler's return; no "East - SmartPI heat back with the central boiler after a blink" line: its heat had not flowed); the boiler goes off in North's off parts while East waits for its response, each off part under 59 s (at least one, or the run decides nothing); East's heat is held through them: no "heat stopped" line and no pause of East but 59 s after a longer off part, its active period never starts again; East's heating detection ends detected, with a dead time of at least 60 s, recorded against the room's true 780 s; the threshold is back to 1."""
+    """North learned (a water radiator behind a relay), East fresh, settled (its learning reset at least 600 s before, its room 0.1 degC below its highest reading since) → North calls 2 degC above its room alone (threshold 1) until SmartPI modulates it with off parts under 59 s; then VTherm's threshold raised to 2 devices and East calls at 100 %, so the boiler heats East only in North's on parts (raising the threshold stops the boiler for milliseconds, and East's call comes in that blink) → the role shows the case: East's start is recorded (its active period published; no "East - SmartPI heat back with the central boiler after a blink" line: its heat had not flowed); the boiler goes off in North's off parts while East waits for its response, each off part under 59 s (at least one, or the run decides nothing); East's heat is held through them: no "heat stopped" line and no pause of East but 59 s after a longer off part, its active period never starts again; East's heating detection ends detected, with a dead time of at least 60 s, recorded against the room's true 780 s, and counted from the boiler's return (its start from SmartPI's line from 0.2 s before it to 5.2 s after it); the threshold is back to 1."""
     await north_learned(b)
     room_c = of(await b.snapshot(), NORTH, "indoor")
     if not isinstance(room_c, (int, float)):
@@ -1766,14 +1770,7 @@ async def BP38(b: Bench) -> None:
             f"East's start recorded: active period {of(snap, EAST, 'dt_active')} s, estimator {of(snap, EAST, 'dt_state')}; "
             f"{len(blinks)} \"East ... after a blink\" lines (its heat had not flowed)",
         )
-        # The start counts from the boiler's return, not before it: the active period published is
-        # at most the time since then (a publication late makes it shorter, never longer).
-        back = published_at(snap.get("boiler_since")) if snap.get("boiler") == "on" else None
-        active = of(snap, EAST, "dt_active")
-        b.check(
-            back is not None and isinstance(active, (int, float)) and 0.0 <= active <= snap["t"] - back + CLOCK_MARGIN_S,
-            f"East's start from the boiler's return: active period {active} s, the boiler back {seconds(None if back is None else snap['t'] - back)} s before",
-        )
+        back = published_at(snap.get("boiler_since")) if snap.get("boiler") == "on" else None  # the boiler's return
         seen = [await b.snapshot()]
 
         def ended(s: dict[str, Any]) -> bool:
@@ -1799,7 +1796,21 @@ async def BP38(b: Bench) -> None:
         fell = [f"{a:.0f}→{c:.0f}" for a, c in pairwise(active) if c < a]
         b.check(not fell, f"East's active period never starts again while it waits ({', '.join(fell[:3]) or 'never'})")
         outcome, dead = of(snap, EAST, "heat_outcome"), of(snap, EAST, "deadtime")
-        b.check(took is not None and outcome == "detected" and at_least_a_calculation(dead), f"East's heating detection: {outcome} after {seconds(took)} s, heating dead time {dead} s (at least {SHORTEST_DEADTIME_S:.0f} s)")
+        b.check(took is not None and outcome == "detected" and at_least_a_calculation(dead), f"East's heating dead time: {outcome} after {seconds(took)} s, {dead} s (at least {SHORTEST_DEADTIME_S:.0f} s)")
+        # The detection counts from the boiler's return, the onset of East's heat (Astrom and
+        # Hagglund 1995, 2.4, p. 16), not before the estimator's last sample, so at most BLINK_S
+        # after it (technical_doc.md 3.8.7): its start, from SmartPI's line (the line's time less
+        # the dead time and the rise's delay), from START_DATED_S before the return to BLINK_S
+        # after it. A start a calculation late, or an older one, fails; East's call came
+        # milliseconds after the return, closer than this tells apart. The line names no room: in
+        # this run only East measures a heating (North started long before, and its off parts are
+        # shorter than 600 s).
+        starts = [start for at, _, start in logged_heat_starts(await asyncio.to_thread(instance_log, HEAT_DETECTED_LINE, since)) if at >= called]
+        b.check(
+            back is not None and len(starts) == 1 and -START_DATED_S <= starts[0] - back <= BLINK_S + START_DATED_S,
+            f"East's heating detection counted from the boiler's return: starts {[f'{x - back:+.2f}' for x in starts] if back else starts} s from it "
+            f"(one, from -{START_DATED_S:.1f} to +{BLINK_S + START_DATED_S:.1f} s; SmartPI's log)",
+        )
         if isinstance(dead, (int, float)):
             b.note(f"East's heating dead time {dead:.0f} s: {dead - DEADTIME_TRUE_S:+.0f} s from the room's true {DEADTIME_TRUE_S:.0f} s; off parts {[length for _, length in all_parts]} s")
     finally:
