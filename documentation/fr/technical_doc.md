@@ -266,6 +266,20 @@ chaudière est alors une coupure de puissance, et son démarrage un démarrage d
 puissance, y compris pour une pièce qui demandait avant le démarrage de la
 chaudière.
 
+L'estimateur reçoit un démarrage ou un arrêt au moment où Versatile Thermostat
+applique la commande, et non au calcul suivant de SmartPI. Versatile Thermostat
+applique une commande après le calcul qui l'a produite : la position d'une
+vanne aussitôt, la commande d'un relais au début de son cycle suivant (aussitôt
+quand le cycle est forcé ou inactif), et confirme chaque application par un
+reçu. SmartPI engage la puissance appliquée à ce reçu et, quand elle franchit le
+seuil de l'estimateur (0,01) dans un sens ou dans l'autre, la donne alors à
+l'estimateur (`SmartPI._feed_dead_time_at_commit`). Un temps mort compte depuis
+le début de l'échelon du signal de commande (référence 5, §2.4, p. 16). Donnés
+au calcul suivant, le démarrage et l'arrêt propres d'une pièce arrivaient à
+l'estimateur jusqu'à une période de calcul (60 s) en retard, et ses deux temps
+morts sortaient plus courts d'autant. Une calibration donne à l'estimateur sa
+propre commande : un reçu pendant une calibration ne donne rien.
+
 La détection suit la température intérieure filtrée, y compris pendant une calibration forcée : une mesure brute qui oscille d'un pas de capteur détecterait sinon une réponse dès l'échelon de puissance. Une détection en cours n'est pas reprise après un redémarrage, et la durée minimale OFF doit être observée dans la session en cours avant qu'une détection puisse être armée.
 
 Il en va de même après une réinitialisation de l'estimateur : une réinitialisation de l'apprentissage (`reset_smartpi_learning`) et la réinitialisation lors d'un passage entre chauffage et refroidissement font partir la durée minimale OFF (`min_off_time_seconds = 600 s`) de la réinitialisation. Le passé de la pièce est alors inconnu : une pièce qui se réchauffe encore après sa dernière chauffe monte juste après un démarrage, et l'estimateur prendrait cette montée pour la réponse et donnerait un temps mort d'environ 0 s. Une réponse indicielle se mesure sur un procédé au repos : « il est nécessaire que le procédé soit en équilibre au début de l'essai » (référence 5, §6.4, p. 237). Un nouveau thermostat sans état sauvegardé n'a pas non plus de dernier arrêt : son premier démarrage n'est pas retenu.
@@ -1489,7 +1503,7 @@ La matrice pilote uniquement la mise à jour des gains et l'apprentissage thermi
 2. **Sundaresan K.R. et Krishnaswamy P.R.**, estimation des paramètres de délai et de constante de temps.
 3. Régression **OLS** avec test t de Student pour la validation de pente.
 4. **Hagglund T. et Astrom K.J.**, Supervision of adaptive control algorithms, *Automatica* 36(8), 2000, 1171–1180 : la pause d'apprentissage et la chaleur que donne la chaudière centrale, et les fenêtres du trim FF pendant que la chaudière est arrêtée (3.8).
-5. **Astrom K.J. et Hagglund T.**, *PID Controllers: Theory, Design, and Tuning*, 2e éd., Instrument Society of America, 1995 : la durée minimale OFF après une réinitialisation et la réponse passive après une période active établie (3.6) ; la pause d'apprentissage, l'impulsion d'un actionneur marche/arrêt à chaque cycle, la panne d'un actionneur, les fenêtres du trim FF pendant que la chaudière est arrêtée, et un arrêt daté de celui de la chaudière (3.8).
+5. **Astrom K.J. et Hagglund T.**, *PID Controllers: Theory, Design, and Tuning*, 2e éd., Instrument Society of America, 1995 : la durée minimale OFF après une réinitialisation et la réponse passive après une période active établie (3.6) ; la pause d'apprentissage, l'impulsion d'un actionneur marche/arrêt à chaque cycle, la panne d'un actionneur, les fenêtres du trim FF pendant que la chaudière est arrêtée, et un arrêt daté de celui de la chaudière (3.8) ; un démarrage ou un arrêt compté depuis l'application de la commande (3.6).
 6. **Skogestad S.**, Simple analytic rules for model reduction and PID controller tuning, *Journal of Process Control* 13, 2003, 291–309 : pause d'apprentissage pendant que la chaudière centrale est arrêtée (3.8).
 7. **Ren J., Su M., Zhao X., Liu J. et Song S.**, Experimental study on the dynamic thermal response of a radiant floor system in an office building, *E3S Web of Conferences* 246, 2021, 10003 : la réponse passive après une période active établie (3.6).
 8. **Chen W., Toueg S. et Aguilera M.K.**, On the quality of service of failure detectors, *IEEE Transactions on Computers* 51(5), 2002, 561–579 : l'attente avant qu'un démarrage de la chaudière centrale compte (3.8).

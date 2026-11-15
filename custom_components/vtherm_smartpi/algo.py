@@ -1104,6 +1104,18 @@ class SmartPI:
             return
         self._commit_applied_command(on_percent, hvac_mode, None, cycle_start=False)
 
+    def _feed_dead_time_at_commit(self) -> None:
+        """The command Versatile Thermostat has just applied starts or stops the power the
+        dead-time estimator sees: it is fed now, at the moment of the application, not at the next
+        calculation, up to a calculation period later. A dead time counts from the onset of the
+        step (reference 5, §2.4, p. 16). Not during a calibration, which feeds the estimator its
+        own command; a power that stays on, or off, feeds nothing."""
+        if self.calibration_mgr.is_calibrating:
+            return
+        power = self._dead_time_power()
+        if (power > 0.01) != (self.dt_est.last_power > 0.01):
+            self._feed_dead_time_now(power, None)
+
     def _commit_applied_command(
         self,
         actuator_power: float,
@@ -1140,6 +1152,7 @@ class SmartPI:
                 quality=trace_quality,
             )
         self._mark_heat_not_delivered()
+        self._feed_dead_time_at_commit()
         self._update_deadtime_episode_status(linear_power, hvac_mode, now)
         if cycle_start:
             self._setpoint_changed_in_cycle = False

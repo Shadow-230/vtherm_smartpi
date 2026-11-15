@@ -253,6 +253,20 @@ really gives: the command while the boiler is on, and no power while it is off
 (3.8). The boiler going off is then a power cut, and its start a power start,
 also for a room that called before the boiler started.
 
+The estimator gets a start or a stop at the moment Versatile Thermostat applies
+the command, not at SmartPI's next calculation. Versatile Thermostat applies a
+command after the calculation that computed it: a valve's position at once, a
+relay's command at the start of its next cycle (at once when the cycle is
+forced or idle), and confirms each application with a receipt. SmartPI commits
+the applied power at that receipt and, when it crosses the estimator's
+threshold (0.01) either way, feeds the estimator then
+(`SmartPI._feed_dead_time_at_commit`). A dead time counts from the onset of the
+step of the control signal (reference 5, §2.4, p. 16). Fed at the next
+calculation instead, a room's own start and stop reached the estimator up to a
+calculation period (60 s) late, and both its dead times came out shorter by as
+much. A calibration feeds the estimator its own command, so a receipt during a
+calibration feeds nothing.
+
 Detection tracks the filtered indoor temperature, including during a forced calibration: a raw measurement that oscillates by one sensor step would otherwise detect a response as soon as the power steps. A detection in progress is not resumed after a restart, and the minimum OFF duration must be observed again in the new session before a detection can be armed.
 
 The same holds after a reset of the estimator: a reset of learning (`reset_smartpi_learning`) and the reset at a change between heating and cooling start the minimum OFF duration (`min_off_time_seconds = 600 s`) at the reset. The room's past is unknown then: a room still warming from its last heating rises right after a start, and the estimator would take that rise for the response and give a dead time of about 0 s. A step response is measured from a process at rest: "it is necessary that the process be in equilibrium when the experiment is begun" (reference 5, §6.4, p. 237). A new thermostat without a saved state has no last stop either: its first start is not held back.
@@ -1485,7 +1499,7 @@ The matrix drives the gain updates and thermal learning only. A regime transitio
 2. **Sundaresan K.R. and Krishnaswamy P.R.**, estimation of delay and time-constant parameters.
 3. **OLS** regression with Student t-test for slope validation.
 4. **Hagglund T. and Astrom K.J.**, Supervision of adaptive control algorithms, *Automatica* 36(8), 2000, 1171–1180: the learning pause and the heat the central boiler gives, and the FF trim's windows while the boiler is off (3.8).
-5. **Astrom K.J. and Hagglund T.**, *PID Controllers: Theory, Design, and Tuning*, 2nd ed., Instrument Society of America, 1995: the minimum OFF duration after a reset and the passive response after a settled active period (3.6); the learning pause, an on/off actuator's pulse in each cycle, a fault of an actuator, the FF trim's windows while the boiler is off, and a stop dated from the boiler's (3.8).
+5. **Astrom K.J. and Hagglund T.**, *PID Controllers: Theory, Design, and Tuning*, 2nd ed., Instrument Society of America, 1995: the minimum OFF duration after a reset and the passive response after a settled active period (3.6); the learning pause, an on/off actuator's pulse in each cycle, a fault of an actuator, the FF trim's windows while the boiler is off, and a stop dated from the boiler's (3.8); a start or a stop timed from the command's application (3.6).
 6. **Skogestad S.**, Simple analytic rules for model reduction and PID controller tuning, *Journal of Process Control* 13, 2003, 291–309: learning pause while the central boiler is off (3.8).
 7. **Ren J., Su M., Zhao X., Liu J. and Song S.**, Experimental study on the dynamic thermal response of a radiant floor system in an office building, *E3S Web of Conferences* 246, 2021, 10003: the passive response after a settled active period (3.6).
 8. **Chen W., Toueg S. and Aguilera M.K.**, On the quality of service of failure detectors, *IEEE Transactions on Computers* 51(5), 2002, 561–579: the wait before a start of the central boiler counts (3.8).

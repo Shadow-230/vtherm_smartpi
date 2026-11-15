@@ -4,6 +4,11 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+- Dead time, for every thermostat: the estimator gets a room's own start or stop
+  at the moment Versatile Thermostat applies the command (its receipt), not at
+  SmartPI's next calculation. Before, both reached it up to a calculation period
+  (60 s) late, so the heating and the passive dead times came out shorter by as
+  much.
 - Learning: for a thermostat that Versatile Thermostat counts for its central
   boiler, SmartPI pauses learning (room model, response lag and dead time, also
   during a calibration) while it calls for heat and the boiler is off: the room
