@@ -781,13 +781,15 @@ async def test_a_room_that_starts_calling_around_a_blink_of_the_boiler_records_i
     assert "after a blink" not in caplog.text
 
 
-async def test_a_room_with_an_earlier_start_that_calls_in_a_blink_starts_again() -> None:
+@pytest.mark.parametrize(("stop_at", "armed"), [(1400.0, False), (1870.0, True)], ids=["370 s of heat", "840 s of heat"])
+async def test_a_room_with_an_earlier_start_that_calls_in_a_blink_starts_again(stop_at, armed) -> None:
     """The room heated from 0 s and stopped at 100 s, then waited without heat while the boiler
-    heated another room. It starts calling in an 8-ms blink of the boiler at 1030 s and stops
-    370 s later, before its heating has settled (its dead time, 780 s). The boiler's return is its
-    new start, which replaces the one at 0 s: its stop arms no passive detection (3.6). Taken for a
-    blink, the start at 0 s would have stayed, the heating would have counted 1400 s, and a passive
-    detection would have armed after too short a heating (check of 387d79f)."""
+    heated another room. It starts calling in an 8-ms blink of the boiler at 1030 s. The boiler's
+    return is its new start, which replaces the one at 0 s, and its heating's settling (its dead
+    time, 780 s) counts from it (3.6): stopped 370 s later, before it settled, it arms no passive
+    detection; stopped 840 s later, after it, it does. Taken for a blink, the start at 0 s would
+    have stayed, the heating would have counted 1400 s, and a passive detection would have armed
+    after too short a heating (check of 387d79f)."""
     handler = _handler(heat_start=0.0)
     algo = await _step(handler, 100.0, True, 0.0, temp=T0)
     est = algo.dt_est
@@ -800,8 +802,10 @@ async def test_a_room_with_an_earlier_start_that_calls_in_a_blink_starts_again()
     _boiler(handler, True, 1030.008)
     _boiler(handler, True, 1030.008 + BOILER_BLINK_S)
     assert est.last_start_time == pytest.approx(1030.008)
-    for at in range(1090, 1400, 60):
+    for at in range(1090, int(stop_at), 60):
         await _step(handler, float(at), True, 1.0, temp=T0)
-    await _step(handler, 1400.0, True, 0.0, temp=T0)
+    await _step(handler, stop_at, True, 0.0, temp=T0)
 
-    assert est.last_stop_time == 1400.0 and est.state != "WAITING_COOL_RESPONSE"
+    assert est.last_stop_time == stop_at and (est.state == "WAITING_COOL_RESPONSE") is armed
+    if armed:
+        assert est.cool_start_time == stop_at
