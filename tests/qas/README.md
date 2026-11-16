@@ -261,6 +261,11 @@ for a background command.
 
 - Home Assistant shows SmartPI 0.0.0: the repository keeps that version, only a release writes
   its own. Every result records the commit it tested.
+- SmartPI's log lines carry their time with its zone from Home Assistant 2026.11.1
+  (`2026-11-16 08:35:29.733+00:00`), without it on 2026.9.3. The pack reads both, and a time
+  without a zone as UTC, as the instances log. A line with the text a check looks for that its
+  pattern does not read fails the run (`steps.UnreadLogLine`): on 2026.11.1, before the patterns
+  read the zone, four checks passed on lines read as none (check of 8972367).
 - SmartPI's defaults entry shows the diagnostics of a thermostat created after it once it is set
   up again: the preparation ends with a restart.
 - Every scenario resets West's and East's learning, or loads their learned state, at its start:
