@@ -339,6 +339,20 @@ class CausalPowerTrace:
             return
         self._close_unobserved(float(now_monotonic))
 
+    def discard_unobserved_power(self, since_monotonic: float, reason: str) -> None:
+        """Drop the time of unobserved applied power with `reason` from `since_monotonic` on,
+        once its cause turned out too short to count: the interval still open and the pieces
+        already recorded, as each observed power records one and opens the next."""
+        if self._unobserved_since is not None and self._unobserved_since[1] == str(reason):
+            self._unobserved_since = None
+        kept = [
+            item
+            for item in self._discontinuities
+            if item.reason != str(reason) or item.start_monotonic < float(since_monotonic)
+        ]
+        if len(kept) != len(self._discontinuities):
+            self._discontinuities = deque(kept)
+
     def _close_unobserved(self, now_monotonic: float) -> None:
         if self._unobserved_since is None:
             return

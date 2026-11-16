@@ -569,3 +569,54 @@ async def test_a_second_stop_of_the_boiler_gets_its_own_hold(caplog) -> None:
     assert est.last_stop_time == 700.0
     assert caplog.text.count("heat stopped with the central boiler") == 1
     assert not [at for at, paused, _ in seen if paused and at < 700.0 + BOILER_VALVE_HOLD_S - 1.0]
+
+
+# --- a run of the boiler shorter than its count, while a relay's heat is cut, is no start
+
+
+async def _cut_relay_with_a_run(run_s: float) -> tuple[SmartPIHandler, list[tuple[float, bool, float]]]:
+    """The relay at 100 % in 5-minute cycles from 0 s with the boiler off (the room's heat cut,
+    learning paused); at 400 s the boiler runs ``run_s`` and goes off for good. Each event's (time,
+    learning paused, power the estimator sees)."""
+    handler = _relay_handler()
+    algo = handler._thermostat.prop_algorithm
+    loop = _Loop(handler)
+    seen: list[tuple[float, bool, float]] = []
+
+    def watch(at: float, _kind: str) -> None:
+        seen.append((at, algo.boiler_learning_paused, algo._dead_time_power()))
+
+    await loop.run(_cycles(300.0, 1.0, 0.0, 900.0) + [(400.0, "boiler", True), (400.0 + run_s, "boiler", False)], watch)
+    return handler, seen
+
+
+@pytest.mark.parametrize("run_s", [0.03, 2.0, BOILER_BLINK_S - 0.1])
+async def test_a_short_run_of_the_boiler_while_a_relay_s_heat_is_cut_starts_nothing(run_s, caplog) -> None:
+    """The boiler runs less than 5 s while the relay's heat is cut (a threshold's blink, another
+    room's short pulse): it gave the room no heat. No start, no hold, learning stays paused, as
+    for a valve: a change counts once it has held for a set time (Adnan 2013, 3.3, p. 30). Before,
+    the relay's heat came back at once, its stop was held 120 s, and learning resumed for that
+    time."""
+    caplog.set_level(logging.INFO)
+    handler, seen = await _cut_relay_with_a_run(run_s)
+    est = handler._thermostat.prop_algorithm.dt_est
+
+    assert est.last_start_time is None and est.state == "OFF"
+    assert not [at for at, paused, _ in seen if at >= 2 * RECALC and not paused]
+    assert {power for _, _, power in seen} == {0.0}
+    assert "heat stopped" not in caplog.text and "learning resumed" not in caplog.text
+
+
+async def test_a_run_of_the_boiler_that_counts_is_held_on_a_relay_as_on_a_valve(caplog) -> None:
+    """The boiler runs 6 s while the relay's heat is cut: its start counts after 5 s, learning
+    resumes then, and its stop is held as heat for 120 s, as for a valve; the boiler still off,
+    the cut counts from its stop, and the heating detection armed at the start ends aborted."""
+    caplog.set_level(logging.INFO)
+    handler, seen = await _cut_relay_with_a_run(6.0)
+    est = handler._thermostat.prop_algorithm.dt_est
+
+    assert (est.last_start_time, est.last_stop_time) == (400.0, 406.0)
+    assert est.last_outcome["heat"] == "aborted"
+    resumed = [at for at, paused, _ in seen if at >= 400.0 and not paused]
+    assert resumed and min(resumed) >= 400.0 + BOILER_BLINK_S - 0.01
+    assert caplog.text.count("heat stopped with the central boiler") == 1

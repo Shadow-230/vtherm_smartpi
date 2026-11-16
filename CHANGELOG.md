@@ -22,9 +22,10 @@ All notable changes to this project will be documented in this file.
   boiler, SmartPI pauses learning (room model, response lag and dead time, also
   during a calibration) while it calls for heat and the boiler is off: the room
   then gets no heat, and the wait for the boiler would be learned as the room's
-  dead time. The pause starts once this has lasted one calculation period, so a
-  room whose own call turns the boiler on does not pause, and it ends at the
-  boiler's start or when SmartPI stops calling. The regulation and the
+  dead time. The pause starts once this has lasted one calculation period, at
+  that moment, so a room whose own call turns the boiler on does not pause, and
+  it ends once the boiler has run 5 s or when SmartPI stops calling: a shorter
+  run of the boiler gives the room no heat. The regulation and the
   `set_smartpi_learning` setting are unchanged, and there is no new setting.
   The pause is shown as `learning.boiler_paused` and logged ("SmartPI learning
   paused (central boiler off)").
@@ -44,7 +45,8 @@ All notable changes to this project will be documented in this file.
   on for 5 s with the boiler off, or when the relay is off where SmartPI's
   applied cycle has it on; the heat comes back only while the boiler and the
   relay are both on. A boiler that goes off while the room's heat flows (the
-  relay on, another room's off part) is held as heat for 120 s, as for a valve;
+  relay on, another room's off part, the boiler having run 5 s) is held as heat
+  for 120 s, as for a valve;
   a longer stop is a cut dated from the boiler's stop. A cut found only at the
   relay's next on part is dated from the room's last heat, and its passive
   measurement is kept only when it does not lower the published value (outcome
@@ -64,7 +66,8 @@ All notable changes to this project will be documented in this file.
 - Calibration (`smartpi/calibration.py`): the dead-time estimator gets no power
   while the central boiler is off.
 - Dead time, a room on a valve (any thermostat not on a relay): while it calls
-  and its heat flows, the boiler going off is held as heat for 120 s
+  and its heat flows (the boiler having run 5 s), the boiler going off is held as
+  heat for 120 s
   (`BOILER_VALVE_HOLD_S`, two calculation periods), as the water in its emitter
   goes on heating. A boiler back within it is no stop and no start; a boiler
   still off is a stop dated from the boiler's stop, and so is the passive
@@ -82,7 +85,7 @@ All notable changes to this project will be documented in this file.
   the room then cools under that power, which the trim would read as a room
   that needs more power for good. The time is marked in the trim's power trace
   as power the room did not get (`central_boiler_off`), from the boiler's stop
-  to its start; a mark shorter than 59 s is dropped.
+  to its start; a time without heat shorter than 59 s is dropped as a whole.
 
 See `documentation/en/technical_doc.md`, 3.6 and 3.8, and
 `documentation/en/diagnostics.md`.

@@ -194,3 +194,29 @@ async def test_a_mark_shorter_than_the_pause_s_confirmation_is_dropped(clock, of
     result = _window(algo, start)
 
     assert result is not None and result.admissible is (not kept)
+
+
+@pytest.mark.parametrize(("off_s", "kept"), [(40.0, False), (70.0, True)], ids=["under the pause's confirmation", "over it"])
+async def test_a_time_without_heat_split_by_a_cycle_s_end_counts_as_a_whole(clock, off_s, kept) -> None:
+    """The boiler goes off half of ``off_s`` before a cycle ends and comes back as long after the
+    next one started: the cycle's end records the mark's first piece. A time without heat shorter
+    than 59 s is dropped as a whole, both pieces; a longer one rejects the window over the first
+    cycle. Before, the piece recorded at the cycle's end stayed (Bohac 2019, Table 6, p. 77: a
+    panel radiator gives about 95 % of its heat after a stop of 59 s)."""
+    algo = _algo()
+    algo.set_boiler_state(True, current_temp=20.0)
+    await algo.on_cycle_started(0.5 * CYCLE_S, 0.5 * CYCLE_S, 0.5, VThermHvacMode_HEAT)
+    start = clock.now
+    clock.now = start + CYCLE_S - off_s / 2
+    algo.set_boiler_state(False, current_temp=20.0)
+    clock.now = start + CYCLE_S
+    await algo.on_cycle_completed(e_eff=0.5)
+    await algo.on_cycle_started(0.5 * CYCLE_S, 0.5 * CYCLE_S, 0.5, VThermHvacMode_HEAT)
+    clock.now += off_s / 2
+    algo.set_boiler_state(True, current_temp=20.0, since=clock.now)
+
+    reasons = {d.reason for d in algo._causal_power_trace._discontinuities}
+    assert ("central_boiler_off" in reasons) is kept
+    assert algo._causal_power_trace._unobserved_since is None
+    result = _window(algo, start)
+    assert result is not None and result.admissible is (not kept)

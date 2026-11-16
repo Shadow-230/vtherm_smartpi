@@ -449,6 +449,7 @@ async def _control(handler: SmartPIHandler, boiler_on: bool | None, power: float
         patch("custom_components.vtherm_smartpi.handler.time.monotonic", return_value=handler.clock),
         patch("custom_components.vtherm_smartpi.handler.central_boiler_on", return_value=boiler_on),
         patch("custom_components.vtherm_smartpi.handler.async_dispatcher_send") as send,
+        patch("custom_components.vtherm_smartpi.handler.async_call_later"),  # the handler's checks: not run here
         patch.object(handler, "_async_save", new_callable=AsyncMock),
     ):
         await handler.control_heating(force=False)
@@ -459,7 +460,8 @@ async def _control(handler: SmartPIHandler, boiler_on: bool | None, power: float
 
 async def test_a_calculation_period_with_the_boiler_off_pauses() -> None:
     """The pause starts at the first calculation after one period (60 s, less 1 s for the timer)
-    of calling with the boiler off, not before; it resumes at once when the boiler is on."""
+    of calling with the boiler off, not before; it resumes once the boiler's start counts, after
+    5 s (here at the next calculation): a shorter run gave the room no heat."""
     handler = _handler()
 
     await _control(handler, boiler_on=False, power=0.5, at=1000.0)
@@ -470,6 +472,8 @@ async def test_a_calculation_period_with_the_boiler_off_pauses() -> None:
     assert BOILER_PAUSE_CONFIRM_S == RECALC_S - 1.0
 
     algo = await _control(handler, boiler_on=True, power=0.5, at=1100.0)
+    assert algo.boiler_learning_paused is True
+    algo = await _control(handler, boiler_on=True, power=0.5, at=1100.0 + BOILER_BLINK_S)
     assert algo.boiler_learning_paused is False
 
 
@@ -489,18 +493,20 @@ async def test_an_own_start_that_turns_the_boiler_on_within_seconds_does_not_pau
 
 async def test_the_pause_holds_while_the_boiler_waits_for_its_activation_delay() -> None:
     """The threshold is reached but Versatile Thermostat starts the boiler 120 s later: the room
-    gets no heat meanwhile, so learning pauses after a period and resumes when the boiler is on."""
+    gets no heat meanwhile, so learning pauses after a period and resumes once the boiler's start
+    counts, 5 s after it."""
     handler = _handler()
 
-    paused = [(await _control(handler, boiler_on=t >= 1120.0, power=1.0, at=t)).boiler_learning_paused for t in (1000.0, 1040.0, 1100.0, 1120.0)]
+    times = (1000.0, 1040.0, 1100.0, 1120.0, 1120.0 + BOILER_BLINK_S)
+    paused = [(await _control(handler, boiler_on=t >= 1120.0, power=1.0, at=t)).boiler_learning_paused for t in times]
 
-    assert paused == [False, False, True, False]
+    assert paused == [False, False, True, True, False]
 
 
-@pytest.mark.parametrize(("boiler_on", "power"), [(True, 0.5), (False, 0.0), (None, 0.5)])
+@pytest.mark.parametrize(("boiler_on", "power"), [(False, 0.0), (None, 0.5)])
 async def test_a_break_restarts_the_time(boiler_on, power) -> None:
-    """The boiler on, no call, or a boiler state that cannot be read breaks the run: the time
-    counts again from the next calculation with the boiler off."""
+    """No call, or a boiler state that cannot be read breaks the run: the time counts again from
+    the next calculation with the boiler off."""
     handler = _handler()
 
     await _control(handler, boiler_on=False, power=0.5, at=1000.0)
@@ -510,6 +516,69 @@ async def test_a_break_restarts_the_time(boiler_on, power) -> None:
     assert algo.boiler_learning_paused is False
     algo = await _control(handler, boiler_on=False, power=0.5, at=1060.0 + BOILER_PAUSE_CONFIRM_S)
     assert algo.boiler_learning_paused is True
+
+
+async def test_a_run_of_the_boiler_shorter_than_its_count_does_not_restart_the_time() -> None:
+    """The boiler on at one calculation only, its start not counted (5 s): it gave the room no
+    heat, so the time without heat goes on from its first calculation and the pause starts one
+    period after it."""
+    handler = _handler()
+
+    await _control(handler, boiler_on=False, power=0.5, at=1000.0)
+    algo = await _control(handler, boiler_on=True, power=0.5, at=1030.0)
+    assert algo.boiler_learning_paused is False
+    algo = await _control(handler, boiler_on=False, power=0.5, at=1060.0)
+    assert algo.boiler_learning_paused is True
+
+
+@pytest.mark.parametrize("run_s", [0.03, 2.0, BOILER_BLINK_S - 0.1])
+async def test_a_short_run_of_the_boiler_during_the_pause_does_not_resume(run_s) -> None:
+    """The room paused, the boiler runs less than 5 s and goes off again: it gave the room no heat.
+    Learning stays paused, without a change of the pause: an alarm clears only once its signal has
+    stayed back for a set time (Adnan 2013, 3.3, p. 30). Before, learning resumed at the boiler's
+    start and paused again at the next calculation, up to 119 s later."""
+    handler = _handler()
+    handler._boiler_listener_remove = MagicMock()
+    await _control(handler, boiler_on=False, power=1.0, at=1000.0)
+    algo = await _control(handler, boiler_on=False, power=1.0, at=1000.0 + BOILER_PAUSE_CONFIRM_S)
+    assert algo.boiler_learning_paused is True
+    algo.calculate = MagicMock()
+    algo.set_boiler_learning_paused = MagicMock(wraps=algo.set_boiler_learning_paused)
+
+    with patch("custom_components.vtherm_smartpi.handler.async_call_later"):
+        _boiler_changes(handler, on=True, at=1100.0)
+        _boiler_changes(handler, on=False, at=1100.0 + run_s)
+    algo = await _control(handler, boiler_on=False, power=1.0, at=1160.0)
+
+    assert algo.boiler_learning_paused is True
+    algo.set_boiler_learning_paused.assert_not_called()
+    assert algo.boiler_on is False and algo.dt_est.state != "WAITING_HEAT_RESPONSE"
+
+
+async def test_the_pause_starts_one_period_after_the_boiler_s_stop_without_a_calculation() -> None:
+    """The room calls with the boiler off, its changes followed: a check is scheduled one period
+    (59 s) later and starts the pause then, not at the next calculation, up to a period later
+    (104 s on the bench). Adaptation should be interrupted as quickly as possible (Hagglund and
+    Astrom 2000, 5, p. 1175). A check that fires a little early still starts it."""
+    handler = _handler()
+    handler._boiler_listener_remove = MagicMock()
+    algo = handler._thermostat.prop_algorithm
+    algo._committed_on_percent = 1.0
+
+    with patch("custom_components.vtherm_smartpi.handler.async_call_later") as later:
+        _boiler_changes(handler, on=False, at=1000.0)
+    assert later.call_args.args[1] == pytest.approx(BOILER_PAUSE_CONFIRM_S)
+    assert algo.boiler_learning_paused is False
+
+    with (
+        patch("custom_components.vtherm_smartpi.handler.time.monotonic", return_value=1000.0 + BOILER_PAUSE_CONFIRM_S - 1e-6),
+        patch("custom_components.vtherm_smartpi.handler.central_boiler_on", return_value=False),
+        patch("custom_components.vtherm_smartpi.handler.async_dispatcher_send") as send,
+    ):
+        later.call_args.args[2](None)
+
+    assert algo.boiler_learning_paused is True
+    assert send.called
 
 
 async def test_no_pause_for_a_thermostat_the_boiler_does_not_heat() -> None:
@@ -533,14 +602,16 @@ async def test_a_change_of_the_pause_is_published_at_once() -> None:
     assert handler.published == 0
 
     await _control(handler, boiler_on=True, power=0.5)
+    assert handler.published == 0  # the boiler's start does not count yet
+    await _control(handler, boiler_on=True, power=0.5, at=handler.clock + BOILER_BLINK_S)
     assert handler.published >= 1
 
 
-async def test_the_boiler_s_start_resumes_at_once_and_arms_the_detection() -> None:
+async def test_the_boiler_s_start_resumes_once_it_counts_and_arms_the_detection() -> None:
     """Versatile Thermostat's boiler starts while the room waits for it, paused: the change of
-    the boiler's state resumes learning at that moment, without a calculation, and publishes it;
-    the check scheduled 5 s later, the boiler still on, arms the dead-time detection from the
-    boiler's start and publishes it."""
+    the boiler's state changes nothing yet; the check scheduled 5 s later, the boiler still on,
+    resumes learning, arms the dead-time detection from the boiler's start and publishes both,
+    without a calculation."""
     handler = _handler()
     handler._boiler_listener_remove = MagicMock()  # the boiler's changes are followed
     await _control(handler, boiler_on=False, power=1.0, at=1000.0)
@@ -557,8 +628,8 @@ async def test_the_boiler_s_start_resumes_at_once_and_arms_the_detection() -> No
     ):
         handler._on_boiler_change(MagicMock())
 
-    assert algo.boiler_learning_paused is False
-    assert send.called
+    assert algo.boiler_learning_paused is True
+    assert not send.called
     algo.calculate.assert_not_called()
     assert algo.dt_est.state != "WAITING_HEAT_RESPONSE"
     assert later.call_args.args[1] == BOILER_BLINK_S
@@ -571,6 +642,7 @@ async def test_the_boiler_s_start_resumes_at_once_and_arms_the_detection() -> No
     ):
         later.call_args.args[2](None)
 
+    assert algo.boiler_learning_paused is False
     assert send.called
     algo.calculate.assert_not_called()
     assert (algo.dt_est.state, algo.dt_est.heat_start_time) == ("WAITING_HEAT_RESPONSE", 1120.0)
@@ -665,8 +737,9 @@ async def test_the_boiler_going_off_while_it_heats_the_room_is_the_room_s_stop(b
 
     back = 1030.0 + back_after_s
     _boiler_changes(handler, on=True, at=back)
-    assert algo.boiler_learning_paused is False
+    assert algo.boiler_learning_paused is True  # its start does not count yet
     _boiler_changes(handler, on=True, at=back + BOILER_BLINK_S)  # the boiler still on 5 s later
+    assert algo.boiler_learning_paused is False
 
     assert algo.dt_est.last_stop_time == 1030.0
     if measured:
