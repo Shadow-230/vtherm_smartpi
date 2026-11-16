@@ -695,6 +695,17 @@ la commande (référence 4, §5, p. 1175). Un relais qui ne commute pas rompt ce
 hypothèse, comme toute panne d'un actionneur, qu'il faut trouver avant de régler
 un régulateur (référence 5, §6.7, p. 262 et p. 269).
 
+Un relais maintenu éteint par sa propre protection n'a pas manqué de commuter.
+Versatile Thermostat garde un relais éteint tant qu'il n'a pas été éteint pendant
+son délai minimal de désactivation (`minimal_deactivation_delay`, 0 par défaut),
+ce qui épargne à l'appareil des commutations rapides. Quand un cycle repart peu
+après la partie éteinte du relais (une nouvelle commande), il commence la partie
+allumée plus tard, de ce qui reste de ce délai, et depuis Versatile Thermostat
+10.6.5 en garde la durée (la documentation de son ordonnanceur de cycles). La
+partie allumée compte alors depuis la fin de cette protection, la dernière
+extinction du relais plus le délai, quand elle vient après le début du cycle ;
+les 5 s comptent depuis là.
+
 Une coupure trouvée seulement à la partie allumée suivante du relais a commencé
 plus tôt : la chaudière s'est arrêtée pendant la partie éteinte (une autre pièce
 a cessé de demander), et la dernière chaleur de la pièce a pris fin avec la
@@ -855,6 +866,10 @@ chaleur après un arrêt de 59 s (référence 10, tableau 6, p. 77).
   l'allumage du relais, et non aussitôt ; avec plusieurs relais sur un même
   thermostat, les 5 s comptent depuis le premier relais allumé, et le cycle
   appliqué est celui du premier relais.
+- Avant Versatile Thermostat 10.6.5, une partie allumée retardée par le délai
+  minimal de désactivation du relais était raccourcie, et omise quand elle
+  devenait plus courte que le délai minimal d'activation : SmartPI voit alors le
+  relais éteint là où son cycle l'allume, et une courte coupure.
 - Une coupure qui commence dans la partie éteinte propre d'un relais perd sa
   mesure passive lorsque cette mesure sort plus courte que celle publiée, ou
   qu'aucune n'est encore publiée.

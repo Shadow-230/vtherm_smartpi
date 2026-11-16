@@ -86,11 +86,12 @@ class SmartPIHandler:
         # The check scheduled once a boiler's start has held ``BOILER_BLINK_S``.
         self._boiler_check_remove = None
         # A thermostat on a relay (``_drives_a_relay``): since when its device is on (monotonic
-        # time, None while off), whether the check scheduled then found it on ``BOILER_BLINK_S``
-        # later, the boiler's state as it heats the room (``_boiler_heats_the_room``), and the
-        # listener of the thermostat's own state, which Versatile Thermostat writes at each change
-        # of the relay.
+        # time, None while off) and when it last turned off, whether the check scheduled then found
+        # it on ``BOILER_BLINK_S`` later, the boiler's state as it heats the room
+        # (``_boiler_heats_the_room``), and the listener of the thermostat's own state, which
+        # Versatile Thermostat writes at each change of the relay.
         self._device_on_since: float | None = None
+        self._device_off_at: float | None = None
         self._device_held: bool = False
         self._device_check_remove = None
         self._relay_heat: bool | None = None
@@ -813,15 +814,25 @@ class SmartPIHandler:
     def _relay_off_against_its_cycle(self, algo: SmartPI, now: float) -> bool:
         """Whether the relay is off where SmartPI's applied cycle has it on, ``BOILER_BLINK_S``
         into its on part and before its end; at the on part's start, the check is scheduled for
-        then (Versatile Thermostat reports a cycle's start just before it switches the relay)."""
+        then (Versatile Thermostat reports a cycle's start just before it switches the relay).
+
+        Versatile Thermostat keeps a relay off until it has been off for its minimal deactivation
+        delay (``minimal_deactivation_delay``, 0 by default), and starts a cycle's on part later
+        when the relay went off less than that before (a cycle started again soon after the
+        relay's off part): the on part then counts from the end of that protection, not from the
+        cycle's start. A relay held off by its own protection is not one that failed to switch."""
         plan = algo.relay_plan()
         if plan is None:
             return False
         start, on_s = plan
-        if now < start + BOILER_BLINK_S < start + on_s - BOILER_BLINK_S:
-            self._schedule_the_plan_check(start + BOILER_BLINK_S - now)
+        protection = getattr(self._thermostat, "minimal_deactivation_delay", 0)
+        on_from = start
+        if isinstance(protection, (int, float)) and protection > 0 and self._device_off_at is not None:
+            on_from = max(start, self._device_off_at + float(protection))
+        if now < on_from + BOILER_BLINK_S < start + on_s - BOILER_BLINK_S:
+            self._schedule_the_plan_check(on_from + BOILER_BLINK_S - now)
             return False
-        return start + BOILER_BLINK_S <= now < start + on_s - BOILER_BLINK_S
+        return on_from + BOILER_BLINK_S <= now < start + on_s - BOILER_BLINK_S
 
     def _schedule_the_plan_check(self, delay: float) -> None:
         """Check the relay again once its cycle's on part has run ``BOILER_BLINK_S``, while the
@@ -850,7 +861,7 @@ class SmartPIHandler:
             self._device_on_since, self._device_held = now, False
             self._schedule_the_device_check()
         elif not on and self._device_on_since is not None:
-            self._device_on_since, self._device_held = None, False
+            self._device_on_since, self._device_held, self._device_off_at = None, False, now
             self._cancel_the_device_check()
         return on
 

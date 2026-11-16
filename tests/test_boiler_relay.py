@@ -620,3 +620,59 @@ async def test_a_run_of_the_boiler_that_counts_is_held_on_a_relay_as_on_a_valve(
     resumed = [at for at, paused, _ in seen if at >= 400.0 and not paused]
     assert resumed and min(resumed) >= 400.0 + BOILER_BLINK_S - 0.01
     assert caplog.text.count("heat stopped with the central boiler") == 1
+
+
+# --- a relay held off by Versatile Thermostat's minimal deactivation delay is in its own off part
+
+
+async def _restarted_cycle(protection_s: float, relay_on_at: float, caplog) -> list[tuple[float, bool, float]]:
+    """Cycles of 300 s at 60 %: the relay on at 0 s and off at 180 s; a cycle started again at
+    200 s (a new command), its on part planned from 200 s to 380 s; the relay turns on at
+    ``relay_on_at`` and off 180 s later, the boiler following the relay alone; a calculation every
+    minute; Versatile Thermostat's minimal deactivation delay ``protection_s``. Each event's (time,
+    learning paused, power the estimator sees)."""
+    caplog.set_level(logging.INFO)
+    handler = _relay_handler()
+    handler._thermostat.minimal_deactivation_delay = protection_s
+    algo = handler._thermostat.prop_algorithm
+    loop = _Loop(handler)
+    relay = [
+        (0.0, "cycle", (0.6, 300.0)),
+        (0.0, "relay", True),
+        (180.0, "relay", False),
+        (200.0, "cycle", (0.6, 300.0)),
+        (relay_on_at, "relay", True),
+        (relay_on_at + 180.0, "relay", False),
+    ]
+    seen: list[tuple[float, bool, float]] = []
+
+    def watch(at: float, _kind: str) -> None:
+        seen.append((at, algo.boiler_learning_paused, algo._dead_time_power()))
+
+    await loop.run(relay + _following(relay) + [(float(at), "calc", 0.6) for at in range(0, 600, 60)], watch)
+    return seen
+
+
+async def test_a_relay_held_off_by_its_minimal_deactivation_delay_is_no_cut(caplog) -> None:
+    """Versatile Thermostat keeps the relay off until it has been off for its minimal deactivation
+    delay (120 s), so the restarted cycle's on part starts at 300 s, not at 200 s (its cycle
+    scheduler documentation, 8.2). The relay is held off by its own protection, not failing to
+    switch: no cut, no pause, the estimator sees SmartPI's command throughout (a cause to find
+    before acting, Astrom and Hagglund 1995, 6.7, p. 262). Before, the heat was cut 5 s into the
+    planned on part."""
+    seen = await _restarted_cycle(120.0, 300.0, caplog)
+
+    assert not [at for at, paused, _ in seen if paused]
+    assert not [at for at, _, power in seen if at > BOILER_BLINK_S + 1.0 and power == 0.0]
+    assert "heat stopped" not in caplog.text
+
+
+@pytest.mark.parametrize(("protection_s", "cut_from"), [(0.0, 200.0), (60.0, 240.0)])
+async def test_a_relay_off_beyond_its_protection_is_a_cut(protection_s, cut_from, caplog) -> None:
+    """The same relay turned on only at 300 s, though its protection (none, or 60 s) let it turn on
+    at ``cut_from``: it failed to switch, so the boiler is followed as read and the room's heat is
+    cut 5 s after that moment, until the relay turns on."""
+    seen = await _restarted_cycle(protection_s, 300.0, caplog)
+
+    unpowered = [at for at, _, power in seen if power == 0.0 and at > BOILER_BLINK_S + 1.0]
+    assert unpowered and min(unpowered) >= cut_from + BOILER_BLINK_S - 0.01 and max(unpowered) < 300.0 + BOILER_BLINK_S + 0.01

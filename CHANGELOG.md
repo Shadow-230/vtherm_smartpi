@@ -43,7 +43,9 @@ All notable changes to this project will be documented in this file.
 - Dead time, a room on a relay that alone keeps the boiler on: the relay's own
   off part is no cut of heat. The boiler cuts the heat once the relay has been
   on for 5 s with the boiler off, or when the relay is off where SmartPI's
-  applied cycle has it on; the heat comes back only while the boiler and the
+  applied cycle has it on (counted from the end of Versatile Thermostat's
+  minimal deactivation delay, which can start the on part later); the heat
+  comes back only while the boiler and the
   relay are both on. A boiler that goes off while the room's heat flows (the
   relay on, another room's off part, the boiler having run 5 s) is held as heat
   for 120 s, as for a valve;

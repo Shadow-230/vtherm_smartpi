@@ -714,6 +714,16 @@ the temperature are caused by the command (reference 4, §5, p. 1175). A relay
 that does not switch breaks this, like any fault of an actuator, which should be
 found before a controller is tuned (reference 5, §6.7, p. 262 and p. 269).
 
+A relay held off by its own protection did not fail to switch. Versatile
+Thermostat keeps a relay off until it has been off for its minimal deactivation
+delay (`minimal_deactivation_delay`, 0 by default), which spares the device rapid
+switching. When a cycle starts again soon after the relay's off part (a new
+command), it starts the on part later, by what is left of that delay, and from
+Versatile Thermostat 10.6.5 on keeps its length (the documentation of its cycle
+scheduler). The on part then counts from the end of that protection, the
+relay's last switching off plus the delay, when that comes after the cycle's
+start; the 5 s count from there.
+
 A cut found only at the relay's next on part started earlier: the boiler went
 off during the off part (another room stopped), and the room's last heat ended
 with the relay's last on part, both on. The stop is dated from then, so the
@@ -859,6 +869,10 @@ stop of 59 s (reference 10, Table 6, p. 77).
 - A room on a relay whose boiler does not start for it is cut 5 s after the
   relay turns on, not at once; with several relays on one thermostat, the 5 s
   count from the first relay on, and the applied cycle is the first relay's.
+- Before Versatile Thermostat 10.6.5, an on part started later by the relay's
+  minimal deactivation delay was shortened, and left out when it became shorter
+  than the minimal activation delay: SmartPI then sees the relay off where its
+  cycle has it on, and a short cut.
 - A cut that starts in a relay's own off part loses its passive measurement when
   that measurement comes out shorter than the published one, or when there is no
   published one yet.
