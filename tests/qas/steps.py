@@ -632,7 +632,8 @@ class Bench:
         with the threshold reached is watched for a pause it must not take. With an activation
         delay the boiler stays off for that delay once the threshold is reached: every calling
         thermostat is then paused (or pauses) while the boiler waits, and resumes once its start
-        counts, ``BLINK_S`` after it (``waited``, from SmartPI's log). Then ``after``."""
+        counts, ``BLINK_S`` after it: the step waits for that (``resumed_once_the_start_counts``)
+        before it reads SmartPI's log (``waited``). Then ``after``."""
         reached_before = self.reaches()
         paused_before = {c: self.due_paused(c) for c in COUNTED}
         calling_before = set(self.calling)
@@ -663,11 +664,26 @@ class Bench:
             wanted[f"{NAMES[climate]} {'paused' if due else 'resumed'}"] = (self.paused_is(climate, due), wait)
         took = await self.reach(wanted, started)
         if delayed_start:
+            await self.resumed_once_the_start_counts()
             took |= await self.waited(started, paused_before)
         elif own in COUNTED and own in self.calling and own not in calling_before and not self.due_paused(own):
             await self.no_pause([own], NO_PAUSE.maximum_s, f"{NAMES[own]} starts calling with the threshold reached")
         await self.after(step)
         return took
+
+    async def resumed_once_the_start_counts(self) -> None:
+        """With an activation delay, VTherm's boiler on: each calling counted thermostat resumes once
+        the boiler's start counts, ``BLINK_S`` after it by the boiler's own time stamp. Waited for
+        before the step's checks read the log and the state, and before the scenario's next action:
+        a boiler stopped within ``BLINK_S`` of its start gave no heat, and SmartPI then rightly
+        resumes nothing. A thermostat that does not resume is reported by ``waited`` and ``after``."""
+        snap = await self.snapshot()
+        on_at = published_at(snap.get("boiler_since")) if snap.get("boiler") == "on" else None
+        climates = sorted(self.calling & set(COUNTED))
+        if on_at is None or not climates:
+            return
+        within = max(0.0, on_at + BLINK_S + MARGIN_S - time.time())
+        await self.until(lambda s: all(of(s, c, "paused") is False for c in climates), within, 0.5)
 
     async def waited(self, started: float, paused_before: dict[str, bool]) -> dict[str, float | None]:
         """With an activation delay: each calling counted thermostat paused while VTherm's boiler
