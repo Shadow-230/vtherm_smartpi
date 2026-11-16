@@ -17,6 +17,16 @@ All notable changes to this project will be documented in this file.
   toggle against the response could shorten a dead time several times (in a
   simulation, 1440 s to 220 s). The instant of the response is still taken from
   the history, so a real move is dated as before.
+- Central boiler, for a thermostat on a valve: a stop of the boiler while the
+  room's heat flows is held as heat for 120 s (two calculation periods), up from
+  59 s (`BOILER_VALVE_HOLD_S`). With a threshold of devices, the boiler stops in
+  each off part of another room's relay; off parts of 60 to 119 s ended the
+  room's heating detection each time and paused its learning (in a simulation,
+  8 to 13 times a day). Measured panel radiators lose 63 % of their heat only
+  18 to 22 minutes after their water stops: after a stop of 120 s, even one
+  repeated in every 5-minute cycle, the room keeps more than the 80 % of power
+  the dead-time estimator requires of a measured start. A longer stop is still
+  dated from the boiler's stop.
 - Learning: for a thermostat that Versatile Thermostat counts for its central
   boiler, SmartPI pauses learning (room model, response lag and dead time, also
   during a calibration) while it calls for heat and the boiler is off: the room

@@ -506,26 +506,53 @@ pièce et relancerait sa durée minimale sans chauffe : une pièce dont la
 chaudière s'arrête à chacun de ces cycles ne mesurerait jamais son temps mort
 de chauffe et resterait dans sa première phase (3.1). Donc, pendant qu'un
 thermostat qui n'est pas sur relais demande et que sa chaleur passe, l'arrêt de
-la chaudière est maintenu comme chaleur pendant `BOILER_PAUSE_CONFIRM_S` (59 s),
-la période qui confirme aussi la pause (3.8.1) :
+la chaudière est maintenu comme chaleur pendant `BOILER_VALVE_HOLD_S` (120 s, deux
+périodes de calcul) :
 
 - la chaudière revenue pendant ce temps n'est ni un arrêt ni un démarrage : la
   chauffe, et une détection en cours, continuent ;
 - la chaudière encore arrêtée ensuite est un arrêt daté de l'arrêt de la
-  chaudière : le handler le vérifie 59 s après l'arrêt (ou au calcul suivant).
+  chaudière : le handler le vérifie 120 s après l'arrêt (ou au calcul suivant).
   L'estimateur enregistre l'arrêt à partir de ce moment, la durée minimale sans
   chauffe compte donc depuis lui, et une réponse passive armée par lui compte
   aussi depuis lui, son pic étant pris dans l'historique des températures depuis
   (`SmartPI._heat_stopped_at`) : un temps mort compte depuis le début de
-  l'échelon (référence 5, §2.4, p. 16). La pause commence aussitôt, 59 s après
+  l'échelon (référence 5, §2.4, p. 16). La pause commence aussitôt, 120 s après
   l'arrêt de la chaudière ;
 - une pièce qui cesse de demander pendant ce temps a vu sa chaleur arrêtée par
   la chaudière : son arrêt est daté de l'arrêt de la chaudière de la même façon.
 
 Une pièce sur relais a sa propre règle (3.8.4). Une demande chaudière arrêtée
-n'est pas maintenue : elle attend la chaudière, comme tout démarrage. La durée
-du maintien est la période de calcul de la pause, pas une valeur tirée d'une
-publication.
+n'est pas maintenue : elle attend la chaudière, comme tout démarrage.
+
+La durée du maintien vient de mesures de radiateurs et de planchers chauffants.
+Quand la chaudière s'arrête, l'eau reste dans le radiateur, ou la pompe de la
+chaudière continue de faire circuler l'eau chaude de l'installation : le
+radiateur refroidit lentement. Des radiateurs à panneaux mesurés par
+thermographie ne perdent 63 % de leur chaleur qu'après 18 à 22,4 minutes, sans
+retard, alors qu'ils montent à 63 % en 3,6 à 4,3 minutes ; les radiateurs à
+éléments et tubulaires refroidissent plus lentement encore (référence 10,
+tableau 6, p. 77). Un plancher chauffant change en quelques heures : dans une
+pièce mesurée, le plancher a atteint 63 % d'un changement après 4,5 à 5 heures
+(référence 7, tableau 4, p. 6). Le refroidissement d'un radiateur suit une
+courbe du premier ordre, sa montée une courbe d'ordre plus élevé (référence 10,
+p. 37). Avec les valeurs des radiateurs dans un modèle du premier ordre
+(référence 5, §2.4, p. 16, équation 2.8), et pour la montée le retard de 50 s et
+la constante de temps de 178 s mesurés sur un radiateur à panneau de 500 × 1000
+mm (référence 10, p. 77), un radiateur à panneau donne encore au moins 89 % de
+sa chaleur après un arrêt de 120 s. Des arrêts répétés à chaque cycle du relais
+d'une autre pièce en laissent moins : au cycle par défaut de Versatile
+Thermostat, 5 minutes, 82 à 84 % en moyenne pour des arrêts de 120 s, et 65 à 68
+% pour des arrêts de 180 s. L'estimateur du temps mort de SmartPI ne mesure un
+démarrage qu'à une commande d'au moins 80 %
+(`DeadTimeEstimator.min_power_heat_threshold`) : un arrêt qu'il maintient doit
+donc laisser à la pièce au moins cette chaleur. Cette limite se situe vers 125 à
+130 s ; le maintien est de 120 s, deux périodes de calcul. Une simulation d'une
+pièce sur vanne dont la chaudière s'arrêtait 60 à 114 s à chaque cycle de 10
+minutes le vérifie : avec un maintien de 59 s, la pièce a mis son apprentissage
+en pause 8 à 13 fois par jour, avec 120 s au plus une fois en cinq jours, et des
+arrêts maintenus de 120 s ont allongé en moyenne de 42 à 54 s le temps mort de
+chauffe qu'elle mesurait.
 
 #### 3.8.3 Les clignotements de la chaudière
 
@@ -731,13 +758,17 @@ comme pour la pause.
   le temps entre le début de l'échelon et la réponse (référence 5, §2.4,
   p. 16) : un arrêt confirmé en retard est donc daté de l'arrêt de la
   chaudière. L'eau d'un émetteur continue de chauffer pendant des minutes après
-  un changement (référence 9, tableau 2, p. 2753) : un arrêt de quelques
-  secondes n'est pas un échelon de la chaleur de la pièce.
+  un changement, et un radiateur ne perd 63 % de sa chaleur qu'après une
+  vingtaine de minutes (référence 9, tableau 2, p. 2753 ; référence 10,
+  tableau 6, p. 77) : un arrêt d'une minute ou deux n'est pas un échelon de la
+  chaleur de la pièce.
 - Confirmer un changement avant d'agir. Un détecteur de changements se juge à
   la rapidité avec laquelle il détecte les vrais et à la façon dont il évite les
   faux (référence 8, p. 561–562, sur les détecteurs de pannes dans les réseaux
   informatiques) ; l'attente de 5 s pour un démarrage de la chaudière est un tel
-  choix.
+  choix, de même que le maintien d'une vanne : plus long, il allonge davantage
+  le temps mort mesuré ; plus court, il prend davantage de parties éteintes
+  d'une autre pièce pour des arrêts.
 
 #### 3.8.7 Limites
 
@@ -752,10 +783,16 @@ comme pour la pause.
   chaudière compte son démarrage depuis celui de la chaudière, jusqu'à 5 s avant
   sa demande.
 - Une pièce sur vanne reçoit moins de chaleur pendant que sa chaudière est
-  arrêtée moins de 59 s, ce que l'estimateur ne voit pas. Des arrêts de plus de
-  59 s à chaque cycle du relais d'une autre pièce arrêtent toujours la chaleur
-  de la pièce à chaque fois, et une telle pièce peut rester dans sa première
-  phase.
+  arrêtée moins de 120 s, ce que l'estimateur ne voit pas : son temps mort de
+  chauffe sort plus long, au plus de la durée de ces arrêts (en moyenne au plus
+  la moitié, dans la simulation ci-dessus). Des arrêts de plus de 120 s à chaque
+  cycle du relais d'une autre pièce arrêtent toujours la chaleur de la pièce à
+  chaque fois, et une telle pièce peut rester dans sa première phase. La durée
+  du maintien repose sur des mesures de radiateurs et de plancher chauffant
+  (3.8.2) : un émetteur avec peu d'eau et de métal, comme un convecteur ou un
+  ventilo-convecteur, pour lequel aucune mesure n'a été trouvée, peut perdre
+  davantage de sa chaleur en 120 s. Son temps mort de chauffe mesuré sort alors
+  plus long, ce qui rend seulement le réglage plus prudent.
 - Un arrêt que l'estimateur a vu abandonne une détection de chauffe encore en
   attente, même lorsque la chaudière revient juste après.
 - Une pièce sur relais dont la chaudière ne démarre pas est coupée 5 s après
@@ -765,8 +802,9 @@ comme pour la pause.
 - Une coupure qui commence dans la partie éteinte propre d'un relais perd sa
   mesure passive lorsque cette mesure sort plus courte que celle publiée, ou
   qu'aucune n'est encore publiée.
-- Une chaudière arrêtée moins de 59 s pendant que la pièce demande n'arrête pas
-  la fenêtre du trim FF ; un temps sans chaleur plus long rejette toute fenêtre
+- Une chaudière arrêtée pendant que la pièce demande moins longtemps que le
+  maintien d'une vanne (120 s), ou, pour une pièce sur relais, moins de 59 s,
+  n'arrête pas la fenêtre du trim FF ; un temps sans chaleur plus long rejette toute fenêtre
   qui le chevauche. Une pièce dont la chaudière est souvent arrêtée pendant
   qu'elle demande, des minutes durant, apprend son trim plus lentement.
 - Après une interruption de l'état de la chaudière, aucune réponse passive
@@ -1412,6 +1450,7 @@ une acceptation ou un rejet causal sans modifier la décision d’apprentissage.
 | `AB_SETTLE_K_PASSIVE`          | `3`    |
 | `AB_SETTLE_ACTIVE_CAP_FRAC`    | `0.5`  |
 | `BOILER_PAUSE_CONFIRM_S`       | `SMARTPI_RECALC_INTERVAL_SEC` − 1 (`59`) |
+| `BOILER_VALVE_HOLD_S`          | 2 × `SMARTPI_RECALC_INTERVAL_SEC` (`120`) |
 | `BOILER_BLINK_S`               | `5`    |
 
 ### 6.2 Régulation
@@ -1507,8 +1546,9 @@ La matrice pilote uniquement la mise à jour des gains et l'apprentissage thermi
 4. **Hagglund T. et Astrom K.J.**, Supervision of adaptive control algorithms, *Automatica* 36(8), 2000, 1171–1180 : la pause d'apprentissage et la chaleur que donne la chaudière centrale, et les fenêtres du trim FF pendant que la chaudière est arrêtée (3.8) ; un pas de la mesure brute qui compte une fois confirmé (3.6).
 5. **Astrom K.J. et Hagglund T.**, *PID Controllers: Theory, Design, and Tuning*, 2e éd., Instrument Society of America, 1995 : la durée minimale OFF après une réinitialisation et la réponse passive après une période active établie (3.6) ; la pause d'apprentissage, l'impulsion d'un actionneur marche/arrêt à chaque cycle, la panne d'un actionneur, les fenêtres du trim FF pendant que la chaudière est arrêtée, et un arrêt daté de celui de la chaudière (3.8) ; un démarrage ou un arrêt compté depuis l'application de la commande, et un pas de la mesure brute qui compte une fois confirmé (3.6).
 6. **Skogestad S.**, Simple analytic rules for model reduction and PID controller tuning, *Journal of Process Control* 13, 2003, 291–309 : pause d'apprentissage pendant que la chaudière centrale est arrêtée (3.8).
-7. **Ren J., Su M., Zhao X., Liu J. et Song S.**, Experimental study on the dynamic thermal response of a radiant floor system in an office building, *E3S Web of Conferences* 246, 2021, 10003 : la réponse passive après une période active établie (3.6).
+7. **Ren J., Su M., Zhao X., Liu J. et Song S.**, Experimental study on the dynamic thermal response of a radiant floor system in an office building, *E3S Web of Conferences* 246, 2021, 10003 : la réponse passive après une période active établie (3.6) ; la réponse d'un plancher chauffant face au maintien d'une vanne (3.8).
 8. **Chen W., Toueg S. et Aguilera M.K.**, On the quality of service of failure detectors, *IEEE Transactions on Computers* 51(5), 2002, 561–579 : l'attente avant qu'un démarrage de la chaudière centrale compte (3.8) ; un pas de la mesure brute qui compte une fois confirmé (3.6).
 9. **Brembilla E., Soleimani-Mohseni M. et Olofsson T.**, Transient model of a panel radiator, *Proceedings of Building Simulation 2015*, 14e conférence IBPSA, Hyderabad, 2015, 2749–2756 : le maintien d'une vanne pendant les arrêts courts de la chaudière centrale (3.8).
+10. **Boháč J.**, *Dynamické chování otopných ploch ve vazbě k řízení jejich tepelného výkonu* (Comportement dynamique des émetteurs de chaleur en lien avec la régulation de leur puissance), thèse de doctorat, Université technique tchèque de Prague, faculté de génie mécanique, 2019 : la durée du maintien d'une vanne pendant les arrêts courts de la chaudière centrale (3.8).
 
 Ce document sert de référence alignée sur l'implémentation SmartPI actuelle.
