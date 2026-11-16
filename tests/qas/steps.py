@@ -725,6 +725,10 @@ class Bench:
         """The test rooms' valves take and report a new opening ``seconds_`` after it is set."""
         await self.api.call(ROOMS_DOMAIN, "set_valve_report_delay", {"seconds": seconds_})
 
+    async def sensor_offset(self, climate: str, offset: float) -> None:
+        """``climate``'s room sensor reads the room's temperature plus ``offset`` degC, at once."""
+        await self.api.call(ROOMS_DOMAIN, "set_sensor_offset", {"room": KEYS[climate], "offset": offset})
+
     async def hvac(self, climate: str, mode: str) -> None:
         await self.api.call("climate", "set_hvac_mode", {"entity_id": climate, "hvac_mode": mode})
 
@@ -855,6 +859,8 @@ class Bench:
                 await self.hvac(climate, "heat")
         await self.api.call("input_boolean", "turn_off", {"entity_id": WEST_WINDOW})
         await self.valve_delay(CONTEXT.valve_delay_s)
+        for climate in KEYS:
+            await self.sensor_offset(climate, 0.0)
         await self.setpoints(**{WEST: STOPPED, EAST: STOPPED, NORTH: STOPPED})
         self.calling.clear()
         entity_id, value = await self.threshold_entity()

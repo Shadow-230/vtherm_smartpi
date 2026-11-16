@@ -33,7 +33,10 @@ class Temperature(SimEntity, SensorEntity):
 
     def refresh(self) -> bool:
         sim = self.hub.sim
-        value = reading(sim.rooms[self._room].temperature if self._room else sim.outdoor_c(sim.t_s))
+        if self._room:
+            value = reading(sim.rooms[self._room].temperature + self.hub.sensor_offsets.get(self._room, 0.0))
+        else:
+            value = reading(sim.outdoor_c(sim.t_s))
         if value == self._attr_native_value:
             return False
         self._attr_native_value = value

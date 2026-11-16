@@ -10,3 +10,20 @@ set_valve_report_delay:
           min: 0
           max: 600
           step: 0.1
+set_sensor_offset:
+  name: Set a room's sensor offset
+  description: The room's sensor reads its temperature plus this offset, at once; the room itself is unchanged (test only).
+  fields:
+    room:
+      name: Room
+      required: true
+      selector:
+        text:
+    offset:
+      name: Offset
+      required: true
+      selector:
+        number:
+          min: -1
+          max: 1
+          step: 0.1

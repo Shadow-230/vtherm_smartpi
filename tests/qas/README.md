@@ -69,9 +69,14 @@ only while the boiler's switch is on. The outdoor temperature moves by ±0.2 °C
 for hours. Entities: each room's temperature sensor (0.1 °C, written when it changes), its valve
 or its switch (an electric heater's, or a relay's), the outdoor temperature sensor and the
 boiler's switch. One tick every 7 s.
-One service changes the rooms in place: `smartpi_test_rooms.set_valve_report_delay` (`seconds`):
-a valve takes and reports a new opening only that long after it was set, as a real valve head
-moves for seconds before it reports (0 s by default, which reports at once).
+Two services change the rooms in place:
+- `smartpi_test_rooms.set_valve_report_delay` (`seconds`): a valve takes and reports a new opening
+  only that long after it was set, as a real valve head moves for seconds before it reports (0 s
+  by default, which reports at once);
+- `smartpi_test_rooms.set_sensor_offset` (`room`, `offset`): the room's sensor reads its
+  temperature plus `offset` °C, at once, the room itself unchanged (0 by default). +0.1 °C then 0
+  is a one-step toggle of the reading, +0.1 °C kept a step that stays; the start state sets every
+  offset back to 0.
 
 ## 3. The rooms and the roles
 
@@ -314,10 +319,9 @@ for a background command.
   20-60 minutes at 100 %, without the sensor's step (634 s, East, a room at 21.5 degC). On
   a65202d a step of the sensor near the boiler's stop gave 31.8 s (BP33, FAIL) and 120.1 s
   (BP29, which then asked only 60 s): the stop dated back took its peak from the filter's own
-  history (check of a65202d). No scenario puts such a step on purpose: the test rooms have no
-  service for it (only `set_valve_report_delay`), so the unit tests cover it
-  (`tests/test_smartpi_deadtime_back_dating.py`), and a rerun of BP29 or BP33 is only a
-  regression check.
+  history (check of a65202d). No scenario puts such a step on purpose yet; the unit tests cover
+  it (`tests/test_smartpi_deadtime_back_dating.py`), and a rerun of BP29 or BP33 is only a
+  regression check. `set_sensor_offset` (section 2) can put the step for a probe or a scenario.
 - BP33 lowers VTherm's threshold to 1 device so that the boiler heats East alone, then puts it
   back to 2 while East calls: the boiler goes off and East stops itself about 30 s later, within a
   valve's hold (120 s) and before its learning pause, then calls again 120 s after its stop, the

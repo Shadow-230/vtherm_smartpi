@@ -12,9 +12,14 @@ Entities, all ``*.smartpi_test_rooms_*``: each room's temperature sensor and its
 radiator behind an on/off actuator), the outdoor temperature sensor and, with a water emitter, the
 boiler's switch that Versatile Thermostat's central boiler drives. The physics is ``model.py``; it runs in real time, one tick every 7 s.
 
-A scenario service, ``set_valve_report_delay`` (``seconds``): a valve takes a new opening, and
-reports it, only that long after it was set, as a real valve head moves for seconds before it
-reports; a new opening set meanwhile replaces the pending one. 0 s (the default) reports at once.
+Two scenario services:
+- ``set_valve_report_delay`` (``seconds``): a valve takes a new opening, and reports it, only that
+  long after it was set, as a real valve head moves for seconds before it reports; a new opening
+  set meanwhile replaces the pending one. 0 s (the default) reports at once.
+- ``set_sensor_offset`` (``room``, ``offset``): the room's sensor reads its temperature plus
+  ``offset`` degC, at once, the room itself unchanged. +0.1 then 0 is a one-step toggle of the
+  reading, +0.1 kept a step that stays (a room near a quantisation boundary). 0 (the default)
+  reads the room.
 """
 
 from __future__ import annotations
@@ -62,6 +67,7 @@ class Hub:
         self.heaters = heaters  # room -> "radiator", "electric" or "relay"
         self._start = time.monotonic()
         self.valve_report_delay_s = 0.0
+        self.sensor_offsets: dict[str, float] = {}  # room -> degC added to its sensor's reading
 
     @callback
     def update(self, _now: datetime | None = None) -> None:
@@ -119,6 +125,22 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
 
     hass.services.async_register(
         DOMAIN, "set_valve_report_delay", set_valve_report_delay, vol.Schema({vol.Required("seconds"): vol.All(vol.Coerce(float), vol.Range(min=0.0))})
+    )
+
+    async def set_sensor_offset(call: ServiceCall) -> None:
+        hub.sensor_offsets[call.data["room"]] = float(call.data["offset"])
+        hub.update()  # the sensor reads it at once
+
+    hass.services.async_register(
+        DOMAIN,
+        "set_sensor_offset",
+        set_sensor_offset,
+        vol.Schema(
+            {
+                vol.Required("room"): vol.In(list(rooms)),
+                vol.Required("offset"): vol.All(vol.Coerce(float), vol.Range(min=-1.0, max=1.0)),
+            }
+        ),
     )
 
     @callback
