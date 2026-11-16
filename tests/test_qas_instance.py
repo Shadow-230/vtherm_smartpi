@@ -530,3 +530,46 @@ async def test_the_ff_trim_is_not_changed_by_a_long_stop_of_the_boiler(hass: Hom
         assert _live(hass, WEST)["power"]["current_cycle_percent"] > 0
         assert trim() == before
     assert _live(hass, WEST)["learning"]["boiler_paused"] is True
+
+
+@pytest.mark.parametrize("expected_lingering_timers", [True])
+async def test_a_relay_room_s_heat_is_held_through_a_short_stop_of_the_boiler(hass: HomeAssistant, freezer: Any) -> None:
+    """As BP40 on the bench: boiler-relay, North (relay) learned and heating at 100 % alone, the
+    boiler with it; VTherm's threshold raised to 2 for 60 s stops the boiler while North's relay
+    stays on: North's heat is held (no pause, the estimator still sees its command). Raised again
+    for 150 s: a cut, North pauses 120 s after the boiler's stop."""
+    await _prepare(hass, ROLES["boiler-relay"])
+    registry = er.async_get(hass)
+    boiler = registry.async_get_entity_id("binary_sensor", VT, "central_boiler_state")
+    relay = f"switch.{ROOMS_DOMAIN}_north_heater"
+    threshold = registry.async_get_entity_id("number", VT, COUNT_THRESHOLD_UID)
+    await hass.services.async_call(HELPER_DOMAIN, "load_learned_state", {"entity_id": NORTH, "state": "north_relay"}, blocking=True)
+    await _targets(hass, **{WEST: 7.0, EAST: 7.0, NORTH: 7.0})
+    await _run_for(hass, freezer, 10 * 60)
+    room_c = float(hass.states.get(f"sensor.{ROOMS_DOMAIN}_north_temperature").state)
+    await _targets(hass, **{NORTH: round(room_c + 2.0, 1)})
+    await _run_for(hass, freezer, 3 * 60)
+    assert hass.states.get(boiler).state == "on" == hass.states.get(relay).state
+    assert _live(hass, NORTH)["analysis"]["deadtime"]["last_power"] > 0
+
+    async def stop_for(seconds: float) -> list[tuple[float, bool, float, str]]:
+        await hass.services.async_call("number", "set_value", {"entity_id": threshold, "value": 2}, blocking=True)
+        seen = []
+        for step in range(int(seconds / 7)):
+            await _run_for(hass, freezer, 7.0)
+            live = _live(hass, NORTH)
+            seen.append(((step + 1) * 7.0, live["learning"]["boiler_paused"], live["analysis"]["deadtime"]["last_power"], hass.states.get(relay).state))
+            assert hass.states.get(boiler).state == "off"
+        await hass.services.async_call("number", "set_value", {"entity_id": threshold, "value": 1}, blocking=True)
+        await _run_for(hass, freezer, 2 * 60)
+        return seen
+
+    short = await stop_for(60.0)
+    assert all(state == "on" for *_, state in short)
+    assert not any(p for _, p, _, _ in short) and all(power > 0 for _, _, power, _ in short)
+
+    long = await stop_for(150.0)
+    assert all(state == "on" for *_, state in long)
+    # VTherm stops the boiler within a step of the threshold's change; the readings come every 7 s.
+    assert not any(p for at, p, _, _ in long if at < 115.0)
+    assert all(p and power == 0.0 for at, p, power, _ in long if at >= 120.0 + 2 * 7.0)

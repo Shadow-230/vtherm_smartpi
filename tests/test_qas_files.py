@@ -567,8 +567,8 @@ def test_the_pack_s_pause_confirmation_is_smartpi_s() -> None:
 def test_the_relay_role_and_its_scenarios() -> None:
     """boiler-relay: North a water radiator behind a relay (a switch), counted by the central boiler
     with a threshold of one device, so that North alone keeps it on; North's learned state is its
-    room's model; BP34 to BP38 run on it alone, North not calling at the start, and every
-    other scenario on another role but BP0."""
+    room's model; BP34 to BP38 and BP40 run on it alone, North not calling at the start, and
+    every other scenario on another role but BP0."""
     from pack import RELAY_NORTH  # noqa: PLC0415
     from scenarios import RELAY_STATE  # noqa: PLC0415
 
@@ -581,9 +581,9 @@ def test_the_relay_role_and_its_scenarios() -> None:
     assert configuration.configuration(role)["smartpi_test_rooms"]["rooms"]["north"]["heater"] == "relay"
     assert RELAY_STATE == learned_state.RELAY == learned_state.relay_file().stem
     assert learned_state.model(north)["deadtime_s"] == 780.0
-    for sid in ("BP34", "BP35", "BP36", "BP37", "BP38"):
+    for sid in ("BP34", "BP35", "BP36", "BP37", "BP38", "BP40"):
         assert (SCENARIOS[sid].roles, SCENARIOS[sid].north) == (("boiler-relay",), 7.0), sid
-    others = [sid for sid, s in SCENARIOS.items() if "boiler-relay" in s.roles and sid not in ("BP0", "BP34", "BP35", "BP36", "BP37", "BP38")]
+    others = [sid for sid, s in SCENARIOS.items() if "boiler-relay" in s.roles and sid not in ("BP0", "BP34", "BP35", "BP36", "BP37", "BP38", "BP40")]
     assert not others, others
 
 
