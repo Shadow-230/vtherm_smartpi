@@ -678,3 +678,22 @@ def test_a_log_line_the_pattern_cannot_read_fails_the_check(kind) -> None:
     with pytest.raises(UnreadLogLine):
         read([*others, unread])
     assert read(others) == []
+
+
+def test_bp0_notes_vtherm_s_warnings_of_home_assistant_s_deprecated_api_only() -> None:
+    """BP0 notes VTherm's warnings that Home Assistant 2026.11 deprecates part of its entity API
+    (the bench's check of 8972367: two entries, three messages each), and nothing else: an entry
+    with another message, SmartPI's logger, or an error still fails the run."""
+    from scenarios import vt_api_deprecation  # noqa: PLC0415
+
+    deprecated = [
+        f"custom_components.versatile_thermostat.base_thermostat::BaseThermostat provides the deprecated {name}, "
+        f"this will stop working in Home Assistant 2027.11, use native_{name} instead, please report it to the custom integration author"
+        for name in ("temperature_unit", "current_temperature", "target_temperature")
+    ]
+    entry = {"name": "custom_components.versatile_thermostat.base_thermostat", "level": "WARNING", "message": deprecated}
+    assert vt_api_deprecation(entry)
+    assert not vt_api_deprecation({**entry, "message": [*deprecated, "Something else went wrong"]})
+    assert not vt_api_deprecation({**entry, "name": "custom_components.vtherm_smartpi.handler"})
+    assert not vt_api_deprecation({**entry, "level": "ERROR"})
+    assert not vt_api_deprecation({**entry, "message": []})
