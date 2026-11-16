@@ -1948,3 +1948,82 @@ async def BP39(b: Bench) -> None:
     b.check(not changed, f"West's FF trim unchanged through the boiler's stop: output {before['trim']} ({', '.join(changed[:3]) or 'no change'})")
     reasons = sorted({str(of(s, WEST, key)) for s in seen for key in ("trim_stationary", "trim_periodic")})
     b.note(f"West's trim windows rejected for: {', '.join(reasons)}")
+
+
+# --- BP40: a relay room's heat through a short stop of the boiler ----------------------------------
+# A boiler that goes off while a relay room's heat flows (the relay on, another room's off part with
+# a threshold of devices) is held as heat for 120 s, as for a valve: the water in the radiator goes
+# on heating, whatever drives it (Bohac 2019, Table 6, p. 77; technical_doc.md 3.8.4). North heats
+# at 100 % alone (threshold 1), its relay on throughout; raising the threshold to 2 stops the boiler
+# while North's relay stays on. Before the hold, North's heat was cut 5 s into such a stop.
+
+RELAY_SHORT_STOP_S = 60.0  # BP40: shorter than the hold
+RELAY_LONG_STOP_S = VALVE_HOLD_S + 30.0  # BP40: longer than the hold
+
+
+@scenario(
+    "BP40",
+    ("boiler-relay",),
+    lambda role: total(PUBLISHED, Wait(2 * RECALC_S, 2 * CYCLE_S), Wait(RELAY_SHORT_STOP_S, RELAY_SHORT_STOP_S), Wait(2 * RECALC_S, 2 * CYCLE_S), Wait(RELAY_LONG_STOP_S, RELAY_LONG_STOP_S), PUBLISHED),
+    PAUSE_TESTS,
+    north=STOPPED,
+)
+async def BP40(b: Bench) -> None:
+    """North learned (a water radiator behind a relay), West and East not calling → North calls 2 degC above its room alone (threshold 1): SmartPI heats at 100 %, its relay on and the boiler with it, for a calculation period; VTherm's threshold raised to 2 devices for 60 s, then back to 1, so the boiler goes off while North's relay stays on; then raised for 150 s → the role shows the case: North's relay stays on through both stops; through the 60-s stop North's heat is held (3.8.4): North never pauses, SmartPI's dead-time estimator sees its command in every reading, and the log has no "North - SmartPI heat stopped with the central boiler" line; the 150-s stop is a cut dated from the boiler's stop: North's "heat stopped" line and its pause 120 s after it (SmartPI's log); the threshold is back to 1."""
+    await north_learned(b)
+    room_c = of(await b.snapshot(), NORTH, "indoor")
+    if not isinstance(room_c, (int, float)):
+        b.check(False, f"North's room temperature: {room_c}")
+        return
+    entity_id, original = await b.threshold_entity()
+
+    async def heating(what: str) -> bool:
+        took, snap = await b.until(
+            lambda s: s["boiler"] == "on" and of(s, NORTH, "heater") == "on" and (of(s, NORTH, "dt_power") or 0) > 0,
+            2 * CYCLE_S,
+            1.0,
+        )
+        b.check(took is not None and of(snap, NORTH, "opening") == 100, f"{what}: North heats at {of(snap, NORTH, 'opening')} %, its relay {of(snap, NORTH, 'heater')}, the boiler {snap['boiler']}")
+        if took is not None:
+            await asyncio.sleep(RECALC_S)  # its heat flows for a calculation period
+        return took is not None
+
+    async def threshold(value: float) -> None:
+        await b.api.call("number", "set_value", {"entity_id": entity_id, "value": value})
+        b.count_threshold = value
+
+    try:
+        target = round(room_c + HEAT_STEP_C, 1)
+        b.note(f"— North calls alone ({target:g} degC, its room {room_c:g} degC), the threshold 1 device")
+        await b.calls_at(NORTH, target)
+        if not await heating("Before the short stop"):
+            return
+        b.note(f"— VTherm's threshold 2 devices for {RELAY_SHORT_STOP_S:.0f} s, North's relay on")
+        raised = time.time()
+        await threshold(2.0)
+        took, _ = await b.until(lambda s: s["boiler"] == "off", BOILER_STOPS.maximum_s, 0.5)
+        b.check(took is not None, f"VTherm's boiler off at the threshold raised: after {seconds(took)} s")
+        seen = await b.watch(RELAY_SHORT_STOP_S, 2.0)
+        await threshold(original)
+        relay_off = [clock(s) for s in seen if of(s, NORTH, "heater") != "on"]
+        paused = [clock(s) for s in seen if of(s, NORTH, "paused") is True]
+        unpowered = [f"{clock(s)} {of(s, NORTH, 'dt_power')}" for s in seen if not (of(s, NORTH, "dt_power") or 0) > 0]
+        b.check(not relay_off, f"North's relay on through the short stop ({', '.join(relay_off[:3]) or 'always'})")
+        b.check(not paused and not unpowered, f"North's heat held through the {RELAY_SHORT_STOP_S:.0f}-s stop: paused at {', '.join(paused[:3]) or 'no reading'}; the estimator without power at {', '.join(unpowered[:3]) or 'no reading'}")
+        if not await heating("After the short stop"):
+            return
+        stops = logged_heat_stops(await asyncio.to_thread(instance_log, HEAT_STOP_LINE, datetime.fromtimestamp(raised - CLOCK_MARGIN_S, UTC)), NAMES[NORTH])
+        b.check(not [at for at, _ in stops if at >= raised - CLOCK_MARGIN_S], f"no \"North - SmartPI heat stopped\" line through the short stop: {len(stops)} lines")
+
+        b.note(f"— VTherm's threshold 2 devices for {RELAY_LONG_STOP_S:.0f} s, North's relay on")
+        await threshold(2.0)
+        took, _ = await b.until(lambda s: s["boiler"] == "off", BOILER_STOPS.maximum_s, 0.5)
+        b.check(took is not None, f"VTherm's boiler off at the threshold raised again: after {seconds(took)} s")
+        off_at = await boiler_off_at(b)
+        await b.watch(RELAY_LONG_STOP_S, 5.0)
+        await stop_held(b, NORTH, off_at, f"The threshold raised for {RELAY_LONG_STOP_S:.0f} s")
+    finally:
+        await b.calls_at(NORTH, STOPPED)
+        await threshold(original)
+        snap = await b.snapshot()
+        b.check(snap.get("count_threshold") == original, f"VTherm's threshold back to {original:g}: {snap.get('count_threshold')}")

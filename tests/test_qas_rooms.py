@@ -186,3 +186,19 @@ async def test_a_valve_reports_its_opening_after_the_delay(rooms_hass: HomeAssis
     await hass.services.async_call("smartpi_test_rooms", "set_valve_report_delay", {"seconds": 0.0}, blocking=True)
     await _set_valve(hass, 0)
     assert hass.states.get(VALVE).state == "0.0"
+
+
+async def test_a_sensor_offset_changes_the_reading_at_once_not_the_room(rooms_hass: HomeAssistant) -> None:
+    """``set_sensor_offset``: the room's sensor reads its temperature plus the offset at once, the
+    room itself unchanged; +0.1 then 0 is a one-step toggle of the reading; another room's sensor
+    is not touched."""
+    hass = rooms_hass
+    sensor = "sensor.smartpi_test_rooms_west_temperature"
+    room = hass.data["smartpi_test_rooms"].sim.rooms["west"]
+    before = room.temperature
+    await hass.services.async_call("smartpi_test_rooms", "set_sensor_offset", {"room": "west", "offset": 0.1}, blocking=True)
+    assert hass.states.get(sensor).state == "19.1"
+    assert room.temperature == pytest.approx(before, abs=1e-3)  # the rooms moved on milliseconds, no more
+    assert hass.states.get("sensor.smartpi_test_rooms_north_temperature").state == "19.0"
+    await hass.services.async_call("smartpi_test_rooms", "set_sensor_offset", {"room": "west", "offset": 0.0}, blocking=True)
+    assert hass.states.get(sensor).state == "19.0"

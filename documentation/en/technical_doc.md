@@ -568,8 +568,9 @@ held as heat for `BOILER_VALVE_HOLD_S` (120 s, two calculation periods):
 - a room that stops calling within it had its heat stopped by the boiler: its
   stop is dated from the boiler's stop in the same way.
 
-A room on a relay has its own rule (3.8.4). A call with the boiler off is not
-held: it waits for the boiler, as any start.
+A room on a relay gets the same hold when the boiler goes off while its heat
+flows, the relay on (3.8.4). A call with the boiler off is not held: it waits for
+the boiler, as any start.
 
 The hold's length comes from measurements of radiators and floor heating. When
 the boiler stops, the water stays in the radiator, or the boiler's pump goes on
@@ -654,21 +655,30 @@ Thermostat's cycle scheduler, not in valve mode), while SmartPI calls:
 - in between, the last state holds: in the relay's own off part, and while the
   boiler may still follow a relay just on. Learning does not pause in a normal
   cycle, and the estimator sees no stop and no start in it; a cut from outside
-  holds through the relay's on and off parts, without flickering.
+  holds through the relay's on and off parts, without flickering;
+- the boiler going off while the room's heat flows (the relay and the boiler
+  on), as in another room's off part with a threshold of devices, is held as
+  heat for `BOILER_VALVE_HOLD_S` (120 s), as for a valve (3.8.2): the water in
+  the radiator goes on heating, whatever drives it. The boiler back within it is
+  no cut and no start; still off after it, through the relay's own off part
+  too, it is a cut dated from the boiler's stop, and the pause counts from it.
+  A relay that turns on with the boiler already off is not held: the boiler did
+  not start for it, and the rule of 5 s above applies.
 
 ```mermaid
 stateDiagram-v2
     direction LR
     state "heat" as heat
     state "no heat (cut)" as cut
-    heat --> cut: boiler off, relay on for 5 s
+    heat --> cut: relay turned on, boiler off for 5 s
+    heat --> cut: boiler off 120 s after it stopped while the heat flowed
     heat --> cut: boiler off, relay off in the on part of its cycle
     cut --> heat: boiler and relay both on
 ```
 
 The diagram shows the room's heat, for the dead-time estimator and the learning
-pause, while SmartPI calls: any other change keeps the state. The second path
-to a cut is explained in the next paragraph.
+pause, while SmartPI calls: any other change keeps the state. The third path to
+a cut is explained in the next paragraph.
 
 The off part is the relay's own only where SmartPI's applied cycle has the relay
 off. SmartPI knows that cycle from Versatile Thermostat's receipts of each
@@ -800,7 +810,8 @@ stop of 59 s (reference 10, Table 6, p. 77).
   sample, at most 5 s late.
 - A room that starts calling within 5 s of the boiler's start counts its start
   from the boiler's start, up to 5 s before its call.
-- A room on a valve gets less heat while its boiler is off for less than 120 s,
+- A room on a valve, or on a relay whose heat flowed, gets less heat while its
+  boiler is off for less than 120 s,
   which the estimator does not see: its heating dead time comes out longer, by
   up to the length of such stops (on average at most half of it, in the
   simulation above). Stops longer than 120 s in every cycle of another room's
@@ -818,8 +829,9 @@ stop of 59 s (reference 10, Table 6, p. 77).
 - A cut that starts in a relay's own off part loses its passive measurement when
   that measurement comes out shorter than the published one, or when there is no
   published one yet.
-- A boiler off while the room calls for less than a valve's hold (120 s), or,
-  for a room on a relay, for less than 59 s, does not stop the FF trim's window;
+- A boiler off while the room calls for less than the hold (120 s: a valve, or
+  a relay whose heat flowed), or otherwise for less than 59 s, does not stop the
+  FF trim's window;
   a longer time without heat rejects every window that overlaps it. A room whose boiler is often off while it calls, for minutes at
   a time, learns its trim more slowly.
 - After an outage of the boiler's state, no passive response is timed until a

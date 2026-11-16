@@ -40,13 +40,16 @@ All notable changes to this project will be documented in this file.
   5 s after it, the boiler's return is its start. The boiler's state known again
   after an outage restarts the estimator's observation, as a restart does.
 - Dead time, a room on a relay that alone keeps the boiler on: the relay's own
-  off part is no cut of heat. The boiler cuts the heat only once the relay has
-  been on for 5 s with the boiler off, or when the relay is off where SmartPI's
+  off part is no cut of heat. The boiler cuts the heat once the relay has been
+  on for 5 s with the boiler off, or when the relay is off where SmartPI's
   applied cycle has it on; the heat comes back only while the boiler and the
-  relay are both on. A cut found only at the relay's next on part is dated from
-  the room's last heat, and its passive measurement is kept only when it does
-  not lower the published value (outcome `ignored`). Valves and thermostats
-  without a cycle scheduler are not concerned.
+  relay are both on. A boiler that goes off while the room's heat flows (the
+  relay on, another room's off part) is held as heat for 120 s, as for a valve;
+  a longer stop is a cut dated from the boiler's stop. A cut found only at the
+  relay's next on part is dated from the room's last heat, and its passive
+  measurement is kept only when it does not lower the published value (outcome
+  `ignored`). Valves and thermostats without a cycle scheduler are not
+  concerned.
 - Dead-time estimator (`smartpi/deadtime_estimator.py`), for every thermostat:
   - a reset (of learning, or a change between heating and cooling) starts the
     minimum time without heat (600 s), as a restart does;

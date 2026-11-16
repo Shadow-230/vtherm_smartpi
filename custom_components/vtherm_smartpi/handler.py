@@ -101,13 +101,14 @@ class SmartPIHandler:
         self._heat_flowed_until: float | None = None
         self._relay_heat_ended_at: float | None = None
         self._plan_check_remove = None
-        # A valve (any thermostat not on a relay): when the boiler went off while the room's heat
-        # flowed (None otherwise), held as heat for ``BOILER_VALVE_HOLD_S``, the check
-        # scheduled then, and the moment of a cut so confirmed, from which the pause counts.
-        self._valve_boiler_off_at: float | None = None
-        self._valve_check_remove = None
-        self._valve_cut_at: float | None = None
-        self._valve_stopped_at: float | None = None
+        # A valve (any thermostat not on a relay), or a relay whose heat flowed: when the boiler
+        # went off while the room's heat flowed (None otherwise), held as heat for
+        # ``BOILER_VALVE_HOLD_S``, the check scheduled then, and the moment of a cut so confirmed,
+        # from which the pause counts.
+        self._held_boiler_off_at: float | None = None
+        self._hold_check_remove = None
+        self._held_cut_at: float | None = None
+        self._held_stopped_at: float | None = None
         # The listener of Versatile Thermostat's central boiler state (``_listen_to_the_boiler``).
         self._boiler_listener_remove = None
         self._valve_linearization_configured: bool = False
@@ -272,7 +273,7 @@ class SmartPIHandler:
         self._cancel_the_boiler_check()
         self._cancel_the_device_check()
         self._cancel_the_plan_check()
-        self._cancel_the_valve_check()
+        self._cancel_the_hold_check()
         clear_valve_config_issues(t)
 
     def _remove_receipt_callback(self) -> None:
@@ -599,7 +600,7 @@ class SmartPIHandler:
         calls = self._calls_for_boiler_heat(algo)
         boiler_on = self._boiler_heats_the_room(algo, central_boiler_on(t.hass) if counted else None, calls, now)
         heat_changed = self._follow_the_boiler(algo, boiler_on, now)
-        cut_at, self._valve_cut_at = self._valve_cut_at, None
+        cut_at, self._held_cut_at = self._held_cut_at, None
         if not (calls and boiler_on is False):
             self._boiler_off_since = None
         elif self._boiler_off_since is None:
@@ -639,23 +640,62 @@ class SmartPIHandler:
         the cycle has it on, ``BOILER_BLINK_S`` into its on part (unavailable, or a pulse
         Versatile Thermostat left out), follows the boiler as read. A cut found after the room's
         heat last flowed (both on) is dated from then (``SmartPI.set_boiler_state``, ``ended_at``).
+
+        The boiler going off while the room's heat flows, the relay on (another room's off part,
+        with a threshold of devices), is held as heat for ``BOILER_VALVE_HOLD_S``, as for a valve:
+        the water in the radiator goes on heating (``_relay_stop_held``).
         """
         device_on = self._track_the_device(now)
+        flowed = self._heat_flowing
         self._follow_the_heat(boiler_on is True and device_on, now)
         if boiler_on is None or not calls or not self._drives_a_relay():
             self._relay_heat = boiler_on
             self._cancel_the_plan_check()
             return self._valve_heat(algo, boiler_on, calls, now)
         before = self._relay_heat
+        held = self._relay_stop_held(boiler_on, device_on and flowed, now)  # ends at the boiler's return
         if boiler_on and device_on:
             self._relay_heat = True
+        elif held:
+            pass  # held as heat, or the hold's end: a cut dated from the boiler's stop
         elif not boiler_on and device_on and (self._device_held or now - (self._device_on_since or now) >= BOILER_BLINK_S):
             self._relay_heat = False
         elif (not device_on and self._relay_off_against_its_cycle(algo, now)) or self._relay_heat is None:
             self._relay_heat = boiler_on
-        if before is True and self._relay_heat is False and self._heat_flowed_until is not None and self._heat_flowed_until < now - 1.0:
+        if (
+            before is True
+            and self._relay_heat is False
+            and self._held_stopped_at is None
+            and self._heat_flowed_until is not None
+            and self._heat_flowed_until < now - 1.0
+        ):
             self._relay_heat_ended_at = self._heat_flowed_until
         return self._relay_heat
+
+    def _relay_stop_held(self, boiler_on: bool, stopped_flowing: bool, now: float) -> bool:
+        """Whether the boiler's state for a relay that calls is settled by the hold: the boiler
+        gone off while the room's heat flowed (``stopped_flowing``: the relay on, the heat flowing
+        until now) is held as heat for ``BOILER_VALVE_HOLD_S``, through the relay's own off part
+        too; still off after it, it is a cut dated from the boiler's stop, and the pause counts from
+        it (``_held_stopped_at``, ``_held_cut_at``). A boiler back within the hold is no cut and no
+        start. A relay turned on with the boiler off is not held: the boiler did not start for it."""
+        if boiler_on is not False:
+            self._held_boiler_off_at = None
+            self._cancel_the_hold_check()
+            return False
+        if self._held_boiler_off_at is None:
+            if not stopped_flowing:
+                return False
+            self._held_boiler_off_at = now
+            self._schedule_the_hold_check()
+        if now - self._held_boiler_off_at < BOILER_VALVE_HOLD_S:
+            self._relay_heat = True
+            return True
+        self._held_stopped_at = self._held_cut_at = self._held_boiler_off_at
+        self._held_boiler_off_at = None
+        self._cancel_the_hold_check()
+        self._relay_heat = False
+        return True
 
     def _valve_heat(self, algo: SmartPI, boiler_on: bool | None, calls: bool, now: float) -> bool | None:
         """The boiler's state as it heats a room not on a relay (a valve): the state read, but a
@@ -671,43 +711,44 @@ class SmartPIHandler:
         from the boiler's stop (``SmartPI.set_boiler_state``, ``ended_at``), and the pause counts
         from that moment. Only a stop of heat that flows is held: a call with the boiler off
         waits for it, as any start."""
-        if boiler_on is False and not calls and self._valve_boiler_off_at is not None and algo.boiler_on is True:
+        if boiler_on is False and not calls and self._held_boiler_off_at is not None and algo.boiler_on is True:
             # The room stopped calling during the hold: its heat had stopped with the boiler.
-            self._valve_stopped_at = self._valve_boiler_off_at
+            self._held_stopped_at = self._held_boiler_off_at
         if boiler_on is not False or not calls or algo.boiler_on is not True:
-            self._valve_boiler_off_at = None
-            self._cancel_the_valve_check()
+            self._held_boiler_off_at = None
+            self._cancel_the_hold_check()
             return boiler_on
-        if self._valve_boiler_off_at is None:
-            self._valve_boiler_off_at = now
-            self._schedule_the_valve_check()
-        if now - self._valve_boiler_off_at < BOILER_VALVE_HOLD_S:
+        if self._held_boiler_off_at is None:
+            self._held_boiler_off_at = now
+            self._schedule_the_hold_check()
+        if now - self._held_boiler_off_at < BOILER_VALVE_HOLD_S:
             return True
-        self._valve_stopped_at = self._valve_cut_at = self._valve_boiler_off_at
-        self._valve_boiler_off_at = None
-        self._cancel_the_valve_check()
+        self._held_stopped_at = self._held_cut_at = self._held_boiler_off_at
+        self._held_boiler_off_at = None
+        self._cancel_the_hold_check()
         return False
 
-    def _schedule_the_valve_check(self) -> None:
-        """Check the boiler again once a valve's hold has run, while its changes are followed."""
-        self._cancel_the_valve_check()
+    def _schedule_the_hold_check(self) -> None:
+        """Check the boiler again once a hold has run (a valve's, or a relay's whose heat flowed),
+        while its changes are followed."""
+        self._cancel_the_hold_check()
         if self._boiler_listener_remove is None:
             return
-        since = self._valve_boiler_off_at
+        since = self._held_boiler_off_at
 
         @callback
         def _due(_now) -> None:
-            if self._valve_boiler_off_at != since:
+            if self._held_boiler_off_at != since:
                 return  # the boiler came back, or the room stopped calling
-            self._valve_check_remove = None
+            self._hold_check_remove = None
             self._on_boiler_change(None)
 
-        self._valve_check_remove = async_call_later(self._thermostat.hass, BOILER_VALVE_HOLD_S, _due)
+        self._hold_check_remove = async_call_later(self._thermostat.hass, BOILER_VALVE_HOLD_S, _due)
 
-    def _cancel_the_valve_check(self) -> None:
-        if self._valve_check_remove is not None:
-            self._valve_check_remove()
-            self._valve_check_remove = None
+    def _cancel_the_hold_check(self) -> None:
+        if self._hold_check_remove is not None:
+            self._hold_check_remove()
+            self._hold_check_remove = None
 
     def _follow_the_heat(self, flows: bool, now: float) -> None:
         """Whether the room's heat flows (a relay on with the boiler on), and when it last did."""
@@ -817,7 +858,7 @@ class SmartPIHandler:
             and self._boiler_read_since - self._boiler_seen_off_at < BOILER_BLINK_S
         )
         ended_at, self._relay_heat_ended_at = self._relay_heat_ended_at, None
-        stopped_at, self._valve_stopped_at = self._valve_stopped_at, None
+        stopped_at, self._held_stopped_at = self._held_stopped_at, None
         if seen is False:
             # A blink needs a stop the estimator saw: on, then off, while the room's heat flowed
             # (the estimator saw power); not a state just read off, nor the stop of a boiler that

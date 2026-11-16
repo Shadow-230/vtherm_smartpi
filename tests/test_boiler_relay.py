@@ -470,8 +470,8 @@ async def test_a_relay_room_that_starts_calling_in_a_blink_of_the_boiler_records
 
 async def test_a_relay_room_heating_through_a_blink_of_the_boiler_goes_on_heating(caplog) -> None:
     """The relay room heats, in the on part of its cycle, and the boiler goes off for 8 ms (a
-    threshold raised, North in the bench's BP38): its heat flowed, so the boiler's return is a
-    blink, logged, with no new start; the heating period goes on."""
+    threshold raised, North in the bench's BP38): its heat flowed, so the boiler's stop is held as
+    heat (3.8.2) and its return is neither a stop nor a blink; the heating period goes on."""
     caplog.set_level(logging.INFO)
     handler = _relay_handler()
     algo = handler._thermostat.prop_algorithm
@@ -482,4 +482,90 @@ async def test_a_relay_room_heating_through_a_blink_of_the_boiler_goes_on_heatin
     await loop.run(relay + _following(relay) + [(300.0, "boiler", False), (300.008, "boiler", True), (360.0, "calc", 1.0)])
 
     assert est.last_start_time == pytest.approx(FOLLOW_S) and algo._dead_time_power() == 1.0
-    assert "SmartPI heat back with the central boiler after a blink" in caplog.text
+    assert "heat stopped with the central boiler" not in caplog.text and "after a blink" not in caplog.text
+
+
+# --- a boiler's stop while a relay's heat flows is held as heat, as for a valve
+
+
+async def _relay_heating(events: list[tuple[float, str, object]], temp: Callable[[float], float] | None = None) -> tuple[SmartPIHandler, list[tuple[float, bool, float]]]:
+    """The relay at 100 % in 5-minute cycles from 0 s, plus ``events``; each event's (time, learning
+    paused, power the estimator sees)."""
+    handler = _relay_handler()
+    algo = handler._thermostat.prop_algorithm
+    loop = _Loop(handler) if temp is None else _Loop(handler, temp)
+    seen: list[tuple[float, bool, float]] = []
+
+    def watch(at: float, _kind: str) -> None:
+        seen.append((at, algo.boiler_learning_paused, algo._dead_time_power()))
+
+    await loop.run(_cycles(300.0, 1.0, 0.0, 1200.0) + [(FOLLOW_S, "boiler", True)] + events, watch)
+    return handler, seen
+
+
+async def test_a_short_stop_of_the_boiler_while_the_relay_heats_is_held_as_heat(caplog) -> None:
+    """The relay heats the room, the boiler with it; the boiler goes off for 100 s (another room's
+    off part, a threshold of devices) while the relay stays on. The water in the radiator goes on
+    heating (Bohac 2019, Table 6, p. 77): the stop is held as heat, as for a valve. No stop, no
+    pause, no new start; the estimator sees SmartPI's command throughout. Before the hold, the
+    heat was cut 5 s into the stop."""
+    caplog.set_level(logging.INFO)
+    handler, seen = await _relay_heating([(400.0, "boiler", False), (500.0, "boiler", True)])
+    est = handler._thermostat.prop_algorithm.dt_est
+
+    assert (est.last_start_time, est.last_stop_time) == (pytest.approx(FOLLOW_S), -10_000.0)
+    assert not [at for at, paused, _ in seen if paused]
+    assert {power for at, _, power in seen if at > BOILER_BLINK_S + 1.0} == {1.0}
+    assert "heat stopped" not in caplog.text and "blink" not in caplog.text
+
+
+async def test_a_stop_of_the_boiler_longer_than_the_hold_cuts_the_relay_s_heat_from_its_stop(caplog) -> None:
+    """The boiler goes off at 400 s while the relay heats and stays off: 120 s later the cut is
+    confirmed, dated from the boiler's stop (a dead time counts from the onset of the step,
+    Astrom and Hagglund 1995, 2.4, p. 16), and learning pauses at once."""
+    caplog.set_level(logging.INFO)
+    handler, seen = await _relay_heating([(400.0, "boiler", False)])
+    est = handler._thermostat.prop_algorithm.dt_est
+
+    assert est.last_stop_time == 400.0 and est.last_power == 0.0
+    assert caplog.text.count("heat stopped with the central boiler") == 1
+    paused = [at for at, p, _ in seen if p]
+    assert paused and min(paused) >= 400.0 + BOILER_VALVE_HOLD_S - 1.0 and not [at for at, p, _ in seen if 400.0 < at < 400.0 + BOILER_VALVE_HOLD_S - 1.0 and p]
+
+
+async def test_a_relay_room_that_stops_calling_in_the_hold_stops_from_the_boiler_s_stop() -> None:
+    """The boiler goes off at 1000 s while the relay heats; SmartPI stops calling 50 s later,
+    inside the hold: the room's heat had stopped with the boiler, so its stop, and the passive
+    response armed by it after a settled heating, count from the boiler's stop."""
+    handler, _ = await _relay_heating([(1000.0, "boiler", False), (1050.0, "calc", 0.0)])
+    est = handler._thermostat.prop_algorithm.dt_est
+
+    assert est.last_stop_time == 1000.0
+    assert (est.state, est.cool_start_time) == ("WAITING_COOL_RESPONSE", 1000.0)
+
+
+async def test_a_held_stop_runs_on_through_the_relay_s_own_off_part() -> None:
+    """Cycles of 300 s at 60 %: the boiler goes off at 150 s while the relay heats, the relay's own
+    off part starts at 180 s, and the boiler stays off: the hold runs out at 270 s, in the off part,
+    and the cut counts from the boiler's stop at 150 s, not from the relay's next on part."""
+    handler = _relay_handler()
+    algo = handler._thermostat.prop_algorithm
+    loop = _Loop(handler)
+    relay = _cycles(300.0, 0.6, 0.0, 900.0)
+    boiler = [e for e in _following(relay) if e[0] < 150.0] + [(150.0, "boiler", False)]
+    await loop.run(relay + boiler)
+
+    assert algo.dt_est.last_stop_time == 150.0 and algo.boiler_on is False
+
+
+async def test_a_second_stop_of_the_boiler_gets_its_own_hold(caplog) -> None:
+    """Two stops while the relay heats: 60 s from 400 s, then from 700 s for good. The first is
+    held and ends with the boiler's return; the second gets its own hold, and its cut counts from
+    its own stop at 700 s, 120 s later, not from the first one."""
+    caplog.set_level(logging.INFO)
+    handler, seen = await _relay_heating([(400.0, "boiler", False), (460.0, "boiler", True), (700.0, "boiler", False)])
+    est = handler._thermostat.prop_algorithm.dt_est
+
+    assert est.last_stop_time == 700.0
+    assert caplog.text.count("heat stopped with the central boiler") == 1
+    assert not [at for at, paused, _ in seen if paused and at < 700.0 + BOILER_VALVE_HOLD_S - 1.0]
