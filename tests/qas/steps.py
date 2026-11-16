@@ -100,6 +100,9 @@ def times(wait: Wait, n: int) -> Wait:
 # SmartPI pauses once it has called with the boiler off without a break for a calculation period, less
 # 1 s for the timer (boiler_call.BOILER_PAUSE_CONFIRM_S), at its first calculation after that.
 PAUSE_CONFIRM_S = RECALC_S - 1.0
+# A valve room holds a stop of the boiler as heat for two calculation periods while its heat flows
+# (boiler_call.BOILER_VALVE_HOLD_S, technical_doc.md 3.8.2): its stop and its pause come then.
+VALVE_HOLD_S = 2 * RECALC_S
 BLINK_S = 5.0  # boiler_call.BOILER_BLINK_S: a boiler's start, or a relay's cut, counts once it has held this long
 # The thermostat's own change: below from its setpoint's own calculation, paused at the first check a
 # period later: 60-120 s, 90 s on average, as the setpoint falls at any moment of a calculation period

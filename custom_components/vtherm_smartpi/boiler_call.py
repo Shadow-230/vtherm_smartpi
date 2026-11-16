@@ -28,6 +28,17 @@ VT_CENTRAL_BOILER_UNIQUE_ID = "central_boiler_state"
 BOILER_PAUSE_TIMER_MARGIN_S = 1.0
 BOILER_PAUSE_CONFIRM_S = SMARTPI_RECALC_INTERVAL_SEC - BOILER_PAUSE_TIMER_MARGIN_S
 
+# A room on a valve holds a stop of the boiler as heat for this long while its heat flows (3.8.2).
+# Panel radiators measured by thermography lose 63 % of their heat only after 18 to 22.4 minutes
+# once their water stops, and heat up to 63 % in 3.6 to 4.3 minutes (Bohac 2019, doctoral thesis,
+# CTU Prague, Table 6, p. 77). In a first-order model (Astrom and Hagglund 1995, 2.4, p. 16), a
+# panel radiator still gives 89 % of its heat after one stop of 120 s, and 82 to 84 % on average
+# when such stops repeat in every 5-minute cycle (Versatile Thermostat's default) of another
+# room's relay; 180 s would leave 65 to 68 %. The dead-time estimator measures a start only at
+# 80 % of power (min_power_heat_threshold): 120 s, two calculation periods, keeps the heat above
+# it, the bound lying at about 125 to 130 s.
+BOILER_VALVE_HOLD_S = 2 * SMARTPI_RECALC_INTERVAL_SEC
+
 # The dead-time estimator follows the boiler's state with a filter for its blinks: a start counts
 # once the boiler has run this long without a break (from the boiler's start), a stop at once, and
 # a boiler back within this time of its stop blinked (the room's heat did not stop). Versatile

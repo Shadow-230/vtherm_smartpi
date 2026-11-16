@@ -46,7 +46,7 @@ from .const import (
 from .hvac_mode import VThermHvacMode_OFF, VThermHvacMode_HEAT, VThermHvacMode_COOL
 from .commons import write_event_log
 from .valve_config_check import apply_valve_config_check, clear_valve_config_issues
-from .boiler_call import BOILER_BLINK_S, BOILER_PAUSE_CONFIRM_S, central_boiler_entity_id, central_boiler_on
+from .boiler_call import BOILER_BLINK_S, BOILER_PAUSE_CONFIRM_S, BOILER_VALVE_HOLD_S, central_boiler_entity_id, central_boiler_on
 from .smartpi.valve_curve import ValveCurveParams
 
 if TYPE_CHECKING:
@@ -102,7 +102,7 @@ class SmartPIHandler:
         self._relay_heat_ended_at: float | None = None
         self._plan_check_remove = None
         # A valve (any thermostat not on a relay): when the boiler went off while the room's heat
-        # flowed (None otherwise), held as heat for ``BOILER_PAUSE_CONFIRM_S``, the check
+        # flowed (None otherwise), held as heat for ``BOILER_VALVE_HOLD_S``, the check
         # scheduled then, and the moment of a cut so confirmed, from which the pause counts.
         self._valve_boiler_off_at: float | None = None
         self._valve_check_remove = None
@@ -660,7 +660,7 @@ class SmartPIHandler:
     def _valve_heat(self, algo: SmartPI, boiler_on: bool | None, calls: bool, now: float) -> bool | None:
         """The boiler's state as it heats a room not on a relay (a valve): the state read, but a
         boiler that goes off while the room's heat flows is held as heat for
-        ``BOILER_PAUSE_CONFIRM_S``, as the learning pause confirms it.
+        ``BOILER_VALVE_HOLD_S``.
 
         Versatile Thermostat's boiler can go off for seconds while the room calls: with a
         threshold of devices, in each off part of another room's relay. The water in the emitter
@@ -681,7 +681,7 @@ class SmartPIHandler:
         if self._valve_boiler_off_at is None:
             self._valve_boiler_off_at = now
             self._schedule_the_valve_check()
-        if now - self._valve_boiler_off_at < BOILER_PAUSE_CONFIRM_S:
+        if now - self._valve_boiler_off_at < BOILER_VALVE_HOLD_S:
             return True
         self._valve_stopped_at = self._valve_cut_at = self._valve_boiler_off_at
         self._valve_boiler_off_at = None
@@ -702,7 +702,7 @@ class SmartPIHandler:
             self._valve_check_remove = None
             self._on_boiler_change(None)
 
-        self._valve_check_remove = async_call_later(self._thermostat.hass, BOILER_PAUSE_CONFIRM_S, _due)
+        self._valve_check_remove = async_call_later(self._thermostat.hass, BOILER_VALVE_HOLD_S, _due)
 
     def _cancel_the_valve_check(self) -> None:
         if self._valve_check_remove is not None:

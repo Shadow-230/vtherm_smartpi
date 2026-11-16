@@ -253,7 +253,23 @@ really gives: the command while the boiler is on, and no power while it is off
 (3.8). The boiler going off is then a power cut, and its start a power start,
 also for a room that called before the boiler started.
 
+The estimator gets a start or a stop at the moment Versatile Thermostat applies
+the command, not at SmartPI's next calculation. Versatile Thermostat applies a
+command after the calculation that computed it: a valve's position at once, a
+relay's command at the start of its next cycle (at once when the cycle is
+forced or idle), and confirms each application with a receipt. SmartPI commits
+the applied power at that receipt and, when it crosses the estimator's
+threshold (0.01) either way, feeds the estimator then
+(`SmartPI._feed_dead_time_at_commit`). A dead time counts from the onset of the
+step of the control signal (reference 5, §2.4, p. 16). Fed at the next
+calculation instead, a room's own start and stop reached the estimator up to a
+calculation period (60 s) late, and both its dead times came out shorter by as
+much. A calibration feeds the estimator its own command, so a receipt during a
+calibration feeds nothing.
+
 Detection tracks the filtered indoor temperature, including during a forced calibration: a raw measurement that oscillates by one sensor step would otherwise detect a response as soon as the power steps. A detection in progress is not resumed after a restart, and the minimum OFF duration must be observed again in the new session before a detection can be armed.
+
+The filtered temperature still follows a one-step toggle of the sensor for a while: it rises with the toggle and falls back after it. While a response is waited for, a step of the raw reading therefore counts only once it is confirmed: held for `DEADTIME_RAW_CONFIRM_S = 120 s` (two of SmartPI's periodic calculations), followed by a second step the same way, or going on with a move confirmed less than 120 s before (a room that moves by more than a step every two minutes). Until then the tracking follows the filtered temperature held at its value before the step, and after a toggle, until the filtered temperature is back there. A step not confirmed does not move the trough (heat) or the peak (cool) and gives no detection; a step that comes back is the sensor's noise, not the room's response. A wait armed while a step is not confirmed starts from the temperature before the step; if the step is then confirmed, the room moved before the power transition, and the trough or peak is taken again from the filtered temperature since the transition, as without the confirmation (`_rebase_after_confirmed_step`). A step response must be "easily visible above the noise level" (reference 5, §6.4, p. 237). An adaptive controller starts learning when the error exceeds two times the noise band, the peak-to-peak amplitude of the measurement (p. 245; reference 4, §4, p. 1174). A sensor rounded to one step that toggles has a noise band of one step: one step may be a toggle, two steps is a real move, as for the trend before a start below. A relay with hysteresis works the same way: noise switches it only when the noise exceeds the hysteresis width (reference 5, §2.6, p. 39). The instant of the response is still taken from the history (the `0.01 °C` lookback), so confirming a step delays the detection, not its dating. A faster detector makes more mistakes (reference 8, p. 562): without the confirmation, a toggle of the raw reading against the response could shorten a dead time several times. Limit: a response whose first step is followed by a power transition before the step is confirmed is not measured (outcome `aborted`); the next transition measures again.
 
 The same holds after a reset of the estimator: a reset of learning (`reset_smartpi_learning`) and the reset at a change between heating and cooling start the minimum OFF duration (`min_off_time_seconds = 600 s`) at the reset. The room's past is unknown then: a room still warming from its last heating rises right after a start, and the estimator would take that rise for the response and give a dead time of about 0 s. A step response is measured from a process at rest: "it is necessary that the process be in equilibrium when the experiment is begun" (reference 5, §6.4, p. 237). A new thermostat without a saved state has no last stop either: its first start is not held back.
 
@@ -534,24 +550,47 @@ stops would drop the room's heating detection and restart its minimum time
 without heat, so a room whose boiler goes off in every such cycle would never
 measure its heating dead time and would stay in its first phase (3.1). So, while
 a thermostat not on a relay calls and its heat flows, the boiler going off is
-held as heat for `BOILER_PAUSE_CONFIRM_S` (59 s), the period that also confirms
-the pause (3.8.1):
+held as heat for `BOILER_VALVE_HOLD_S` (120 s, two calculation periods):
 
 - the boiler back within it is no stop and no start: the heating, and a
   detection in progress, go on;
 - the boiler still off after it is a stop dated from the boiler's stop: the
-  handler checks it 59 s after the stop (or at the next calculation). The
+  handler checks it 120 s after the stop (or at the next calculation). The
   estimator records the stop from then, so the minimum time without heat counts
   from it, and a passive response armed by it counts from it too, its peak taken
   from the temperature history since (`SmartPI._heat_stopped_at`): a dead time
   counts from the onset of the step (reference 5, §2.4, p. 16). The pause starts
-  at once, 59 s after the boiler's stop;
+  at once, 120 s after the boiler's stop;
 - a room that stops calling within it had its heat stopped by the boiler: its
   stop is dated from the boiler's stop in the same way.
 
 A room on a relay has its own rule (3.8.4). A call with the boiler off is not
-held: it waits for the boiler, as any start. The hold's length is the pause's
-calculation period, not a value from a publication.
+held: it waits for the boiler, as any start.
+
+The hold's length comes from measurements of radiators and floor heating. When
+the boiler stops, the water stays in the radiator, or the boiler's pump goes on
+moving the installation's warm water, so the radiator cools slowly. Panel
+radiators measured by thermography lose 63 % of their heat only after 18 to 22.4
+minutes, without a delay, while they heat up to 63 % in 3.6 to 4.3 minutes;
+sectional and tubular radiators cool more slowly still (reference 10, Table 6,
+p. 77). Floor heating changes over hours: in a measured room, its floor reached
+63 % of a change after 4.5 to 5 hours (reference 7, Table 4, p. 6). A radiator's
+cooling follows a first-order curve, its heating a curve of higher order
+(reference 10, p. 37). With the radiators' values in a first-order model
+(reference 5, §2.4, p. 16, equation 2.8), and for the heating the delay of 50 s
+and the time constant of 178 s measured on a panel radiator of 500 × 1000 mm
+(reference 10, p. 77), a panel radiator still gives at least 89 % of its heat
+after one stop of 120 s. Stops repeated in every cycle of another room's relay
+leave less: at Versatile Thermostat's default cycle of 5 minutes, 82 to 84 % on
+average for stops of 120 s, and 65 to 68 % for stops of 180 s. SmartPI's
+dead-time estimator measures a start only at a command of at least 80 %
+(`DeadTimeEstimator.min_power_heat_threshold`), so a stop it holds must leave
+the room at least that much heat. That bound lies at about 125 to 130 s; the
+hold is 120 s, two calculation periods. A simulation of a valve room whose
+boiler stopped for 60 to 114 s in every 10-minute cycle checks it: with a hold
+of 59 s the room paused its learning 8 to 13 times a day, with 120 s at most
+once in five days, and held stops of 120 s lengthened the heating dead time it
+measured by 42 to 54 s on average.
 
 #### 3.8.3 Blinks of the boiler
 
@@ -695,7 +734,8 @@ applied power rises above 0 with the boiler off, and ends at the boiler's
 start. A mark shorter than the pause's confirmation (`BOILER_PAUSE_CONFIRM_S`,
 59 s) is dropped: a blink of the boiler, or the seconds a room's own start
 waits for it, changes the heat little against a window of 30 minutes or more,
-as for the pause.
+as for the pause. A panel radiator still gives about 95 % of its heat after a
+stop of 59 s (reference 10, Table 6, p. 77).
 
 #### 3.8.6 Sources
 
@@ -734,12 +774,16 @@ as for the pause.
 - Time a response from the real change of the input. A dead time is the time
   between the onset of the step and the response (reference 5, §2.4, p. 16),
   so a stop confirmed late is dated from the boiler's stop. The water in an
-  emitter goes on heating for minutes after a change (reference 9, Table 2,
-  p. 2753), so a stop of seconds is not a step of the room's heat.
+  emitter goes on heating for minutes after a change, and a radiator loses
+  63 % of its heat only after about 20 minutes (reference 9, Table 2, p. 2753;
+  reference 10, Table 6, p. 77), so a stop of a minute or two is not a step of
+  the room's heat.
 - Confirm a change before acting on it. A detector of changes is judged by how
   fast it detects the real ones and how well it avoids false ones (reference 8,
   p. 561–562, on failure detectors in computer networks); the wait of 5 s for a
-  start of the boiler is such a choice.
+  start of the boiler is such a choice, and so is a valve's hold: longer, it
+  lengthens the measured dead time more; shorter, it takes more of another
+  room's off parts for stops.
 
 #### 3.8.7 Limits
 
@@ -752,10 +796,16 @@ as for the pause.
   sample, at most 5 s late.
 - A room that starts calling within 5 s of the boiler's start counts its start
   from the boiler's start, up to 5 s before its call.
-- A room on a valve gets less heat while its boiler is off for less than 59 s,
-  which the estimator does not see. Stops longer than 59 s in every cycle of
-  another room's relay still stop the room's heat each time, and such a room
-  may stay in its first phase.
+- A room on a valve gets less heat while its boiler is off for less than 120 s,
+  which the estimator does not see: its heating dead time comes out longer, by
+  up to the length of such stops (on average at most half of it, in the
+  simulation above). Stops longer than 120 s in every cycle of another room's
+  relay still stop the room's heat each time, and such a room may stay in its
+  first phase. The hold's length rests on measurements of radiators and floor
+  heating (3.8.2): an emitter with little water and metal, such as a convector
+  or a fan coil, for which no measurement was found, may lose more of its heat
+  in 120 s. Its measured heating dead time then comes out longer, which only
+  makes the tuning more cautious.
 - A stop the estimator saw drops a heating detection still waiting, also when
   the boiler comes back right after it.
 - A room on a relay whose boiler does not start for it is cut 5 s after the
@@ -764,9 +814,9 @@ as for the pause.
 - A cut that starts in a relay's own off part loses its passive measurement when
   that measurement comes out shorter than the published one, or when there is no
   published one yet.
-- A boiler off for less than 59 s while the room calls does not stop the FF
-  trim's window; a longer time without heat rejects every window that
-  overlaps it. A room whose boiler is often off while it calls, for minutes at
+- A boiler off while the room calls for less than a valve's hold (120 s), or,
+  for a room on a relay, for less than 59 s, does not stop the FF trim's window;
+  a longer time without heat rejects every window that overlaps it. A room whose boiler is often off while it calls, for minutes at
   a time, learns its trim more slowly.
 - After an outage of the boiler's state, no passive response is timed until a
   new heating has been counted, and no active one for the minimum time without
@@ -1392,6 +1442,7 @@ acceptance or rejection without changing the learning decision.
 | `AB_SETTLE_K_PASSIVE`          | `3`    |
 | `AB_SETTLE_ACTIVE_CAP_FRAC`    | `0.5`  |
 | `BOILER_PAUSE_CONFIRM_S`       | `SMARTPI_RECALC_INTERVAL_SEC` − 1 (`59`) |
+| `BOILER_VALVE_HOLD_S`          | 2 × `SMARTPI_RECALC_INTERVAL_SEC` (`120`) |
 | `BOILER_BLINK_S`               | `5`    |
 
 ### 6.2 Regulation
@@ -1484,9 +1535,10 @@ The matrix drives the gain updates and thermal learning only. A regime transitio
 1. **Astrom K.J. and Hagglund T.**, work on PID regulation and FOPDT model usage.
 2. **Sundaresan K.R. and Krishnaswamy P.R.**, estimation of delay and time-constant parameters.
 3. **OLS** regression with Student t-test for slope validation.
-4. **Hagglund T. and Astrom K.J.**, Supervision of adaptive control algorithms, *Automatica* 36(8), 2000, 1171–1180: the learning pause and the heat the central boiler gives, and the FF trim's windows while the boiler is off (3.8).
-5. **Astrom K.J. and Hagglund T.**, *PID Controllers: Theory, Design, and Tuning*, 2nd ed., Instrument Society of America, 1995: the minimum OFF duration after a reset and the passive response after a settled active period (3.6); the learning pause, an on/off actuator's pulse in each cycle, a fault of an actuator, the FF trim's windows while the boiler is off, and a stop dated from the boiler's (3.8).
+4. **Hagglund T. and Astrom K.J.**, Supervision of adaptive control algorithms, *Automatica* 36(8), 2000, 1171–1180: the learning pause and the heat the central boiler gives, and the FF trim's windows while the boiler is off (3.8); a step of the raw reading that counts once it is confirmed (3.6).
+5. **Astrom K.J. and Hagglund T.**, *PID Controllers: Theory, Design, and Tuning*, 2nd ed., Instrument Society of America, 1995: the minimum OFF duration after a reset and the passive response after a settled active period (3.6); the learning pause, an on/off actuator's pulse in each cycle, a fault of an actuator, the FF trim's windows while the boiler is off, and a stop dated from the boiler's (3.8); a start or a stop timed from the command's application, and a step of the raw reading that counts once it is confirmed (3.6).
 6. **Skogestad S.**, Simple analytic rules for model reduction and PID controller tuning, *Journal of Process Control* 13, 2003, 291–309: learning pause while the central boiler is off (3.8).
-7. **Ren J., Su M., Zhao X., Liu J. and Song S.**, Experimental study on the dynamic thermal response of a radiant floor system in an office building, *E3S Web of Conferences* 246, 2021, 10003: the passive response after a settled active period (3.6).
-8. **Chen W., Toueg S. and Aguilera M.K.**, On the quality of service of failure detectors, *IEEE Transactions on Computers* 51(5), 2002, 561–579: the wait before a start of the central boiler counts (3.8).
+7. **Ren J., Su M., Zhao X., Liu J. and Song S.**, Experimental study on the dynamic thermal response of a radiant floor system in an office building, *E3S Web of Conferences* 246, 2021, 10003: the passive response after a settled active period (3.6); the response of floor heating against a valve's hold (3.8).
+8. **Chen W., Toueg S. and Aguilera M.K.**, On the quality of service of failure detectors, *IEEE Transactions on Computers* 51(5), 2002, 561–579: the wait before a start of the central boiler counts (3.8); a step of the raw reading that counts once it is confirmed (3.6).
 9. **Brembilla E., Soleimani-Mohseni M. and Olofsson T.**, Transient model of a panel radiator, *Proceedings of Building Simulation 2015*, 14th IBPSA Conference, Hyderabad, 2015, 2749–2756: a valve's hold of the central boiler's short stops (3.8).
+10. **Boháč J.**, *Dynamické chování otopných ploch ve vazbě k řízení jejich tepelného výkonu* (Dynamic behaviour of heating appliances in relation to control of their heat output), doctoral thesis, Czech Technical University in Prague, Faculty of Mechanical Engineering, 2019: the length of a valve's hold of the central boiler's short stops, and the FF trim's marks it drops (3.8).

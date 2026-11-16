@@ -4,6 +4,19 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+- Dead time, for every thermostat: the estimator gets a room's own start or stop
+  at the moment Versatile Thermostat applies the command (its receipt), not at
+  SmartPI's next calculation. Before, both reached it up to a calculation period
+  (60 s) late, so the heating and the passive dead times came out shorter by as
+  much.
+- Dead time, for every thermostat: while a response is waited for, a one-step
+  toggle of the temperature sensor is no longer taken for the room's response.
+  A step of the raw reading counts once held for two periodic calculations
+  (120 s), or followed by a second step the same way; until then the trough or
+  peak tracking holds the filtered temperature at its value before the step. A
+  toggle against the response could shorten a dead time several times (in a
+  simulation, 1440 s to 220 s). The instant of the response is still taken from
+  the history, so a real move is dated as before.
 - Learning: for a thermostat that Versatile Thermostat counts for its central
   boiler, SmartPI pauses learning (room model, response lag and dead time, also
   during a calibration) while it calls for heat and the boiler is off: the room
@@ -47,11 +60,16 @@ All notable changes to this project will be documented in this file.
 - Calibration (`smartpi/calibration.py`): the dead-time estimator gets no power
   while the central boiler is off.
 - Dead time, a room on a valve (any thermostat not on a relay): while it calls
-  and its heat flows, the boiler going off is held as heat for 59 s, as the
-  water in its emitter goes on heating. A boiler back within it is no stop and
-  no start; a boiler still off is a stop dated from the boiler's stop, and so
-  is the passive response it arms, also when the room stops calling during the
-  hold. The pause starts at once then.
+  and its heat flows, the boiler going off is held as heat for 120 s
+  (`BOILER_VALVE_HOLD_S`, two calculation periods), as the water in its emitter
+  goes on heating. A boiler back within it is no stop and no start; a boiler
+  still off is a stop dated from the boiler's stop, and so is the passive
+  response it arms, also when the room stops calling during the hold. The pause
+  starts at once then. With a threshold of devices, the boiler stops in each off
+  part of another room's relay: measured panel radiators lose 63 % of their heat
+  only 18 to 22 minutes after their water stops, so after a stop of 120 s, even
+  one repeated in every 5-minute cycle, the room keeps more than the 80 % of
+  power the dead-time estimator requires of a measured start.
 - FF trim: for such a thermostat, the slow feed-forward correction learns from
   no window in which the boiler was off while the applied power was above 0:
   the room then cools under that power, which the trim would read as a room
