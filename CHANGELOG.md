@@ -6,9 +6,9 @@ All notable changes to this project will be documented in this file.
 
 - Dead time, for every thermostat: the estimator gets a room's own start or stop
   at the moment Versatile Thermostat applies the command (its receipt), not at
-  SmartPI's next calculation. Before, both reached it up to a calculation period
-  (60 s) late, so the heating and the passive dead times came out shorter by as
-  much.
+  SmartPI's next calculation, with SmartPI's last raw reading. Before, both
+  reached it up to a calculation period (60 s) late, so the heating and the
+  passive dead times came out shorter by as much.
 - Dead time, for every thermostat: while a response is waited for, a one-step
   toggle of the temperature sensor is no longer taken for the room's response.
   A step of the raw reading counts once held for two periodic calculations
@@ -16,7 +16,8 @@ All notable changes to this project will be documented in this file.
   peak tracking holds the filtered temperature at its value before the step. A
   toggle against the response could shorten a dead time several times (in a
   simulation, 1440 s to 220 s). The instant of the response is still taken from
-  the history, so a real move is dated as before.
+  the history, so a real move is dated as before. A passive response dated back
+  to the boiler's stop takes its peak from the level the tracking followed too.
 - Learning: for a thermostat that Versatile Thermostat counts for its central
   boiler, SmartPI pauses learning (room model, response lag and dead time, also
   during a calibration) while it calls for heat and the boiler is off: the room
@@ -64,7 +65,10 @@ All notable changes to this project will be documented in this file.
   (`BOILER_VALVE_HOLD_S`, two calculation periods), as the water in its emitter
   goes on heating. A boiler back within it is no stop and no start; a boiler
   still off is a stop dated from the boiler's stop, and so is the passive
-  response it arms, also when the room stops calling during the hold. The pause
+  response it arms, also when the room stops calling during the hold; its peak
+  comes from the level the dead-time estimator's tracking followed, so a step of
+  the sensor near the boiler's stop does not end it at once with a dead time of
+  seconds. The pause
   starts at once then. With a threshold of devices, the boiler stops in each off
   part of another room's relay: measured panel radiators lose 63 % of their heat
   only 18 to 22 minutes after their water stops, so after a stop of 120 s, even
