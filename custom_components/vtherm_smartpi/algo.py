@@ -798,7 +798,9 @@ class SmartPI:
         valve, and the estimator recorded it later: the stop, and the passive response armed by
         it, count from ``at``. A dead time counts from the onset of the step (reference 5, §2.4,
         p. 16). The response is armed only if the heating had settled by ``at``; its peak (in
-        COOL, its trough) and the last moment near it come from the temperature history since."""
+        COOL, its trough) and the last moment near it come from the level the estimator's tracking
+        followed since (``tin_track_history``), so that a step of the sensor not confirmed yet
+        counts here as it does in the tracking (3.6)."""
         est = self.dt_est
         if est.last_stop_time is None or est.last_stop_time < at:
             return
@@ -810,8 +812,8 @@ class SmartPI:
             est.state = "COOLING" if cool else "HEATING"
             est._waiting_power_on = None
             return
-        before = [v for t, v in est._tin_lp_history if t <= at]
-        since = [(t, v) for t, v in est._tin_lp_history if t > at]
+        before = [v for t, v in est.tin_track_history if t <= at]
+        since = [(t, v) for t, v in est.tin_track_history if t > at]
         extreme = before[-1] if before else (since[0][1] if since else (est.cool_peak_temp if cool else est.heat_trough_temp))
         near = at
         for t, v in since:
@@ -1114,7 +1116,8 @@ class SmartPI:
             return
         power = self._dead_time_power()
         if (power > 0.01) != (self.dt_est.last_power > 0.01):
-            self._feed_dead_time_now(power, None)
+            # The last raw reading SmartPI got: the raw history holds only the sensor's readings.
+            self._feed_dead_time_now(power, self._last_current_temp)
 
     def _commit_applied_command(
         self,

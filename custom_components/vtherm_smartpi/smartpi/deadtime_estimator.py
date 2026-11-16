@@ -120,11 +120,23 @@ class DeadTimeEstimator:
         self._tin_lp_history: Deque[Tuple[float, float]] = deque(
             maxlen=TIN_HISTORY_MAX_SAMPLES
         )
+        # The level the trough/peak tracking follows (_tracked): the filtered temperature, held
+        # at its value before a raw step not confirmed yet. A response armed at an earlier moment
+        # takes its trough or peak from it, as the tracking would have (SmartPI._heat_stopped_at).
+        # Not saved: a response waited for is not resumed after a restart.
+        self._tin_track_history: Deque[Tuple[float, float]] = deque(
+            maxlen=TIN_HISTORY_MAX_SAMPLES
+        )
 
     @property
     def tin_history(self) -> Deque[Tuple[float, float]]:
         """Raw measured temperature history for learning window slope calculation."""
         return self._tin_history
+
+    @property
+    def tin_track_history(self) -> Deque[Tuple[float, float]]:
+        """History of the level the trough/peak tracking follows (``_tracked``)."""
+        return self._tin_track_history
 
     @staticmethod
     def _append_history(
@@ -181,6 +193,7 @@ class DeadTimeEstimator:
         self._history_cool.clear()
         self._tin_history.clear()
         self._tin_lp_history.clear()
+        self._tin_track_history.clear()
 
     def reset_observation(self, current_power: float = 0.0) -> None:
         """Clear transient detection state while preserving learned dead times."""
@@ -205,6 +218,7 @@ class DeadTimeEstimator:
         self._armed_on_step = None
         self._tin_history.clear()
         self._tin_lp_history.clear()
+        self._tin_track_history.clear()
 
     def _confirm_raw(self, now: float, reading: float) -> None:
         if self._raw_confirmed is not None and abs(reading - self._raw_confirmed) >= 1e-6:
@@ -446,6 +460,7 @@ class DeadTimeEstimator:
         raw_step = self._raw_step(now, tin_raw)
         tin_track = self._tracked(tin, raw_step)
         self._last_tin = tin
+        self._append_history(self._tin_track_history, now, tin_track)
 
         # --- Power Transition Detection ---
 
