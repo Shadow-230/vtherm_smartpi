@@ -322,20 +322,20 @@ def test_bp20_reads_the_boiler_s_return_from_its_watch() -> None:
 
 def test_the_typical_times_of_the_own_setpoint_and_the_closing_start_state() -> None:
     """A thermostat's own start pauses a calculation period after its setpoint's own calculation,
-    at the next check: 60-120 s, 90 s on average (mean 84 s over 117 pauses on the bench), at most
-    two periods with a margin (East's 116 s in BP6 on the bench), also
+    by the check scheduled then (59 s; before it, at the next calculation: 60-120 s, mean 84 s over
+    117 pauses on the bench, East's 116 s in BP6), its limit two periods with a margin, also
     while an activation delay keeps the boiler off; a learned West that stops resumes a calculation
     later, a fresh one at once; after a restart the pause returns a calculation period after SmartPI
     runs again; the start state after a scenario that ends with the boiler on waits for it off the
     role's delay plus 30 s, and after one that ends with a learned West paused for its resume."""
     count, delay = ROLES["boiler-count"], ROLES["boiler-delay"]
-    assert PAUSE_ON_SETPOINT.typical_s == 1.5 * RECALC_S
+    assert PAUSE_ON_SETPOINT.typical_s == RECALC_S - 1.0
     assert PAUSE_ON_SETPOINT.maximum_s >= 2 * RECALC_S + MARGIN_S
     assert delay.boiler_delay_s + MARGIN_S >= 2 * RECALC_S + MARGIN_S  # steps.Bench.waited
     assert west_leaves(count).typical_s == RESUME_ON_SETPOINT.typical_s == 0.0
     assert west_leaves(count, learned=True).typical_s == RECALC_S
-    assert SCENARIOS["BP3"].time_for(count).typical_s == 1.5 * RECALC_S
-    assert SCENARIOS["BP9"].time(count).typical_s == 1.5 * RECALC_S + 20.0 + RECALC_S
+    assert SCENARIOS["BP3"].time_for(count).typical_s == RECALC_S - 1.0
+    assert SCENARIOS["BP9"].time(count).typical_s == RECALC_S - 1.0 + 20.0 + RECALC_S
     for sid in ("BP0", "BP2", "BP5", "BP7", "BP8", "BP18", "BP20", "BP25"):
         s = SCENARIOS[sid]
         for name in s.roles:
@@ -567,7 +567,7 @@ def test_the_pack_s_pause_confirmation_is_smartpi_s() -> None:
 def test_the_relay_role_and_its_scenarios() -> None:
     """boiler-relay: North a water radiator behind a relay (a switch), counted by the central boiler
     with a threshold of one device, so that North alone keeps it on; North's learned state is its
-    room's model; BP34 to BP38 and BP40 run on it alone, North not calling at the start, and
+    room's model; BP34 to BP38, BP40 and BP41 run on it alone, North not calling at the start, and
     every other scenario on another role but BP0."""
     from pack import RELAY_NORTH  # noqa: PLC0415
     from scenarios import RELAY_STATE  # noqa: PLC0415
@@ -581,9 +581,9 @@ def test_the_relay_role_and_its_scenarios() -> None:
     assert configuration.configuration(role)["smartpi_test_rooms"]["rooms"]["north"]["heater"] == "relay"
     assert RELAY_STATE == learned_state.RELAY == learned_state.relay_file().stem
     assert learned_state.model(north)["deadtime_s"] == 780.0
-    for sid in ("BP34", "BP35", "BP36", "BP37", "BP38", "BP40"):
+    for sid in ("BP34", "BP35", "BP36", "BP37", "BP38", "BP40", "BP41"):
         assert (SCENARIOS[sid].roles, SCENARIOS[sid].north) == (("boiler-relay",), 7.0), sid
-    others = [sid for sid, s in SCENARIOS.items() if "boiler-relay" in s.roles and sid not in ("BP0", "BP34", "BP35", "BP36", "BP37", "BP38", "BP40")]
+    others = [sid for sid, s in SCENARIOS.items() if "boiler-relay" in s.roles and sid not in ("BP0", "BP34", "BP35", "BP36", "BP37", "BP38", "BP40", "BP41")]
     assert not others, others
 
 

@@ -290,6 +290,9 @@ class SmartPI:
         # Whether the boiler's state has been known since this SmartPI started (an outage of it
         # is then told from a first reading).
         self._boiler_was_known: bool = False
+        # Since when the causal power trace marks the boiler's heat as not delivered
+        # (``_mark_heat_not_delivered``), None while it does not.
+        self._heat_not_delivered_since: float | None = None
         self._learning_start_date: Optional[datetime] = datetime.now()
         self._session_learn_ok_count_base: int = 0
         self._session_learn_skip_count_base: int = 0
@@ -616,20 +619,28 @@ class SmartPI:
         SmartPI's applied power is above 0, the room does not get that power: the causal power
         trace marks the time (``central_boiler_off``), so the FF trim learns from no window that
         overlaps it. The mark ends at the next committed power and is set again while this holds;
-        it starts at ``since`` when the heat is known to have ended earlier (a room on a relay)."""
+        it starts at ``since`` when the heat is known to have ended earlier (a stop held as heat,
+        or found late on a relay)."""
         if self._boiler_on is False and self._committed_on_percent > 0.0:
             now = time.monotonic()
             start = since if since is not None and since < now else now
+            if self._heat_not_delivered_since is None:
+                self._heat_not_delivered_since = start
             self._causal_power_trace.mark_unobserved_power(start, "central_boiler_off")
 
     def _end_heat_not_delivered(self, since: float | None = None) -> None:
         """The boiler heats again, from ``since`` (its start) or now: the mark of the time
-        without its heat ends then, not at the next committed power, up to a cycle later. A mark
-        shorter than the learning pause's confirmation (``BOILER_PAUSE_CONFIRM_S``) is dropped:
-        a blink of the boiler, or the seconds a room's own start waits for it, as for the pause."""
+        without its heat ends then, not at the next committed power, up to a cycle later. A time
+        without heat shorter than the learning pause's confirmation (``BOILER_PAUSE_CONFIRM_S``)
+        is dropped as a whole, also when committed powers split it into pieces: a blink of the
+        boiler, or the seconds a room's own start waits for it, as for the pause."""
         now = time.monotonic()
         end = since if since is not None and since < now else now
-        self._causal_power_trace.end_unobserved_power(end, "central_boiler_off", BOILER_PAUSE_CONFIRM_S)
+        started, self._heat_not_delivered_since = self._heat_not_delivered_since, None
+        if started is not None and end - started < BOILER_PAUSE_CONFIRM_S:
+            self._causal_power_trace.discard_unobserved_power(started, "central_boiler_off")
+        else:
+            self._causal_power_trace.end_unobserved_power(end, "central_boiler_off")
 
     def relay_plan(self) -> tuple[float, float] | None:
         """The applied cycle in progress, as Versatile Thermostat's command receipts commit it:

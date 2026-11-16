@@ -573,3 +573,65 @@ async def test_a_relay_room_s_heat_is_held_through_a_short_stop_of_the_boiler(ha
     # VTherm stops the boiler within a step of the threshold's change; the readings come every 7 s.
     assert not any(p for at, p, _, _ in long if at < 115.0)
     assert all(p and power == 0.0 for at, p, power, _ in long if at >= 120.0 + 2 * 7.0)
+
+
+@pytest.mark.parametrize("expected_lingering_timers", [True])
+async def test_a_short_run_of_the_boiler_leaves_the_paused_rooms_paused(hass: HomeAssistant, freezer: Any, caplog: pytest.LogCaptureFixture) -> None:
+    """As BP41 on the bench: boiler-relay with VTherm's threshold at 3 devices, North (relay,
+    learned) and East (valve) calling with the boiler off. North, which did not heat before, waits
+    for the boiler from its call, and its learning pauses 59 s after the call, not at a
+    calculation (the call's own calculation comes between periodic ones). Both rooms paused, the
+    threshold at 1 for 2 s runs the boiler for 2 s: neither room resumes, their dead-time
+    estimators see no power, and no heat stops (Adnan 2013, 3.3, p. 30: a change counts once it
+    has held for a set time)."""
+    caplog.set_level(logging.INFO)
+    await _prepare(hass, ROLES["boiler-relay"])
+    registry = er.async_get(hass)
+    boiler = registry.async_get_entity_id("binary_sensor", VT, "central_boiler_state")
+    relay = f"switch.{ROOMS_DOMAIN}_north_heater"
+    threshold = registry.async_get_entity_id("number", VT, COUNT_THRESHOLD_UID)
+    await hass.services.async_call(HELPER_DOMAIN, "load_learned_state", {"entity_id": NORTH, "state": "north_relay"}, blocking=True)
+    await _targets(hass, **{WEST: 7.0, EAST: 7.0, NORTH: 7.0})
+    await _run_for(hass, freezer, 10 * 60)
+    await hass.services.async_call("number", "set_value", {"entity_id": threshold, "value": 3}, blocking=True)
+    room_c = float(hass.states.get(f"sensor.{ROOMS_DOMAIN}_north_temperature").state)
+    await _targets(hass, **{NORTH: round(room_c + 2.0, 1), EAST: 23.0})
+
+    relay_on = paused_at = None
+    for second in range(1, 5 * 60):
+        await _run_for(hass, freezer, 1.0, 1.0)
+        if relay_on is None and hass.states.get(relay).state == "on":
+            relay_on = second
+        if _live(hass, NORTH)["learning"]["boiler_paused"]:
+            paused_at = second
+            break
+    assert hass.states.get(boiler).state == "off"
+    assert relay_on is not None and paused_at is not None
+    # The pause 59 s after the call (at 0 s), readings every second.
+    assert 59 - 1 <= paused_at <= 59 + 2, (relay_on, paused_at)
+    for _ in range(int(3 * 60 / 7)):
+        if _live(hass, EAST)["learning"]["boiler_paused"]:
+            break
+        await _run_for(hass, freezer, 7.0)
+    assert _live(hass, EAST)["learning"]["boiler_paused"]
+
+    caplog.clear()
+    await hass.services.async_call("number", "set_value", {"entity_id": threshold, "value": 1}, blocking=True)
+    await _run_for(hass, freezer, 1.0, 1.0)
+    assert hass.states.get(boiler).state == "on"
+    await _run_for(hass, freezer, 1.0, 1.0)
+    await hass.services.async_call("number", "set_value", {"entity_id": threshold, "value": 3}, blocking=True)
+    # VTherm turns its boiler off at the next tick of this test's clock: steps of a second, so that
+    # the run lasts 3 s at most here (milliseconds after the threshold's change on the bench).
+    await _run_for(hass, freezer, 1.0, 1.0)
+    assert hass.states.get(boiler).state == "off"
+    seen = []
+    for _ in range(int(3 * 60 / 7)):
+        await _run_for(hass, freezer, 7.0)
+        assert hass.states.get(boiler).state == "off"
+        for climate in (NORTH, EAST):
+            live = _live(hass, climate)
+            seen.append((climate, live["learning"]["boiler_paused"], live["analysis"]["deadtime"]["last_power"]))
+    assert all(paused for _, paused, _ in seen), seen
+    assert all(power == 0.0 for _, _, power in seen), seen
+    assert "learning resumed" not in caplog.text and "heat stopped" not in caplog.text

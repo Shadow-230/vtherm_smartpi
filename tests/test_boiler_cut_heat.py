@@ -174,9 +174,8 @@ async def test_the_boiler_s_cut_after_a_short_heating_records_the_stop_only() ->
 
 @pytest.mark.parametrize(("back_after_s", "measured"), [(300.0, False), (700.0, True)])
 async def test_the_boiler_s_return_before_the_response_ends_the_passive_detection(back_after_s, measured) -> None:
-    """The boiler heats the calling room again before its passive response came: learning resumes
-    at once, and once the boiler has run 5 s the estimator sees the start from the boiler's
-    return. The passive detection ends "aborted", whether the start is refused (300 s after the
+    """The boiler heats the calling room again before its passive response came: once the boiler
+    has run 5 s, learning resumes and the estimator sees the start from the boiler's return. The passive detection ends "aborted", whether the start is refused (300 s after the
     boiler's stop, less than 600 s) or measured from the boiler's return (700 s)."""
     handler = await _heated()
     algo = handler._thermostat.prop_algorithm
@@ -187,8 +186,9 @@ async def test_the_boiler_s_return_before_the_response_ends_the_passive_detectio
 
     back = STOP + back_after_s
     _boiler(handler, True, back)
-    assert not algo.boiler_learning_paused and est.state == "WAITING_COOL_RESPONSE"
+    assert algo.boiler_learning_paused and est.state == "WAITING_COOL_RESPONSE"
     _boiler(handler, True, back + BOILER_BLINK_S)
+    assert not algo.boiler_learning_paused
 
     assert est.last_outcome["cool"] == "aborted" and est.last_stop_time == STOP
     assert algo.boiler_on is True and algo._dead_time_power() == 1.0
