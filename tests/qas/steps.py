@@ -44,7 +44,7 @@ import json
 import pathlib
 import re
 import time
-from collections.abc import Awaitable, Callable, Iterable, Sequence
+from collections.abc import Awaitable, Callable, Iterable, Iterator, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
@@ -345,12 +345,32 @@ HEAT_STOP_LINE = "heat stopped with the central boiler"  # algo.py, _heat_stops_
 HEAT_DETECTED_LINE = "Heat Deadtime detected"  # deadtime_estimator.py: names no thermostat
 BLINK_LINE = "heat back with the central boiler after a blink"  # algo.py, _heat_back_after_a_blink
 COOL_DETECTED_LINE = "Cool Deadtime detected"  # deadtime_estimator.py: names no thermostat
-_HEAT_STOP = re.compile(r"(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d+) .*?\] (.+?) - SmartPI heat stopped with the central boiler( \(heating dead-time detection aborted\))?")
-_HEAT_DETECTED = re.compile(r"(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d+) .*Heat Deadtime detected = ([0-9.]+)s \(ascension delayed by ([0-9.]+)s\)")
-_COOL_DETECTED = re.compile(r"(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d+) .*Cool Deadtime detected = ([0-9.]+)s(?: \(drop delayed by ([0-9.]+)s\))?")
+# A log line's time: "2026-11-14 22:51:36.380" from Home Assistant 2026.9.3, with its zone
+# ("2026-11-16 08:35:29.733+00:00") from 2026.11.1 (the bench's check of 8972367).
+_STAMP = r"(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d+(?:[+-]\d{2}:\d{2})?)"
+_HEAT_STOP = re.compile(_STAMP + r" .*?\] (.+?) - SmartPI heat stopped with the central boiler( \(heating dead-time detection aborted\))?")
+_HEAT_DETECTED = re.compile(_STAMP + r" .*Heat Deadtime detected = ([0-9.]+)s \(ascension delayed by ([0-9.]+)s\)")
+_COOL_DETECTED = re.compile(_STAMP + r" .*Cool Deadtime detected = ([0-9.]+)s(?: \(drop delayed by ([0-9.]+)s\))?")
 TARGET_CHANGE_LINE = "Target change detected"  # algo.py: logged by the calculation that sees a new setpoint
-_TARGET_CHANGE = re.compile(r"(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d+) .*?\] (.+?) - Target change detected \(([0-9.]+) -> ([0-9.]+)\)")
-_LOGGED = re.compile(r"(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d+) .*?\] (.+?) - SmartPI learning (paused|resumed) \(central boiler off\)")
+_TARGET_CHANGE = re.compile(_STAMP + r" .*?\] (.+?) - Target change detected \(([0-9.]+) -> ([0-9.]+)\)")
+_LOGGED = re.compile(_STAMP + r" .*?\] (.+?) - SmartPI learning (paused|resumed) \(central boiler off\)")
+
+
+class UnreadLogLine(ValueError):
+    """A line of SmartPI's log with the text a check looks for, which its pattern does not read: the
+    check fails, rather than count nothing (on HA 2026.11.1 four checks passed on lines read as none)."""
+
+
+def _read(lines: Iterable[str], pattern: re.Pattern[str], text: str) -> Iterator[re.Match[str]]:
+    """``pattern``'s match in each line with ``text``; a line with it that ``pattern`` does not
+    match raises ``UnreadLogLine``."""
+    for line in lines:
+        if text not in line:
+            continue
+        found = pattern.search(line)
+        if found is None:
+            raise UnreadLogLine(f"SmartPI's log line not read: {line[:200]}")
+        yield found
 
 
 def instance_log(pattern: str, since: datetime) -> list[str]:
@@ -365,28 +385,27 @@ def instance_log(pattern: str, since: datetime) -> list[str]:
 
 
 def logged_pauses(lines: Iterable[str], name: str) -> list[tuple[float, bool]]:
-    """A thermostat's pauses (True) and resumes (False) in SmartPI's info lines, with their times;
-    Home Assistant logs in UTC on the instances."""
+    """A thermostat's pauses (True) and resumes (False) in SmartPI's info lines, with their times."""
     out: list[tuple[float, bool]] = []
-    for line in lines:
-        found = _LOGGED.search(line)
-        if found and found.group(2) == name:
-            at = datetime.strptime(found.group(1), "%Y-%m-%d %H:%M:%S.%f").replace(tzinfo=UTC).timestamp()
-            out.append((at, found.group(3) == "paused"))
+    for found in _read(lines, _LOGGED, BOILER_PAUSE_LINE):
+        if found.group(2) == name:
+            out.append((_logged_at(found.group(1)), found.group(3) == "paused"))
     return sorted(out)
 
 
 def _logged_at(stamp: str) -> float:
-    return datetime.strptime(stamp, "%Y-%m-%d %H:%M:%S.%f").replace(tzinfo=UTC).timestamp()
+    """A log line's time with its zone; one without a zone (Home Assistant before 2026.11) is UTC,
+    as the instances log."""
+    at = datetime.fromisoformat(stamp)
+    return (at if at.tzinfo is not None else at.replace(tzinfo=UTC)).timestamp()
 
 
 def logged_heat_stops(lines: Iterable[str], name: str) -> list[tuple[float, bool]]:
     """A thermostat's stops of heat with the central boiler in SmartPI's info lines: (time,
-    whether a heating dead-time detection was dropped), in UTC."""
+    whether a heating dead-time detection was dropped)."""
     out = []
-    for line in lines:
-        found = _HEAT_STOP.search(line)
-        if found and found.group(2) == name:
+    for found in _read(lines, _HEAT_STOP, HEAT_STOP_LINE):
+        if found.group(2) == name:
             out.append((_logged_at(found.group(1)), found.group(3) is not None))
     return sorted(out)
 
@@ -394,10 +413,8 @@ def logged_heat_stops(lines: Iterable[str], name: str) -> list[tuple[float, bool
 def logged_cool_dead_times(lines: Iterable[str]) -> list[tuple[float, float]]:
     """The passive (cooling) dead times detected in SmartPI's info lines: (time, seconds)."""
     out = []
-    for line in lines:
-        found = _COOL_DETECTED.search(line)
-        if found:
-            out.append((_logged_at(found.group(1)), float(found.group(2))))
+    for found in _read(lines, _COOL_DETECTED, COOL_DETECTED_LINE):
+        out.append((_logged_at(found.group(1)), float(found.group(2))))
     return sorted(out)
 
 
@@ -406,9 +423,8 @@ def logged_cool_starts(lines: Iterable[str]) -> list[tuple[float, float, float]]
     the line, dead time, start), the start being the line's time less the dead time and the drop's
     delay ("drop delayed by"). Both are logged to 0.1 s."""
     out = []
-    for line in lines:
-        found = _COOL_DETECTED.search(line)
-        if found and found.group(3) is not None:
+    for found in _read(lines, _COOL_DETECTED, COOL_DETECTED_LINE):
+        if found.group(3) is not None:
             at, value = _logged_at(found.group(1)), float(found.group(2))
             out.append((at, value, at - value - float(found.group(3))))
     return sorted(out)
@@ -419,20 +435,17 @@ def logged_heat_starts(lines: Iterable[str]) -> list[tuple[float, float, float]]
     the line, dead time, start), the start being the line's time less the dead time and the rise's
     delay ("ascension delayed by"). Both are logged to 0.1 s."""
     out = []
-    for line in lines:
-        found = _HEAT_DETECTED.search(line)
-        if found:
-            at, value = _logged_at(found.group(1)), float(found.group(2))
-            out.append((at, value, at - value - float(found.group(3))))
+    for found in _read(lines, _HEAT_DETECTED, HEAT_DETECTED_LINE):
+        at, value = _logged_at(found.group(1)), float(found.group(2))
+        out.append((at, value, at - value - float(found.group(3))))
     return sorted(out)
 
 
 def logged_target_changes(lines: Iterable[str], name: str) -> list[tuple[float, float, float]]:
     """A thermostat's setpoint changes as SmartPI's calculation saw them: (time, old, new)."""
     out = []
-    for line in lines:
-        found = _TARGET_CHANGE.search(line)
-        if found and found.group(2) == name:
+    for found in _read(lines, _TARGET_CHANGE, TARGET_CHANGE_LINE):
+        if found.group(2) == name:
             out.append((_logged_at(found.group(1)), float(found.group(3)), float(found.group(4))))
     return sorted(out)
 

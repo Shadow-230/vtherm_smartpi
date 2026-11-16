@@ -619,3 +619,81 @@ def test_the_relay_s_switching_and_the_boiler_s_off_parts_read_from_the_readings
     assert LIVE["dt_power"] == "analysis.deadtime.last_power"
     assert LIVE["dt_active"] == "analysis.deadtime.active_elapsed_s"
 
+
+
+# SmartPI's info lines in Home Assistant's three time formats: no zone (2026.9.3), UTC with its zone
+# (2026.11.1, the bench's check of 8972367) and another zone; the same moment in each.
+_ZONES = {
+    "no zone": ("2026-11-16 08:35:29.733", "2026-11-16T08:35:29.733+00:00"),
+    "+00:00": ("2026-11-16 08:35:29.733+00:00", "2026-11-16T08:35:29.733+00:00"),
+    "+02:00": ("2026-11-16 10:35:29.733+02:00", "2026-11-16T08:35:29.733+00:00"),
+}
+_LINES = {
+    "pause": "{t} INFO (MainThread) [custom_components.vtherm_smartpi.algo] West - SmartPI learning paused (central boiler off)",
+    "stop": "{t} INFO (MainThread) [custom_components.vtherm_smartpi.algo] West - SmartPI heat stopped with the central boiler (heating dead-time detection aborted)",
+    "heat": "{t} INFO (MainThread) [custom_components.vtherm_smartpi.smartpi.deadtime_estimator] SmartPI: Heat Deadtime detected = 780.0s (ascension delayed by 60.0s)",
+    "cool": "{t} INFO (MainThread) [custom_components.vtherm_smartpi.smartpi.deadtime_estimator] SmartPI: Cool Deadtime detected = 900.0s (drop delayed by 120.0s)",
+    "target": "{t} INFO (MainThread) [custom_components.vtherm_smartpi.algo] West - Target change detected (23.00 -> 7.00), invalidating learning window",
+}
+
+
+@pytest.mark.parametrize("zone", list(_ZONES))
+def test_smartpi_s_log_lines_are_read_with_their_time_zone(zone) -> None:
+    """Each of the five patterns reads its line in each format, and the time is the same moment:
+    the zone is read, a time without one is UTC, as the instances log."""
+    from steps import logged_cool_dead_times, logged_cool_starts, logged_heat_starts, logged_heat_stops, logged_target_changes  # noqa: PLC0415
+
+    stamp, iso = _ZONES[zone]
+    at = datetime.fromisoformat(iso).timestamp()
+    lines = [line.format(t=stamp) for line in _LINES.values()]
+    assert logged_pauses(lines, "West") == [(pytest.approx(at), True)]
+    assert logged_heat_stops(lines, "West") == [(pytest.approx(at), True)]
+    assert logged_heat_starts(lines) == [(pytest.approx(at), 780.0, pytest.approx(at - 840.0))]
+    assert logged_cool_dead_times(lines) == [(pytest.approx(at), 900.0)]
+    assert logged_cool_starts(lines) == [(pytest.approx(at), 900.0, pytest.approx(at - 1020.0))]
+    assert logged_target_changes(lines, "West") == [(pytest.approx(at), 23.0, 7.0)]
+
+
+@pytest.mark.parametrize("kind", list(_LINES))
+def test_a_log_line_the_pattern_cannot_read_fails_the_check(kind) -> None:
+    """A line with the text a check looks for, in a format its pattern does not read (here a time
+    with seconds only), raises instead of counting nothing; lines without that text are skipped."""
+    from steps import (  # noqa: PLC0415
+        UnreadLogLine,
+        logged_cool_dead_times,
+        logged_heat_starts,
+        logged_heat_stops,
+        logged_target_changes,
+    )
+
+    read = {
+        "pause": lambda lines: logged_pauses(lines, "West"),
+        "stop": lambda lines: logged_heat_stops(lines, "West"),
+        "heat": logged_heat_starts,
+        "cool": logged_cool_dead_times,
+        "target": lambda lines: logged_target_changes(lines, "West"),
+    }[kind]
+    others = [line.format(t="2026-11-16 08:35:29.733") for k, line in _LINES.items() if k != kind]
+    unread = _LINES[kind].format(t="2026-11-16 08:35:29")
+    with pytest.raises(UnreadLogLine):
+        read([*others, unread])
+    assert read(others) == []
+
+
+def test_bp0_notes_vtherm_s_warnings_of_home_assistant_s_deprecated_api_only() -> None:
+    """BP0 notes VTherm's warnings that Home Assistant 2026.11 deprecates part of its entity API
+    (the bench's check of 8972367: two entries, three messages each), and nothing else: an entry
+    with another message, SmartPI's logger, or an error still fails the run."""
+    from scenarios import vt_api_deprecation  # noqa: PLC0415
+
+    deprecated = [
+        f"custom_components.versatile_thermostat.base_thermostat::BaseThermostat provides the deprecated {name}, "
+        f"this will stop working in Home Assistant 2027.11, use native_{name} instead, please report it to the custom integration author"
+        for name in ("temperature_unit", "current_temperature", "target_temperature")
+    ]
+    entry = {"name": "custom_components.versatile_thermostat.base_thermostat", "level": "WARNING", "message": deprecated}
+    assert vt_api_deprecation(entry)
+    assert not vt_api_deprecation({**entry, "message": [*deprecated, "Something else went wrong"]})
+    assert not vt_api_deprecation({**entry, "name": "custom_components.vtherm_smartpi.handler"})
+    assert not vt_api_deprecation({**entry, "level": "ERROR"})
+    assert not vt_api_deprecation({**entry, "message": []})

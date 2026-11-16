@@ -96,6 +96,22 @@ from steps import (
 )
 
 STARTUP_NOTICE = "External proportional algorithm 'smartpi' not yet registered"
+# VTherm's warnings that Home Assistant 2026.11 deprecates part of its entity API, until 2027.11
+# ("... provides the deprecated temperature_unit, this will stop working in Home Assistant 2027.11").
+# Known, VTherm's and not SmartPI's, and out of the pack's scope (owner, 2026-11-16): BP0 notes them.
+VT_API_DEPRECATION = ("provides the deprecated", "will stop working in Home Assistant 2027.11")
+
+
+def vt_api_deprecation(entry: dict[str, Any]) -> bool:
+    """Whether a system log entry is only VTherm's warnings of Home Assistant's deprecated entity
+    API: VTherm's logger, a warning, and every message one of them."""
+    messages = entry.get("message") or []
+    return (
+        str(entry.get("name", "")).startswith(f"custom_components.{VT}.")
+        and entry.get("level") == "WARNING"
+        and bool(messages)
+        and all(all(text in str(m) for text in VT_API_DEPRECATION) for m in messages)
+    )
 PAUSE_TESTS = "test_boiler_call.py"
 END_TO_END = "test_boiler_call.py, test_qas_instance.py"
 THREE = ("boiler-count", "boiler-power", "boiler-delay")
@@ -225,7 +241,7 @@ def scenario(
     boiler_at_end=True,
 )
 async def BP0(b: Bench) -> None:
-    """After the preparation's restart → the instance is read → every SmartPI and VTherm entry is loaded, the only SmartPI entry is its defaults, SmartPI reports no repair, neither integration logs a warning or an error but VTherm's one-time notice that SmartPI was not registered yet, VTherm's central boiler agrees with the test rooms' boiler switch, and each thermostat has SmartPI's diagnostics with learning.enabled on and learning.boiler_paused published."""
+    """After the preparation's restart → the instance is read → every SmartPI and VTherm entry is loaded, the only SmartPI entry is its defaults, SmartPI reports no repair, neither integration logs a warning or an error but VTherm's one-time notice that SmartPI was not registered yet and its warnings that Home Assistant deprecates part of its entity API (until 2027.11), VTherm's central boiler agrees with the test rooms' boiler switch, and each thermostat has SmartPI's diagnostics with learning.enabled on and learning.boiler_paused published."""
     for domain in (SMARTPI, VT):
         for entry in await b.api.entries(domain):
             b.check(entry.get("state") == "loaded", f"{domain} {entry['title']!r}: {entry.get('state')}")
@@ -247,6 +263,8 @@ async def BP0(b: Bench) -> None:
         if str(entry.get("name", "")).startswith((f"custom_components.{SMARTPI}", f"custom_components.{VT}")):
             if STARTUP_NOTICE in message:
                 b.note(f"known at startup: {message[:120]}")
+            elif vt_api_deprecation(entry):
+                b.note(f"known, VTherm and Home Assistant's API (out of scope): {message[:120]}")
             else:
                 lines.append(f"{entry.get('level')} {entry.get('name')}: {message[:160]}")
     b.check(not lines, f"warnings and errors of SmartPI and VTherm: {len(lines)}")

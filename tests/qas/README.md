@@ -224,7 +224,7 @@ for a background command.
 <!-- catalogue: written by `python tests/qas/run.py --list --markdown` -->
 | ID | Start state | Event | Expected result | Roles | Learning at start | Typical | Maximum | Time depends on | Detached | M | Counterpart without the bench |
 |---|---|---|---|---|---|---|---|---|---|---|---|
-| BP0 | After the preparation's restart | the instance is read | every SmartPI and VTherm entry is loaded, the only SmartPI entry is its defaults, SmartPI reports no repair, neither integration logs a warning or an error but VTherm's one-time notice that SmartPI was not registered yet, VTherm's central boiler agrees with the test rooms' boiler switch, and each thermostat has SmartPI's diagnostics with learning.enabled on and learning.boiler_paused published. | all | fresh | < 1 min – 2 min | 35 min | — | no | yes | test_qas_instance.py, test_published_diagnostics_schema.py |
+| BP0 | After the preparation's restart | the instance is read | every SmartPI and VTherm entry is loaded, the only SmartPI entry is its defaults, SmartPI reports no repair, neither integration logs a warning or an error but VTherm's one-time notice that SmartPI was not registered yet and its warnings that Home Assistant deprecates part of its entity API (until 2027.11), VTherm's central boiler agrees with the test rooms' boiler switch, and each thermostat has SmartPI's diagnostics with learning.enabled on and learning.boiler_paused published. | all | fresh | < 1 min – 2 min | 35 min | — | no | yes | test_qas_instance.py, test_published_diagnostics_schema.py |
 | BP1 | The start state | West calls alone, below the threshold, the boiler off | West pauses once it has called with the boiler off for a calculation period (60 s), not before; VTherm's boiler stays off; East and North (not counted) do not pause; West's valve stays open. | `boiler-count`, `boiler-power`, `boiler-delay` | fresh | 4 min | 32 min | — | no | yes | test_boiler_call.py, test_qas_instance.py |
 | BP2 | West calls alone and pauses | East calls too, the threshold is reached | VTherm's boiler starts (with an activation delay, 120 s later) and West resumes at that moment, not before; East does not pause (with the delay, it pauses too while the boiler waits). | `boiler-count`, `boiler-power`, `boiler-delay` | fresh | 4 min – 6 min | 33 min | — | no | yes | test_boiler_call.py, test_qas_instance.py |
 | BP3 | West calls alone and pauses | West stops calling | West resumes at once, though the threshold is still not reached; the boiler stays off. | `boiler-count`, `boiler-power`, `boiler-delay` | fresh | 2 min | 38 min | — | no | yes | test_boiler_call.py |
@@ -261,6 +261,17 @@ for a background command.
 
 - Home Assistant shows SmartPI 0.0.0: the repository keeps that version, only a release writes
   its own. Every result records the commit it tested.
+- SmartPI's log lines carry their time with its zone from Home Assistant 2026.11.1
+  (`2026-11-16 08:35:29.733+00:00`), without it on 2026.9.3. The pack reads both, and a time
+  without a zone as UTC, as the instances log. A line with the text a check looks for that its
+  pattern does not read fails the run (`steps.UnreadLogLine`): on 2026.11.1, before the patterns
+  read the zone, four checks passed on lines read as none (check of 8972367).
+- On Home Assistant 2026.11.1 VTherm logs at each start that Home Assistant deprecates part of
+  its entity API ("provides the deprecated temperature_unit, this will stop working in Home
+  Assistant 2027.11"): two system log entries, three messages each. They are VTherm's, out of the
+  pack's scope (owner, 2026-11-16): BP0 notes them and fails on any other warning or error of
+  SmartPI or VTherm. Home Assistant's own warning that VTherm writes a deprecated attribute
+  (`homeassistant.helpers.frame`) is not counted, its logger being Home Assistant's.
 - SmartPI's defaults entry shows the diagnostics of a thermostat created after it once it is set
   up again: the preparation ends with a restart.
 - Every scenario resets West's and East's learning, or loads their learned state, at its start:
