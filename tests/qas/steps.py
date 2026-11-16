@@ -21,10 +21,10 @@ What a step expects follows from the role (``Bench.reaches``): the thermostats c
 power, the devices they count, their powers, the threshold.
 
 **The timing of a step** (``Wait``): SmartPI pauses once it has called with VTherm's boiler off
-without a break for a calculation period (``PAUSE_CONFIRM_S``), at its first calculation after
-it. Below the threshold the boiler is off; with an activation delay it stays off for that delay
-after the threshold is reached, so a calling thermostat pauses meanwhile. A paused thermostat
-resumes at the moment the boiler starts. A change of a thermostat's own setpoint or mode makes a calculation at once: its pause comes
+without a break for a calculation period (``PAUSE_CONFIRM_S``), checked at that moment. Below the
+threshold the boiler is off; with an activation delay it stays off for that delay after the
+threshold is reached, so a calling thermostat pauses meanwhile. A paused thermostat resumes once
+the boiler's start counts, ``BLINK_S`` after it; a shorter run of the boiler leaves it paused. A change of a thermostat's own setpoint or mode makes a calculation at once: its pause comes
 a calculation period and a part of the next one later, its resume at once. A change from outside
 (East, the threshold) reaches it at its next calculation: a pause two calculations later, a
 resume one. A closed window: VTherm's delay of 30 s, then two calculations.
@@ -98,17 +98,18 @@ def times(wait: Wait, n: int) -> Wait:
 
 
 # SmartPI pauses once it has called with the boiler off without a break for a calculation period, less
-# 1 s for the timer (boiler_call.BOILER_PAUSE_CONFIRM_S), at its first calculation after that.
+# 1 s for the timer (boiler_call.BOILER_PAUSE_CONFIRM_S), checked at that moment (before, at its first
+# calculation after it: up to a period later).
 PAUSE_CONFIRM_S = RECALC_S - 1.0
 # A valve room holds a stop of the boiler as heat for two calculation periods while its heat flows
 # (boiler_call.BOILER_VALVE_HOLD_S, technical_doc.md 3.8.2): its stop and its pause come then.
 VALVE_HOLD_S = 2 * RECALC_S
 BLINK_S = 5.0  # boiler_call.BOILER_BLINK_S: a boiler's start, or a relay's cut, counts once it has held this long
-# The thermostat's own change: below from its setpoint's own calculation, paused at the first check a
-# period later: 60-120 s, 90 s on average, as the setpoint falls at any moment of a calculation period
-# (117 pauses on the bench, checks of 7ae0d5e to 11e3071: 60-120 s, mean 84 s, median 85 s); at most
-# two periods (East in BP6 on boiler-delay: 116 s), well within the limit.
-PAUSE_ON_SETPOINT = Wait(1.5 * RECALC_S, WITHIN_S)
+# The thermostat's own change: below from its setpoint's own calculation, paused by the check
+# scheduled a period later (PAUSE_CONFIRM_S). Before that check, at the first calculation a period
+# later: 60-120 s, as the setpoint falls at any moment of a calculation period (117 pauses on the
+# bench, checks of 7ae0d5e to 11e3071: mean 84 s, median 85 s); well within the limit either way.
+PAUSE_ON_SETPOINT = Wait(PAUSE_CONFIRM_S, WITHIN_S)
 RESUME_ON_SETPOINT = Wait(0.0, WITHIN_S)  # at once
 # A learned thermostat (past SmartPI's first phase) that stops calling commits its 0 % only after the
 # calculation of its setpoint: its resume comes at SmartPI's next calculation (48-56 s on the bench).
@@ -146,9 +147,10 @@ def boiler_starts(role: Role) -> Wait:
 
 
 def resume_when_the_boiler_starts(role: Role) -> Wait:
-    """A paused thermostat resumes at the moment VTherm's boiler starts (SmartPI follows the
-    boiler's state): with an activation delay, that delay after the threshold is reached."""
-    return Wait(role.boiler_delay_s, role.boiler_delay_s + MARGIN_S)
+    """A paused thermostat resumes once VTherm's boiler's start counts, ``BLINK_S`` after it
+    (SmartPI follows the boiler's state): with an activation delay, that delay after the threshold
+    is reached."""
+    return Wait(role.boiler_delay_s + BLINK_S, role.boiler_delay_s + BLINK_S + MARGIN_S)
 
 
 class Context:
@@ -340,7 +342,7 @@ def published_at(value: Any) -> float | None:
 LOG_MARGIN_S = 60.0  # the bench's clock against Home Assistant's, when reading the log
 CLOCK_MARGIN_S = 10.0  # the bench's reading against SmartPI's calculation and Home Assistant's clock
 BOILER_PAUSE_LINE = "(central boiler off)"  # algo.py, set_boiler_learning_paused: "<name> - SmartPI learning paused (...)"
-AT_ONCE_S = 1.0  # a resume logged at the boiler's start: within 0.001 s on the bench
+AT_ONCE_S = 1.0  # a change logged at its moment: within 0.001 s on the bench (the boiler's start, the hold's end)
 HEAT_STOP_LINE = "heat stopped with the central boiler"  # algo.py, _heat_stops_with_the_boiler
 HEAT_DETECTED_LINE = "Heat Deadtime detected"  # deadtime_estimator.py: names no thermostat
 BLINK_LINE = "heat back with the central boiler after a blink"  # algo.py, _heat_back_after_a_blink
@@ -629,8 +631,8 @@ class Bench:
         mode, or from outside), and the step's own ``goals``; a thermostat that starts calling
         with the threshold reached is watched for a pause it must not take. With an activation
         delay the boiler stays off for that delay once the threshold is reached: every calling
-        thermostat is then paused (or pauses) while the boiler waits, and resumes at its start
-        (``waited``, from SmartPI's log). Then ``after``."""
+        thermostat is then paused (or pauses) while the boiler waits, and resumes once its start
+        counts, ``BLINK_S`` after it (``waited``, from SmartPI's log). Then ``after``."""
         reached_before = self.reaches()
         paused_before = {c: self.due_paused(c) for c in COUNTED}
         calling_before = set(self.calling)
@@ -669,7 +671,7 @@ class Bench:
 
     async def waited(self, started: float, paused_before: dict[str, bool]) -> dict[str, float | None]:
         """With an activation delay: each calling counted thermostat paused while VTherm's boiler
-        waited and resumed at its start, from SmartPI's info lines, as a pause can last seconds,
+        waited and resumed once its start counted (``BLINK_S``), from SmartPI's info lines, as a pause can last seconds,
         less than a reading (East's 3.9 s in BP6 on the bench). The seconds from ``started``, the
         boiler's from its state's change."""
         snap = await self.snapshot()
@@ -690,8 +692,9 @@ class Bench:
             back = None if resumed_at is None or on_at is None else resumed_at - on_at
             took[f"{name} resumed once the boiler is on"] = None if resumed_at is None else resumed_at - started
             self.check(
-                back is not None and abs(back) <= AT_ONCE_S,
-                f"{name} resumed at VTherm's boiler start ({'—' if back is None else f'{back:+.3f}'} s from it; SmartPI's log)",
+                back is not None and abs(back - BLINK_S) <= AT_ONCE_S,
+                f"{name} resumed once VTherm's boiler start counted ({'—' if back is None else f'{back:+.3f}'} s from it, "
+                f"{BLINK_S:.0f} s expected; SmartPI's log)",
             )
         return took
 
