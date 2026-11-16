@@ -3,14 +3,15 @@
 A 0.1-degC sensor that reports on change can step one step up and back for a minute (a room near a
 quantisation boundary, the sensor's noise). The filtered temperature rises and falls with it; the
 estimator took that rise for the peak (or a fall for the trough) and its fall for the response,
-and timed the dead time from the toggle. On the bench (BP37, check of b873c33), a 50-s toggle about
-500 s after North's stop most likely gave a passive dead time of about 500 s, where the room's is
-about 955-1020 s; the weak-evidence rule kept it out. Replayed through the estimator, that trace
-gives 535 s, and 1192 s with the rule below. A step of the raw reading now counts only once
+and timed the dead time from the toggle. In a synthetic test, a 50-s toggle about 500 s after a
+relay room's stop gave a passive dead time of about 500 s, where the room's is about 955-1020 s
+(the weak-evidence rule kept it out); replayed through the estimator, that trace gives 535 s, and
+1192 s with the rule below. A step of the raw reading now counts only once
 confirmed: held two of SmartPI's calculations, or followed by a second step the same way. A
-response must stand above the noise level (Astrom and Hagglund 1995, 6.4, p. 237), and an adaptive
-controller learns once the error exceeds two times the noise band, the measurement's peak-to-peak
-amplitude (p. 245; Hagglund and Astrom 2000, 4, p. 1174): for a sensor that toggles by one step,
+response must stand above the noise level (Astrom and Hagglund 1995, 6.4, p. 237), and a
+commercial adaptive controller, the Foxboro EXACT, adapts only once the error exceeds two times its
+noise band, the measurement's peak-to-peak amplitude (6.6, pp. 245-246; Hagglund and Astrom 2000,
+4, p. 1174): for a sensor that toggles by one step,
 one step may be a toggle, two steps is a real move, as for the trend before a start.
 
 The room as SmartPI sees it: Versatile Thermostat calculates twice at each change of the reading,
@@ -102,7 +103,7 @@ def test_a_toggle_does_not_shorten_a_heating_dead_time(at, toggle_s, direction) 
 
 def test_a_step_held_longer_is_the_room_s_move(monkeypatch) -> None:
     """A step held longer than two calculations, as the peak of a room still warming after its
-    stop (about 230 s on the bench, BP29), is the room's own: the estimator times it as before."""
+    stop (about 230 s in a synthetic test), is the room's own: the estimator times it as before."""
     toggle = (500.0, 730.0, 1)
     now = _measure(_passive, power=0.0, toggle=toggle)
     monkeypatch.setattr(deadtime_estimator, "DEADTIME_RAW_CONFIRM_S", 0.0)
@@ -114,7 +115,7 @@ def test_a_step_held_longer_is_the_room_s_move(monkeypatch) -> None:
 def test_a_toggle_in_progress_at_the_power_step_does_not_give_0_s(room, power, direction) -> None:
     """A toggle that began 30 s before the stop (or the start) and ends 30 s after: the peak (or
     trough) the detection starts from is the room's, not the toggle's, so no detection of 0 s at
-    once (the local instance's BP37 before this was handled: a passive dead time of 0.0 s)."""
+    once (before this was handled: a passive dead time of 0.0 s)."""
     reference = _measure(room, power=power)
     assert _measure(room, power=power, toggle=(-30.0, 30.0, direction)) == reference
 
@@ -126,7 +127,7 @@ def test_a_step_held_from_before_the_power_step_is_measured_as_before(monkeypatc
     Armed while the step was not confirmed, the wait starts from the temperature before it; once
     the step is confirmed, the trough (or peak) is taken again from the temperature since the
     power step, so the move before it is not the response and the result is the one before this
-    rule (on the bench, a rise 50 s before a start then gave 45 s in place of no measurement)."""
+    rule (a rise 50 s before a start then gave 45 s in place of no measurement)."""
     toggle = (-30.0, 10 * 3600.0, direction)
     now = _measure(room, power=power, toggle=toggle)
     monkeypatch.setattr(deadtime_estimator, "DEADTIME_RAW_CONFIRM_S", 0.0)

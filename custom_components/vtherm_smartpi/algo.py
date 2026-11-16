@@ -561,8 +561,8 @@ class SmartPI:
         """Pause or resume learning while SmartPI calls for heat and the central boiler is off.
 
         The room then cools although the command says it heats, and learning from that time
-        would be wrong. The pause only pauses learning: the learning window and a dead-time
-        detection in flight are dropped, and learning's next episode starts now at the earliest;
+        would be wrong. The pause only pauses learning: the learning window and the detection of
+        the response to SmartPI's call in flight are dropped (a passive detection goes on), and learning's next episode starts now at the earliest;
         the dead-time estimator keeps its last stop and its temperature history, which it keeps
         recording, since the wait for the boiler is time without heat. The regulation, its
         dead-time window included, is not touched. The estimator sees the boiler's state
@@ -677,8 +677,9 @@ class SmartPI:
         again after an outage restarts the estimator's observation, as a restart does
         (``_boiler_state_known_again``), and a first reading off, while the estimator saw power,
         records the stop (``_heat_stopped_at_an_unknown_moment``). A boiler's stop the handler
-        held as heat for a valve, at ``stopped_at`` (``SmartPIHandler._valve_heat``), is dated from
-        then (``_heat_stopped_at``), also when the room's own stop came during the hold.
+        held as heat (a valve, or a relay whose heat flowed), at ``stopped_at``
+        (``SmartPIHandler._valve_heat``, ``_relay_stop_held``), is dated from then
+        (``_heat_stopped_at``), also when the room's own stop came during the hold.
         """
         if on is False and stopped_at is not None and self._boiler_on is True and self._dead_time_power() <= 0.01:
             # The room stopped calling during the hold: its heat stopped with the boiler.
@@ -740,7 +741,9 @@ class SmartPI:
         """Versatile Thermostat's central boiler went off while SmartPI calls: the room's heat
         stops now, though SmartPI's command does not. The dead-time estimator sees the power fall
         to 0 now and its own rules decide: it records the stop, and times the room's passive
-        response from now if the heating had settled (3.6). A heating detection still waiting is
+        response from now if the heating had settled (3.6); a stop known to have come earlier is
+        then dated back (``ended_at``: ``_heat_stopped_earlier``; ``stopped_at``:
+        ``_heat_stopped_at``). A heating detection still waiting is
         dropped first: a later rise would not answer this heat."""
         now = time.monotonic()
         dropped = self.dt_est.state == "WAITING_HEAT_RESPONSE"
@@ -805,8 +808,8 @@ class SmartPI:
             est._weak_evidence = True
 
     def _heat_stopped_at(self, at: float) -> None:
-        """The room's heat stopped at ``at``, the boiler's stop that the handler held as heat for a
-        valve, and the estimator recorded it later: the stop, and the passive response armed by
+        """The room's heat stopped at ``at``, the boiler's stop that the handler held as heat (a
+        valve, or a relay whose heat flowed), and the estimator recorded it later: the stop, and the passive response armed by
         it, count from ``at``. A dead time counts from the onset of the step (reference 5, §2.4,
         p. 16). The response is armed only if the heating had settled by ``at``; its peak (in
         COOL, its trough) and the last moment near it come from the level the estimator's tracking
@@ -842,7 +845,9 @@ class SmartPI:
         """The boiler's state can be read again after it could not: whether the room got heat
         meanwhile is not known. As after a restart (``DeadTimeEstimator.load_state``), a response
         spanning the outage is not attributable: the estimator's observation restarts at the power
-        it sees now, and its minimum time without heat counts from now."""
+        it sees now, and its minimum time without heat counts from now. Unlike a restart, its
+        temperature history is cleared too, which the learning windows and the trend before the
+        next start read."""
         est = self.dt_est
         est.reset_observation(self._dead_time_power())
         est.last_stop_time = time.monotonic()

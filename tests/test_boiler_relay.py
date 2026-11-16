@@ -329,7 +329,7 @@ def test_only_a_relay_s_cycle_scheduler_out_of_valve_mode_is_a_relay() -> None:
     assert isinstance(handler._thermostat.prop_algorithm, SmartPI)
 
 
-# --- the relay's applied cycle, a cut found late, an outage of the boiler's state (check of 8904a66)
+# --- the relay's applied cycle, a cut found late, an outage of the boiler's state
 
 
 def _cooling_after(end: float) -> Callable[[float], float]:
@@ -340,7 +340,7 @@ def _cooling_after(end: float) -> Callable[[float], float]:
 
 @pytest.mark.parametrize(("cycle_s", "duty", "followed"), [(300.0, 0.9, 4), (3600.0, 0.85, 2)], ids=["5-minute cycle", "60-minute cycle"])
 async def test_a_cut_found_after_the_relay_s_own_off_part_is_timed_late(cycle_s, duty, followed, caplog) -> None:
-    """The bench's review probe B (check of 8904a66): the boiler follows the relay, then stops
+    """The boiler follows the relay, then stops
     following it during an off part (another room stopped): the cut shows only at the relay's next
     on part, 5 s in. The stop counts from the room's last heat, the relay's off; the passive
     response armed then starts late, so it can only come out shorter: shorter than the published
@@ -378,7 +378,7 @@ async def test_a_cut_found_late_without_a_published_passive_dead_time_times_none
 
 
 async def test_a_relay_off_where_its_cycle_has_it_on_follows_the_boiler(caplog) -> None:
-    """The bench's review probe C: the relay at 100 %, the boiler following it, becomes
+    """The relay at 100 %, the boiler following it, becomes
     unavailable at a cycle's start (Versatile Thermostat no longer counts it, the boiler goes
     off). Its applied cycle has it on: 5 s into the on part the relay's off is no own off part, so
     the boiler's state counts as read: the heat stops, from its last flow, and learning pauses."""
@@ -409,7 +409,7 @@ async def test_a_relay_that_switches_on_just_after_its_cycle_s_start_is_no_cut(c
 
 
 async def test_an_outage_of_the_boiler_s_state_restarts_the_estimator_s_observation(caplog) -> None:
-    """The bench's review probe D, a room with a valve: 300 s of heat with the boiler on; the
+    """A room with a valve: 300 s of heat with the boiler on; the
     boiler's state unknown from 300 to 1500 s (the real boiler off meanwhile); back on at 1500 s;
     the room's own stop at 1560 s. A response spanning the outage is not attributable: the
     observation restarts as after a restart, so the stop arms no passive measurement (it gave
@@ -470,7 +470,7 @@ async def test_a_relay_room_that_starts_calling_in_a_blink_of_the_boiler_records
 
 async def test_a_relay_room_heating_through_a_blink_of_the_boiler_goes_on_heating(caplog) -> None:
     """The relay room heats, in the on part of its cycle, and the boiler goes off for 8 ms (a
-    threshold raised, North in the bench's BP38): its heat flowed, so the boiler's stop is held as
+    threshold raised): its heat flowed, so the boiler's stop is held as
     heat (3.8.2) and its return is neither a stop nor a blink; the heating period goes on."""
     caplog.set_level(logging.INFO)
     handler = _relay_handler()

@@ -1770,7 +1770,7 @@ async def BP37(b: Bench) -> None:
 # With VTherm's threshold at 2 devices, East's valve and North's relay start the boiler together, so
 # the boiler goes off in each of North's own off parts while East calls. The water in East's
 # radiator goes on heating (a panel radiator answers a change of its water after 1.5-8 minutes:
-# Brembilla et al. 2015, Table 2, p. 2753), and SmartPI holds such a stop of the boiler as heat for
+# Brembilla et al. 2015, Table 2, p. 2754), and SmartPI holds such a stop of the boiler as heat for
 # 120 s (technical_doc.md 3.8.2). East's heating dead time is measured as a step response: the room at
 # rest before the step, the step as large as possible (Astrom and Hagglund 1995, 2.4, pp. 11-12),
 # the dead time counted from the step's onset (p. 16). The check of 785a4c7 (VR1) saw no stop for
