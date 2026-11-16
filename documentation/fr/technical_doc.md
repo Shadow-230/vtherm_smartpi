@@ -527,7 +527,8 @@ périodes de calcul) :
 - une pièce qui cesse de demander pendant ce temps a vu sa chaleur arrêtée par
   la chaudière : son arrêt est daté de l'arrêt de la chaudière de la même façon.
 
-Une pièce sur relais a sa propre règle (3.8.4). Une demande chaudière arrêtée
+Une pièce sur relais reçoit le même maintien quand la chaudière s'arrête pendant
+que sa chaleur passe, le relais allumé (3.8.4). Une demande chaudière arrêtée
 n'est pas maintenue : elle attend la chaudière, comme tout démarrage.
 
 La durée du maintien vient de mesures de radiateurs et de planchers chauffants.
@@ -626,21 +627,32 @@ Thermostat, hors mode vanne), tant que SmartPI demande :
   au relais, et tant que la chaudière peut encore suivre un relais qui vient de
   s'allumer. L'apprentissage ne se met pas en pause dans un cycle normal, et
   l'estimateur n'y voit ni arrêt ni démarrage ; une coupure venue de l'extérieur
-  tient pendant les parties allumées et éteintes du relais, sans clignoter.
+  tient pendant les parties allumées et éteintes du relais, sans clignoter ;
+- l'arrêt de la chaudière pendant que la chaleur de la pièce passe (le relais et
+  la chaudière allumés), comme dans la partie éteinte d'une autre pièce avec un
+  seuil d'équipements, est maintenu comme chaleur pendant `BOILER_VALVE_HOLD_S`
+  (120 s), comme pour une vanne (3.8.2) : l'eau du radiateur continue de
+  chauffer, quoi qui le pilote. La chaudière revenue pendant ce temps n'est ni
+  une coupure ni un démarrage ; encore arrêtée ensuite, y compris pendant la
+  partie éteinte propre au relais, c'est une coupure datée de l'arrêt de la
+  chaudière, et la pause compte depuis lui. Un relais qui s'allume alors que la
+  chaudière est déjà arrêtée n'est pas maintenu : la chaudière n'a pas démarré
+  pour lui, et la règle des 5 s ci-dessus s'applique.
 
 ```mermaid
 stateDiagram-v2
     direction LR
     state "chaleur" as heat
     state "pas de chaleur (coupure)" as cut
-    heat --> cut: chaudière arrêtée, relais allumé depuis 5 s
+    heat --> cut: relais allumé, chaudière arrêtée depuis 5 s
+    heat --> cut: chaudière arrêtée 120 s après son arrêt pendant que la chaleur passait
     heat --> cut: chaudière arrêtée, relais éteint dans la partie allumée de son cycle
     cut --> heat: chaudière et relais tous deux allumés
 ```
 
 Le diagramme montre la chaleur de la pièce, pour l'estimateur du temps mort et
 la pause d'apprentissage, tant que SmartPI demande : tout autre changement
-conserve l'état. Le second chemin vers une coupure est expliqué au paragraphe
+conserve l'état. Le troisième chemin vers une coupure est expliqué au paragraphe
 suivant.
 
 La partie éteinte n'appartient au relais que là où le cycle appliqué de SmartPI
@@ -788,8 +800,8 @@ chaleur après un arrêt de 59 s (référence 10, tableau 6, p. 77).
 - Une pièce qui commence à demander dans les 5 s après le démarrage de la
   chaudière compte son démarrage depuis celui de la chaudière, jusqu'à 5 s avant
   sa demande.
-- Une pièce sur vanne reçoit moins de chaleur pendant que sa chaudière est
-  arrêtée moins de 120 s, ce que l'estimateur ne voit pas : son temps mort de
+- Une pièce sur vanne, ou sur relais dont la chaleur passait, reçoit moins de
+  chaleur pendant que sa chaudière est arrêtée moins de 120 s, ce que l'estimateur ne voit pas : son temps mort de
   chauffe sort plus long, au plus de la durée de ces arrêts (en moyenne au plus
   la moitié, dans la simulation ci-dessus). Des arrêts de plus de 120 s à chaque
   cycle du relais d'une autre pièce arrêtent toujours la chaleur de la pièce à
@@ -809,7 +821,8 @@ chaleur après un arrêt de 59 s (référence 10, tableau 6, p. 77).
   mesure passive lorsque cette mesure sort plus courte que celle publiée, ou
   qu'aucune n'est encore publiée.
 - Une chaudière arrêtée pendant que la pièce demande moins longtemps que le
-  maintien d'une vanne (120 s), ou, pour une pièce sur relais, moins de 59 s,
+  maintien (120 s : une vanne, ou un relais dont la chaleur passait), ou sinon
+  moins de 59 s,
   n'arrête pas la fenêtre du trim FF ; un temps sans chaleur plus long rejette toute fenêtre
   qui le chevauche. Une pièce dont la chaudière est souvent arrêtée pendant
   qu'elle demande, des minutes durant, apprend son trim plus lentement.
