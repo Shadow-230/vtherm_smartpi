@@ -697,3 +697,45 @@ def test_bp0_notes_vtherm_s_warnings_of_home_assistant_s_deprecated_api_only() -
     assert not vt_api_deprecation({**entry, "name": "custom_components.vtherm_smartpi.handler"})
     assert not vt_api_deprecation({**entry, "level": "ERROR"})
     assert not vt_api_deprecation({**entry, "message": []})
+
+
+def test_the_passive_floor_lies_below_the_test_rooms_shortest_passive_dead_time() -> None:
+    """BP29, BP31 and BP33 accept a passive dead time of West or East only from
+    PASSIVE_SHORTEST_S: one calculation below the shortest the test rooms' model gives after 20 to
+    60 minutes at 100 % (rooms 18.5-21.5 degC, the outdoor swing's phase varied), by the
+    estimator's definition on the room's temperature without the sensor's step: a fall of 0.05 degC
+    from the peak, dated to the last moment within 0.01 degC of it."""
+    from scenarios import PASSIVE_SHORTEST_S  # noqa: PLC0415
+
+    sys.path.insert(0, str(QAS / "custom_components" / "smartpi_test_rooms"))
+    from model import RoomModel, Simulation  # noqa: PLC0415
+
+    def passive_s(r, heat_s: float, start_c: float, phase_s: float) -> float:
+        model = RoomModel(temperature=start_c, loss=r.loss, gain=r.gain, delay_s=r.delay_min * 60.0, lag_min=r.lag_min, water=True)
+        sim = Simulation(rooms={"room": model}, outdoor_mean=3.0, t_s=phase_s)
+        sim.set_boiler(True)
+        sim.set_command("room", 1.0)
+        at, stop = phase_s, phase_s + heat_s
+        while at < stop:
+            at += 7.0
+            sim.advance(at)
+        sim.set_command("room", 0.0)
+        peak, near = float("-inf"), 0.0
+        while at < stop + 4 * 3600.0:
+            at += 7.0
+            sim.advance(at)
+            peak = max(peak, model.temperature)
+            if model.temperature >= peak - 0.01:
+                near = at - stop
+            if peak - model.temperature >= 0.05:
+                return near
+        raise AssertionError("no passive response in 4 h")
+
+    shortest = min(
+        passive_s(room(name), minutes * 60.0, start, phase)
+        for name in ("West", "East")
+        for minutes in (20, 30, 45, 60)
+        for start in (18.5, 19.5, 20.5, 21.5)
+        for phase in (0.0, 1400.0)
+    )
+    assert 600.0 < shortest and PASSIVE_SHORTEST_S <= shortest - RECALC_S
