@@ -6,7 +6,7 @@ a receipt that carries the moment it was applied (a valve's position at once, a 
 start). SmartPI commits the applied power then, and feeds the estimator a start or a stop at that
 moment, not at its next calculation, up to a calculation period later (documentation/en/
 technical_doc.md, 3.6). Before, the start and the stop a room made itself both reached the
-estimator up to 60 s late, so both its dead times came out shorter (BP29 on the bench: 59.6 s).
+estimator up to 60 s late, so both its dead times came out shorter by as much.
 """
 
 from __future__ import annotations

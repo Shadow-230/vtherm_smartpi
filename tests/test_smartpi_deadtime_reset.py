@@ -51,7 +51,7 @@ def test_a_reset_starts_the_minimum_time_without_heat(monkeypatch) -> None:
 def test_a_start_85_s_after_a_reset_in_a_room_still_warming_is_not_measured(monkeypatch) -> None:
     """The room still rises from its last heating: a start 85 s after the reset arms no
     detection (HEATING), where an estimator without a last stop measured a dead time of about
-    0 s (bench, BP27 run 3)."""
+    0 s."""
     est = DeadTimeEstimator()
     _reset_at(est, monkeypatch)
 

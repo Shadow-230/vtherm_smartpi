@@ -430,7 +430,7 @@ def test_a_start_that_waited_is_judged_as_the_author_judges_a_start_at_the_boile
 
 def _handler(counted: bool = True) -> SmartPIHandler:
     thermostat = FakeThermostatRuntime()
-    thermostat.cycle_scheduler.is_valve_mode = True  # a valve, as the bench's West and East
+    thermostat.cycle_scheduler.is_valve_mode = True  # a valve
     thermostat.is_used_by_central_boiler = counted
     handler = SmartPIHandler(thermostat)
     with patch("custom_components.vtherm_smartpi.handler.async_dispatcher_send"):
@@ -557,8 +557,8 @@ async def test_a_short_run_of_the_boiler_during_the_pause_does_not_resume(run_s)
 
 async def test_the_pause_starts_one_period_after_the_boiler_s_stop_without_a_calculation() -> None:
     """The room calls with the boiler off, its changes followed: a check is scheduled one period
-    (59 s) later and starts the pause then, not at the next calculation, up to a period later
-    (104 s on the bench). Adaptation should be interrupted as quickly as possible (Hagglund and
+    (59 s) later and starts the pause then, not at the next calculation, up to a period later.
+    Adaptation should be interrupted as quickly as possible (Hagglund and
     Astrom 2000, 5, p. 1175). A check that fires a little early still starts it."""
     handler = _handler()
     handler._boiler_listener_remove = MagicMock()

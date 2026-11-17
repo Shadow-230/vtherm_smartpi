@@ -284,7 +284,7 @@ async def BP1(b: Bench) -> None:
 
 @scenario("BP2", THREE, lambda role: total(west_alone(role), east_joins(role)), END_TO_END, minimum=True, boiler_at_end=True)
 async def BP2(b: Bench) -> None:
-    """West calls alone and pauses → East calls too, the threshold is reached → VTherm's boiler starts (with an activation delay, 120 s later) and West resumes at that moment, not before; East does not pause (with the delay, it pauses too while the boiler waits)."""
+    """West calls alone and pauses → East calls too, the threshold is reached → VTherm's boiler starts (with an activation delay, 120 s later) and West resumes once its start counts (5 s), not before; East does not pause (with the delay, it pauses too while the boiler waits)."""
     await b.west_calls()
     await b.east_calls()
 
@@ -526,7 +526,7 @@ def lowered(role: Role) -> float:
     PAUSE_TESTS,
 )
 async def BP10(b: Bench) -> None:
-    """West calls alone and pauses → VTherm's threshold lowered to 1 device (or 500 W), the boiler on for a calculation period, then the threshold back → lowered, the boiler starts (with an activation delay, 120 s later), though only West calls, and West resumes at that moment; back, the boiler stops at once, West's heat is held for 120 s, then its stop and its pause come 120 s after the boiler's stop (SmartPI's log)."""
+    """West calls alone and pauses → VTherm's threshold lowered to 1 device (or 500 W), the boiler on for a calculation period, then the threshold back → lowered, the boiler starts (with an activation delay, 120 s later), though only West calls, and West resumes once its start counts (5 s); back, the boiler stops at once, West's heat is held for 120 s, then its stop and its pause come 120 s after the boiler's stop (SmartPI's log)."""
     await b.west_calls()
     _, original = await b.threshold_entity()
     try:
@@ -579,7 +579,7 @@ def learning_of(snap: dict[str, Any], climate: str) -> dict[str, Any]:
     start="learned",
 )
 async def BP13(b: Bench) -> None:
-    """West 300 W and East 900 W learned, a power threshold of 600 W → A West calls (300 W), A′ 20 minutes, B East calls (1200 W), C East stops (300 W), D West stops → A: the boiler stays off and West pauses after a calculation period with the boiler off; A′: the pause holds without a break, the boiler never starts, the room cools and nothing is learned; B: the boiler starts (with a delay, 120 s later) and West resumes at that moment; East does not pause (with the delay, it pauses too while the boiler waits); the boiler runs a calculation period; C: the boiler goes off at once, West's heat is held for 120 s, then its stop and its pause come 120 s after the boiler's stop (SmartPI's log), and nothing from the gap between them is learned; D: the pause ends."""
+    """West 300 W and East 900 W learned, a power threshold of 600 W → A West calls (300 W), A′ 20 minutes, B East calls (1200 W), C East stops (300 W), D West stops → A: the boiler stays off and West pauses after a calculation period with the boiler off; A′: the pause holds without a break, the boiler never starts, the room cools and nothing is learned; B: the boiler starts (with a delay, 120 s later) and West resumes once its start counts (5 s); East does not pause (with the delay, it pauses too while the boiler waits); the boiler runs a calculation period; C: the boiler goes off at once, West's heat is held for 120 s, then its stop and its pause come 120 s after the boiler's stop (SmartPI's log), and nothing from the gap between them is learned; D: the pause ends."""
     await b.west_calls()
     start = await b.snapshot()
     b.note("— A′ West paused for 20 minutes")
@@ -1681,7 +1681,7 @@ async def BP36(b: Bench) -> None:
     north=STOPPED,
 )
 async def BP37(b: Bench) -> None:
-    """North learned (a water radiator behind a relay), East fresh → VTherm's threshold raised to 2 devices; North calls 2 degC above its room and East calls, so the boiler heats with North's relay on (East's valve and the relay make 2 devices); once SmartPI modulates North (above 80 %, with short off parts, its heating settled), East stops during one of North's off parts, so the boiler does not start at North's next on part → the role shows the case: the boiler heated North before East's stop and stays off after it; SmartPI takes it for a cut only 5 s into North's next on part (its "North - SmartPI heat stopped with the central boiler" line 5-20 s after the relay's start), and North pauses; the passive measurement, which can only start late, does not lower North's passive dead time: it ends ignored, or detected no shorter than before, and SmartPI's log has no shorter passive dead time; East's own stop comes within 120 s of the boiler's stop, while its heat is held (its stop is then dated from the boiler's, 3.8.2): East never pauses, its dead-time estimator sees no power after its stop and waits for no response (fresh, it measures none); the threshold is back to 1."""
+    """North learned (a water radiator behind a relay), East fresh → VTherm's threshold raised to 2 devices; North calls 2 degC above its room and East calls, so the boiler heats with North's relay on (East's valve and the relay make 2 devices); once SmartPI modulates North (above 80 %, with short off parts, its heating settled), East stops during one of North's off parts, so the boiler does not start at North's next on part → the role shows the case: the boiler heated North before East's stop and stays off after it; SmartPI takes it for a cut only 5 s into North's next on part (its "North - SmartPI heat stopped with the central boiler" line 5-20 s after the relay's start), and North pauses 59 s after that line, by its own check (within 1 s; SmartPI's log); the passive measurement, which can only start late, does not lower North's passive dead time: it ends ignored, or detected no shorter than before, and SmartPI's log has no shorter passive dead time; East's own stop comes within 120 s of the boiler's stop, while its heat is held (its stop is then dated from the boiler's, 3.8.2): East never pauses, its dead-time estimator sees no power after its stop and waits for no response (fresh, it measures none); the threshold is back to 1."""
     await north_learned(b)
     first = await b.snapshot()
     room_c, cool_before = of(first, NORTH, "indoor"), of(first, NORTH, "deadtime_cool")
@@ -1727,6 +1727,16 @@ async def BP37(b: Bench) -> None:
         )
         paused = [clock(s) for s in after if of(s, NORTH, "paused") is True]
         b.check(bool(paused), f"North pauses after the cut ({', '.join(paused[:1]) or 'not seen'})")
+        # The cut comes between calculations, 5 s into the relay's on part: the pause comes by its own
+        # check a calculation period after it, not at the next calculation (104 s on 481eea4).
+        pause_lines = await asyncio.to_thread(instance_log, BOILER_PAUSE_LINE, datetime.fromtimestamp(east_stopped, UTC))
+        pauses = [at for at, is_paused in logged_pauses(pause_lines, NAMES[NORTH]) if is_paused and stops and at >= stops[0]]
+        pause = pauses[0] - stops[0] if pauses and stops else None
+        b.check(
+            pause is not None and abs(pause - PAUSE_CONFIRM_S) <= AT_ONCE_S,
+            f"North's pause {'—' if pause is None else f'{pause:.3f}'} s after its \"heat stopped\" line "
+            f"({PAUSE_CONFIRM_S:.0f} s expected, within {AT_ONCE_S:.0f} s; SmartPI's log)",
+        )
         east_stop = next((at for at, _, new in logged_target_changes(await asyncio.to_thread(instance_log, TARGET_CHANGE_LINE, datetime.fromtimestamp(east_stopped, UTC)), NAMES[EAST]) if at >= east_stopped - CLOCK_MARGIN_S and new == STOPPED), None)
         held = None if east_stop is None or boiler_stop is None else east_stop - boiler_stop
         b.check(held is not None and 0.0 <= held < VALVE_HOLD_S, f"East's own stop {seconds(held)} s after the boiler's stop (SmartPI's log), within the {VALVE_HOLD_S:.0f}-s hold")
@@ -1760,7 +1770,7 @@ async def BP37(b: Bench) -> None:
 # With VTherm's threshold at 2 devices, East's valve and North's relay start the boiler together, so
 # the boiler goes off in each of North's own off parts while East calls. The water in East's
 # radiator goes on heating (a panel radiator answers a change of its water after 1.5-8 minutes:
-# Brembilla et al. 2015, Table 2, p. 2753), and SmartPI holds such a stop of the boiler as heat for
+# Brembilla et al. 2015, Table 2, p. 2754), and SmartPI holds such a stop of the boiler as heat for
 # 120 s (technical_doc.md 3.8.2). East's heating dead time is measured as a step response: the room at
 # rest before the step, the step as large as possible (Astrom and Hagglund 1995, 2.4, pp. 11-12),
 # the dead time counted from the step's onset (p. 16). The check of 785a4c7 (VR1) saw no stop for
@@ -2035,7 +2045,9 @@ async def BP40(b: Bench) -> None:
 # change counts once it has held for a set time, and an alarm clears only once its signal has stayed
 # back for a set time (Adnan 2013, PhD thesis, University of Alberta, 3.3, p. 30). The pause starts
 # by its own check a calculation period after the room's heat stopped, not at the next calculation
-# (Hagglund and Astrom 2000, 5, p. 1175: adaptation interrupted as quickly as possible). With VTherm's
+# (Hagglund and Astrom 2000, 5, p. 1175: adaptation interrupted as quickly as possible). A call makes a
+# calculation of its own, so the calls come half a period after SmartPI's restart: the old timing would
+# pause about 89 s after them (a call 0.3 s after the restart gave 59.7 s on 481eea4). With VTherm's
 # threshold at 3 devices, North's relay and East's valve do not start the boiler; the threshold at 1
 # for 2 s runs it. Before, North resumed at once, its estimator saw a start and its stop was held
 # 120 s; East resumed until its next calculation.
@@ -2043,17 +2055,20 @@ async def BP40(b: Bench) -> None:
 SHORT_RUN_S = 2.0  # BP41: the boiler's run, under BLINK_S
 SHORT_RUN_WATCH_S = 2 * RECALC_S  # BP41: the readings after the run
 BLOCKING_THRESHOLD = 3.0  # BP41: above North's relay and East's valve
+# BP41: the calls half a calculation period after SmartPI restarts with North's learned state, so that a
+# pause at SmartPI's next calculation (before its own check) would come about 89 s after them, not 60 s.
+CALL_AFTER_RESTART_S = RECALC_S / 2
 
 
 @scenario(
     "BP41",
     ("boiler-relay",),
-    lambda role: total(PUBLISHED, Wait(PAUSE_CONFIRM_S + RECALC_S, 2 * RECALC_S + MARGIN_S), Wait(SHORT_RUN_S, SHORT_RUN_S + MARGIN_S), Wait(SHORT_RUN_WATCH_S, SHORT_RUN_WATCH_S), PUBLISHED),
+    lambda role: total(PUBLISHED, Wait(CALL_AFTER_RESTART_S, CALL_AFTER_RESTART_S), Wait(PAUSE_CONFIRM_S + RECALC_S, 2 * RECALC_S + MARGIN_S), Wait(SHORT_RUN_S, SHORT_RUN_S + MARGIN_S), Wait(SHORT_RUN_WATCH_S, SHORT_RUN_WATCH_S), PUBLISHED),
     PAUSE_TESTS,
     north=STOPPED,
 )
 async def BP41(b: Bench) -> None:
-    """North learned (a water radiator behind a relay), West and East not calling, VTherm's threshold raised to 3 devices → North calls 2 degC above its room and East at 100 %, the boiler stays off; once both are paused, the threshold at 1 for 2 s runs the boiler for less than 5 s, then back to 3 → the role shows the case: North pauses a calculation period after its call (59 s from its "Target change detected" line, within 2 s; SmartPI's log), not at its next calculation; through the run and 120 s after it North and East stay paused in every reading, their dead-time estimators see no power, and the log has no "learning resumed" and no "heat stopped with the central boiler" line for either; the run lasts less than 5 s by VTherm's own time stamps (or the run decides nothing); the threshold is back to 1."""
+    """North learned (a water radiator behind a relay), West and East not calling, VTherm's threshold raised to 3 devices → half a calculation period after SmartPI restarted with North's state, North calls 2 degC above its room and East at 100 %, the boiler stays off; once both are paused, the threshold at 1 for 2 s runs the boiler for less than 5 s, then back to 3 → the role shows the case: North pauses a calculation period after its call (59 s from its "Target change detected" line, within 2 s; SmartPI's log), not at its next calculation; through the run and 120 s after it North and East stay paused in every reading, their dead-time estimators see no power, and the log has no "learning resumed" and no "heat stopped with the central boiler" line for either; the run lasts less than 5 s by VTherm's own time stamps (or the run decides nothing); the threshold is back to 1."""
     await north_learned(b)
     room_c = of(await b.snapshot(), NORTH, "indoor")
     if not isinstance(room_c, (int, float)):
@@ -2067,6 +2082,7 @@ async def BP41(b: Bench) -> None:
 
     try:
         await threshold(BLOCKING_THRESHOLD)
+        await asyncio.sleep(CALL_AFTER_RESTART_S)
         target = round(room_c + HEAT_STEP_C, 1)
         b.note(f"— VTherm's threshold {BLOCKING_THRESHOLD:g} devices; North calls ({target:g} degC, its room {room_c:g} degC) and East at 100 %")
         called = time.time()

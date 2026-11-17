@@ -54,7 +54,7 @@ def _armed(est: DeadTimeEstimator, hvac_mode=VThermHvacMode_HEAT) -> bool:
 @pytest.mark.parametrize(
     ("deadtime_s", "run_s", "armed"),
     [
-        (780.0, 5 * 60.0, False),  # the bench: 5 minutes of heat in a room of 780 s
+        (780.0, 5 * 60.0, False),  # 5 minutes of heat in a room of 780 s
         (780.0, 15 * 60.0, True),
         (None, 30 * 60.0, False),  # no reliable heating dead time: no passive response at all
         (120.0, 5 * 60.0, True),  # a fast heater

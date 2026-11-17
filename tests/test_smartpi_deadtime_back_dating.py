@@ -6,12 +6,12 @@ calculation, or the hold running out), SmartPI dates the room's stop and its pas
 to the boiler's stop (``SmartPI._heat_stopped_at``). The response's peak then comes from what the
 estimator's tracking followed since, so a raw step of the sensor not confirmed yet counts there as
 in the tracking (3.6). A change counts only above the measurement's noise band (Astrom and
-Hagglund 1995, 6.4, p. 237 and 245; 2.6, p. 39; Hagglund and Astrom 2000, 4, p. 1174), and a dead
+Hagglund 1995, 6.4, p. 237; 6.6, pp. 245-246; 2.6, p. 39; Hagglund and Astrom 2000, 4, p. 1174), and a dead
 time counts from the onset of the step (Astrom and Hagglund 1995, 2.4, p. 16).
 
 Before, the peak came from the filter's own history: a one-step toggle of the reading, or a step
-not confirmed yet, raised it, and the filter's return looked like the room's drop at once (the
-bench's check of a65202d: 31.8 s in BP33, 120.1 s in BP29, for a room of about 1000 s). The room
+not confirmed yet, raised it, and the filter's return looked like the room's drop at once (in
+synthetic tests, dead times of tens of seconds to two minutes for a room of about 1000 s). The room
 here: flat at 19.0 degC, then cooling 780 s after the heat really ended (``test_boiler_cut_heat``).
 """
 

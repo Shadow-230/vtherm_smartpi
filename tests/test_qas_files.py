@@ -7,7 +7,7 @@ import json
 import pathlib
 import sys
 from datetime import UTC, datetime
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -192,6 +192,46 @@ def test_what_each_role_makes_of_the_calls(name: str, west: bool, east: bool, bo
         assert bench.reaches() is reaches, calling
         assert all(bench.due_paused(c) is (not reaches) for c in calling)
         assert bench.due_paused(NORTH) is False
+
+
+async def test_a_step_with_a_delayed_start_waits_for_the_resume_before_its_checks() -> None:
+    """boiler-delay: East joins West, the threshold is reached, VTherm starts its boiler 120 s later.
+    SmartPI resumes each calling thermostat once the boiler's start counts, 5 s after it: the step
+    waits for that before it reads SmartPI's log (``waited``) and the state (``after``), and before
+    the scenario goes on. Before, it read both at the boiler's start: every delay role failed, and
+    a step that ended at once stopped the boiler within 5 s, so no thermostat resumed (check of
+    a93d6f9)."""
+    bench = Bench(MagicMock(), Ids({}, None, None, None, None, None), ROLES["boiler-delay"])
+    bench.calling = {WEST}
+    on_at = datetime.now(UTC)
+    readings = iter([True, True, True, False])
+    order: list[str] = []
+
+    async def snapshot() -> dict:
+        paused = next(readings, False)
+        order.append(f"read paused={paused}")
+        return {"t": 0.0, "boiler": "on", "boiler_since": on_at.isoformat(), "west.paused": paused, "east.paused": paused}
+
+    async def waited(*_args) -> dict:
+        order.append("waited")
+        return {}
+
+    async def after(_step: str) -> dict:
+        order.append("after")
+        return {}
+
+    async def east_calls() -> None:
+        bench.calling.add(EAST)
+
+    bench.snapshot = snapshot
+    bench.reach = AsyncMock(return_value={})
+    bench.waited = waited
+    bench.after = after
+    with patch("steps.asyncio.sleep", new=AsyncMock()):
+        await bench.change("East calls", east_calls)
+
+    assert order.index("waited") > order.index("read paused=False")
+    assert order[-2:] == ["waited", "after"]
 
 
 def test_nothing_in_the_pack_is_collected_by_pytest() -> None:
