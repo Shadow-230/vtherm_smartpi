@@ -89,7 +89,9 @@ SmartPI leaves `HYSTERESIS` once `b` has 5 measurements and `a` is published.
 measurements when they agree: their median absolute deviation is at most
 `AB_A_CONSISTENT_MAX_REL_MAD = 0.10` of their median. The first publication of
 `a` also waits for the delivered power model (3.7): while the response lag is not
-resolved, measurements are collected without publication. Both buffers continue
+resolved, measurements are collected without publication, until the collection
+holds `AB_HISTORY_SIZE = 31` measurements: the next accepted measurement then
+publishes `a`. Both buffers continue
 filling up to `AB_HISTORY_SIZE = 31` during normal SmartPI regulation. After a
 restart, the restored response lag state sets the phase from the first
 calculation; a state saved without a response lag block waits for the first
@@ -98,7 +100,8 @@ learning update.
 Inside the hysteresis band, the output keeps its previous on/off state. A
 modulated output left by another phase is not a hysteresis state: it is set to 0
 until the next threshold. The on/off state is persisted with the wall-clock time
-of the last calculation. After a restart, the first calculation resumes it inside
+of the last calculation. After a restart, the first calculation that has the
+indoor temperature and the setpoint resumes it inside
 the band when the stop lasted at most `RESPONSE_LAG_RESTART_MAX_GAP_S = 600 s`
 (3.7) and the HVAC mode is unchanged, as an uninterrupted hysteresis would have.
 Outside the band, the thresholds decide. Otherwise, and for a state saved without
@@ -364,8 +367,8 @@ lasted at most `RESPONSE_LAG_RESTART_MAX_GAP_S = 600 s` and the HVAC mode is
 unchanged. During a short stop the actuator keeps its last state; beyond it (host
 down, power outage, update) the power is unknown. A passive period resumes, and
 the stop counts as passive. An episode resumes when the first applied power after
-the restart equals its power within `RESPONSE_LAG_U_TOL`. Otherwise it is counted
-as an ended episode without an estimate (`episode interrupted by restart`), and a
+the restart equals its power within `RESPONSE_LAG_U_TOL`. Otherwise it ends
+without an estimate (`episode interrupted by restart`), and a
 nonzero power opens a new episode without a known passive period. The crossings
 come from the raw history of the dead time detector, persisted the same way; it
 holds no sample during the stop. A state saved without this context resumes
@@ -392,8 +395,11 @@ $\tau = T_{ar} - L$:
 $$ \eta = \frac{1}{W}\int_{t_0}^{t_0+W} \left(1 - e^{-(t-L)/\tau}\right)\mathbb{1}_{t>L}\,dt $$
 
 The model is resolved once the lag is published, or after
-`RESPONSE_LAG_RESOLVE_EPISODES = 7` active episodes without a publication
-(the applied power is then used). Until then, `a` measurements are collected
+`RESPONSE_LAG_RESOLVE_EPISODES = 4` heating phases without a publication
+(the applied power is then used). A heating phase groups the active episodes
+separated by power cuts shorter than `RESPONSE_LAG_PHASE_MIN_OFF_S = 600 s`: an
+episode that starts less than 600 s after the end of the previous one does not
+count as a new phase. Until then, `a` measurements are collected
 without publication. When the published lag appears or changes by more than
 `RESPONSE_LAG_MODEL_CHANGE_REL = 0.5` before the first publication of `a`, the
 collected measurements are recomputed with the new delivered power. Only the
@@ -402,11 +408,11 @@ since their correction depends on the shape of the response.
 
 The state is published in `analysis.learning.response_lag` (`lag_s`, `estimates`,
 `episodes`, `episodes_target`, `episode_median_s`, `last_reason`) and persisted
-with the learning state. `episodes` counts the active episodes ended since the
+with the learning state. `episodes` counts the heating phases ended since the
 start of the learning, also after the lag is published; `episodes_target` is
 `RESPONSE_LAG_RESOLVE_EPISODES`. When both collections have reached their count
 and `a` waits for this model, `learning.bootstrap_status` reads
-`step2 - waiting response lag: estimates N, episodes K/7`.
+`step2 - waiting response lag: estimates N, heating phases K/4`.
 
 The lag is learned on constant-power episodes, which the hysteresis bootstrap
 provides. In PWM regulation the duty cycle changes from cycle to cycle, so an
@@ -1101,100 +1107,49 @@ The same payload in both modes exposes trajectory details under
 
 Setpoint reference shaping is limited to the P branch, so the integral path keeps the raw setpoint untouched. No command cap is applied after the PI computation: the PI command goes straight to the soft constraints (rate limiter, `max_on_percent`) and then to the timing constraints.
 
-The current code also applies an explicit guard on positive integral growth during catch-up phases:
-
-- after a significant setpoint change,
-- after resuming from `hvac_off`,
-- after resuming from detected window opening,
-- after resuming from power shedding,
-- during a disturbance-recovery trajectory.
-
-This guard does not block integral discharge. An integral that already points
-against the requested recovery usually carries the model bias (feed-forward
-error), which still holds at the new setpoint: the guard keeps it while the
-recovery progresses. Once the recovery stalls, with the release error still
-beyond its threshold and the signed recovery slope at or below the release
-slope for `INTEGRAL_GUARD_STALL_CYCLES = 3` cycles, the guard allows that
-opposing memory to unwind as far as zero. It still blocks any new accumulation
-beyond zero in the protected direction. A negative integral inherited from the
-previous setpoint therefore cannot hold the room below a new, higher setpoint,
-and a setpoint step does not erase the bias that keeps the room from
-overshooting at the new setpoint.
-
-After a setpoint change or a resume, the proportional and feed-forward action
-can settle short of the target, beyond the release threshold, and only the
-integral can close the remaining error. When the recovery stays stalled for
-`INTEGRAL_GUARD_RELEASE_STALL_RATIO = 2` times the unwind stall, the guard
-releases. The release is soft: the integral runs at
-`INTEGRAL_GUARD_SOFT_RELEASE_SCALE = 0.20` of its rate until the error reaches
-the core deadband or changes sign, so it does not overshoot the holding power
-while a slow room lags behind it (`soft_release` in the integral guard mode).
-A window, power-shedding or OFF resume in the same direction keeps the stall
-clock, or the soft release in progress, instead of starting over; recovering
-the dip of the interruption counts as progress only once the error falls
-`INTEGRAL_GUARD_RESUME_PROGRESS_C = 0.05 °C` below its level before the
-interruption. A disturbance recovery keeps its own plateau release below.
+After a setpoint change or a resume, the integral follows the raw setpoint
+error without any extra recovery rule: it is limited only by the anti-windup
+(below), the deadband and near-band modes, the overshoot clamp and the overheat
+cut. The setpoint trajectory brakes the proportional branch only.
 
 A disturbance-recovery trajectory brakes the P branch because the model
 predicts that the committed power is enough to close the gap. When this model
-is biased, the room can settle on a plateau below the setpoint: the trajectory
-never ends, and the guard blocks the integral that alone could close the gap. A
-plateau test then ends the trajectory:
+is biased, the room can settle on a plateau below the setpoint and the
+trajectory never ends. A plateau test then ends the trajectory:
 
 - the signed error is averaged over blocks of
-  `INTEGRAL_GUARD_PLATEAU_BLOCK_CYCLES = 3` cycles,
-- a block is stationary if its average stays above the release error and does
-  not vary by more than the release slope applied over one block,
-- `INTEGRAL_GUARD_PLATEAU_BLOCKS = 2` consecutive stationary blocks are required,
-- and no net progress over `INTEGRAL_GUARD_PLATEAU_PROGRESS_BLOCKS = 4` blocks:
+  `RECOVERY_PLATEAU_BLOCK_CYCLES = 3` cycles,
+- a block is stationary if its average stays above the residual error floor
+  (the larger of `RECOVERY_ERROR_FLOOR_DEADBAND_RATIO = 2` times the deadband
+  and the deadband plus its hysteresis) and does not vary by more than
+  `RECOVERY_PLATEAU_SLOPE_ABS_H = 0.12 °C/h` applied over one block,
+- `RECOVERY_PLATEAU_BLOCKS = 2` consecutive stationary blocks are required,
+- and no net progress over `RECOVERY_PLATEAU_PROGRESS_BLOCKS = 4` blocks:
   the average must not have dropped by more than
-  `INTEGRAL_GUARD_PLATEAU_PROGRESS_MIN_C = 0.03 °C`. A slow recovery tail, seen
+  `RECOVERY_PLATEAU_PROGRESS_MIN_C = 0.03 °C`. A slow recovery tail, seen
   through a quantized probe, is therefore not mistaken for a plateau.
 
-On detection, the trajectory switches back to passthrough and the
-disturbance-recovery guard is released. No new disturbance trajectory starts
-until the error has dropped back below the trigger threshold minus the tracking
-hysteresis, or until a setpoint change or a reset. A new disturbance therefore
-remains braked and guarded normally.
+On detection, the trajectory switches back to passthrough. No new disturbance
+trajectory starts until the error has dropped back below the trigger threshold
+minus the tracking hysteresis, or until a setpoint change or a reset. A new
+disturbance therefore remains braked normally.
 
-The guard is released only when two conditions are met:
+Window resumes and power-shedding resumes in heating mode hold the integral
+during the dead time:
 
-- the release error has returned close to the configured deadband scale,
-- the signed recovery slope has collapsed persistently.
-
-The slope test combines two criteria:
-
-- a relative threshold based on the maximum recovery slope observed during the catch-up phase,
-- an absolute floor in `°C/h` so a very small peak slope cannot make release overly permissive.
-
-The signal used for that release error depends on the servo context:
-
-- during an active setpoint trajectory, release is based on `error_p`, i.e. the filtered-setpoint error actually followed by the proportional branch,
-- outside a trajectory, release is based on `error_i`, i.e. the raw setpoint error.
-
-This separation prevents the guard from remaining active after the trajectory has already converged to its filtered reference while the system is physically stabilized below the raw setpoint.
-
-The signed raw error still remains the safety reference: if `error_i <= 0`, the guard is released immediately.
-
-The recovery slope is handled symmetrically:
-
-- in heating mode, a positive slope means moving toward the setpoint,
-- in cooling mode, the slope is logically inverted so the same physical reading remains valid.
-
-Window resumes and power-shedding resumes in heating mode add one more stage:
-
-- on resume, SmartPI first arms an explicit `I:HOLD`,
+- on resume, SmartPI arms an explicit `I:HOLD` (`window_resume` or
+  `power_shedding_resume`),
 - that hold remains active while the heating response is still inside the usable `deadtime_heat` window,
-- when that phase ends, SmartPI re-evaluates the signed residual error,
-- it arms the positive guard only if that residual error is still large enough to characterize a meaningful catch-up phase,
-- otherwise the I branch returns directly to normal behavior.
+- when that window ends, the integral runs normally again,
+- a resume whose signed residual error is already below the residual error
+  floor ends the hold before the dead-time window starts,
+- without a reliable heating dead time, no hold is applied.
 
 This sequence prevents the integral from learning a resume transient that is still dominated by heating dead time.
 
 Transient catch-up states are not restored after a reboot:
 
 - the active analytical trajectory is cleared,
-- the integral guard is reset,
 - any temporary `integral_hold_mode` is cleared.
 
 The restart therefore keeps only useful persistent PI memory, without restoring transient servo states that are no longer physically valid outside their original runtime session. The wall-clock timestamp of the last valid active regulation tick is persisted and is not refreshed while HVAC is OFF. If inactivity exceeds 96 hours, controller PI memory is purged on resume while the learned A/B model remains available. If the HVAC mode after a restart differs from the mode of the persisted model (HEAT versus COOL), the integral is cleared. When a tick is skipped because the temperature sensor is missing or `guard_cut` is active, time tracking restarts like after OFF, so the error is not integrated over the skipped period.
@@ -1212,7 +1167,6 @@ Additional protections currently present are:
 
 - `SmartPIGuards` (heating mode only, outside the bootstrap and the calibration): `guard_cut` forces the output to 0 when the measured temperature exceeds `setpoint + near_band_above` while the heater is active, until it falls back to that threshold minus the larger of `NEAR_BAND_HYSTERESIS_C = 0.05°C` and `GUARD_CUT_RESET_STEPS = 1.5` observed sensor steps (a reading flickering between two levels around the threshold would otherwise re-trigger the cut, and restart the cycle, at every measurement). During a cut the output stays at 0 (`I:OVERRIDE(guard_cut)`). While the PI still requests power, a positive integral tracks the forced 0 % by back-calculation, `d(Ki·I)/dt = −v/Ti` with `v` the PI request and `Ti = Kp/Ki`, at most one cycle per tick. Its rate follows the request, not the overshoot: an integral that carries more than the heat need comes down within a few cuts, even when the room barely exceeds the threshold. It comes down until it alone would hold the room at the cut threshold minus `NEAR_BAND_HYSTERESIS_C` (`Ki·I/Kp`); below that point it is kept, as is the heating need left after a setpoint decrease. Without this, a bias of the integral restored the same excess power at each release and the room cycled between cut and restart. The temperature filter, the dead time detector, the published temperature and the learning keep following the room. The room then cools without heating, for example during the whole fall after a setpoint decrease: this is a passive window for `b` and for the response lag baseline. The governance sees a zero command outside any band, and `a` windows are blocked (`skip: guard cut`). The learning stays contiguous at the end of the cut; `guard_kick` restarts the cycle when, inside the near-band, the temperature falls below `setpoint - near_band_below` while the command is below 99 %. In cooling mode neither guard acts and the near-band is not auto-sized. In the bootstrap the heating runs between its own hysteresis thresholds and a running guard is released,
 - per-tick anti-windup on the applicable upper limit (see below),
-- signed integral guard during resumes, catch-up phases, and setpoint changes,
 - explicit `I:HOLD` during the post-resume `deadtime_heat` phase for `window_resume` and `power_shedding_resume` in heating mode,
 - `I:HOLD` with source `vt_safety` while Versatile Thermostat safety mode applies its default power instead of the SmartPI command,
 - `I:HOLD` with source `deadband_hysteresis_shell` while the hysteretic deadband state is active and the error is outside the core deadband,
@@ -1222,7 +1176,7 @@ Additional protections currently present are:
 The anti-windup acts at every calculation, in the linear demand space, on the applicable upper limit: `1`, or the linear image of `max_on_percent` when it is lower. It has two parts:
 
 - conditional integration: the integral stops growing when the unconstrained request exceeds the applicable upper limit. Within `NEAR_SETPOINT_UNWIND_STEPS = 1.5` observed sensor steps of the setpoint, an output saturated against the error still lets the integral unwind toward zero, without crossing it (`I:UNWIND(SAT_HI|SAT_LO)`), provided the output without the proportional term (`u_ff + Ki·I`) stays within its limits: with a quantized sensor, a reading one step away from the setpoint saturates the output through the proportional term alone, and a blocked integral combined with the deadband freeze would hold a steady offset. An output held at its limit by `u_ff + Ki·I` (for example at `max_on_percent`) keeps the integral, which then carries the model bias;
-- back-calculation: on every tick where the integral mode is `I:RUN`, `I:SKIP`, `I:GUARD` or `I:CLAMP`, the excess of the PI output (`u_ff + u_pi`, clamped to `[0, 1]`) above the linear image of `max_on_percent` corrects the integral by `beta * excess / Ki`, with `beta = dt / max(Kp/Ki, dt)` (tracking time constant equal to `Ti = Kp/Ki`). The correction only moves the integral toward zero and stops at zero, so an excess carried by the proportional term alone never winds the integral in the opposite direction. The integral stays clamped to `±2/Ki`. Only the integral changes: `u_pi` keeps the decomposition that produced the command.
+- back-calculation: on every tick where the integral mode is `I:RUN`, `I:SKIP` or `I:CLAMP`, the excess of the PI output (`u_ff + u_pi`, clamped to `[0, 1]`) above the linear image of `max_on_percent` corrects the integral by `beta * excess / Ki`, with `beta = dt / max(Kp/Ki, dt)` (tracking time constant equal to `Ti = Kp/Ki`). The correction only moves the integral toward zero and stops at zero, so an excess carried by the proportional term alone never winds the integral in the opposite direction. The integral stays clamped to `±2/Ki`. Only the integral changes: `u_pi` keeps the decomposition that produced the command.
 
 The following are not treated as saturation: Versatile Thermostat quantization and valve retention (`dpercent`, period), minimum on/off times, and the rate limiter. The behavior is symmetric in HEAT and COOL, does not use Versatile Thermostat command receipts, and is identical with older Versatile Thermostat versions. The `aw_du` diagnostic is the correction (excess, `<= 0`) applied at the last tick.
 
@@ -1289,7 +1243,8 @@ Before and during each phase the manager checks, with the thermal twin, that the
 | `controller.py`        | discrete PI, anti-windup, hold, hysteresis                  |
 | `deadband.py`          | deadband and near-band                                      |
 | `setpoint.py`          | analytical setpoint trajectory for the P reference          |
-| `integral_guard.py`    | directional integral guard and the I:HOLD after a window or power-shedding resume |
+| `resume_hold.py`       | I:HOLD during the dead time after a window or power-shedding resume |
+| `recovery_plateau.py`  | plateau test of a disturbance-recovery trajectory           |
 | `feedforward.py`       | `u_ff1/u_ff2/u_ff3` orchestration, signed FF gain `b/a` and warmup scale |
 | `ff_trim.py`           | causal slow bias and bounded trim/integral ownership plans  |
 | `ff_trim_runtime.py`   | `FFTrimCoordinator`: frozen control decomposition of scheduler requests, routing of trim observer results, bumpless trim/integral transactions at the cycle boundary, transfer state |
@@ -1321,7 +1276,6 @@ self.deadband_mgr = DeadbandManager(name, near_band_deg)
 self.calibration_mgr = CalibrationManager(name)
 self.gain_scheduler = GainScheduler(name)
 self.tint_filter = AdaptiveTintFilter(name, enabled=ENABLE_ADAPTIVE_TINT_FILTER)
-self.integral_guard = SmartPIIntegralGuard(name)
 self.resume_hold = ResumeDeadtimeHold()
 self.dt_est = DeadTimeEstimator()
 self.twin = ThermalTwin1R1C(dt_s=SMARTPI_RECALC_INTERVAL_SEC, gamma=0.1)
@@ -1518,7 +1472,8 @@ acceptance or rejection without changing the learning decision.
 | `AB_BALANCE_POOL_MAX_SEGMENTS` | `12`   |
 | `RESPONSE_LAG_HISTORY`         | `7`    |
 | `RESPONSE_LAG_MIN_ESTIMATES`   | `3`    |
-| `RESPONSE_LAG_RESOLVE_EPISODES` | `7`   |
+| `RESPONSE_LAG_RESOLVE_EPISODES` | `4`   |
+| `RESPONSE_LAG_PHASE_MIN_OFF_S` | `600` |
 | `RESPONSE_LAG_MAX_REL_UNC`     | `0.15` |
 | `RESPONSE_LAG_UNC_FLOOR_S`     | `30`   |
 | `RESPONSE_LAG_MIN_OFF_S`       | `1800` |
@@ -1547,14 +1502,12 @@ acceptance or rejection without changing the learning decision.
 | `KI_SAFE`                     | `0.010` |
 | `GAIN_TI_LAMBDA_FACTOR`       | `4.0`   |
 | `NEAR_SETPOINT_UNWIND_STEPS`  | `1.5`   |
-| `INTEGRAL_GUARD_STALL_CYCLES` | `3`     |
-| `INTEGRAL_GUARD_RELEASE_STALL_RATIO` | `2.0` |
-| `INTEGRAL_GUARD_SOFT_RELEASE_SCALE` | `0.20` |
-| `INTEGRAL_GUARD_RESUME_PROGRESS_C` | `0.05` |
-| `INTEGRAL_GUARD_PLATEAU_BLOCK_CYCLES` | `3` |
-| `INTEGRAL_GUARD_PLATEAU_BLOCKS` | `2` |
-| `INTEGRAL_GUARD_PLATEAU_PROGRESS_BLOCKS` | `4` |
-| `INTEGRAL_GUARD_PLATEAU_PROGRESS_MIN_C` | `0.03` |
+| `RECOVERY_ERROR_FLOOR_DEADBAND_RATIO` | `2.0` |
+| `RECOVERY_PLATEAU_SLOPE_ABS_H` | `0.12` |
+| `RECOVERY_PLATEAU_BLOCK_CYCLES` | `3` |
+| `RECOVERY_PLATEAU_BLOCKS` | `2` |
+| `RECOVERY_PLATEAU_PROGRESS_BLOCKS` | `4` |
+| `RECOVERY_PLATEAU_PROGRESS_MIN_C` | `0.03` |
 | `GUARD_CUT_RESET_STEPS`       | `1.5`   |
 | `MAX_STEP_PER_MINUTE`         | `0.25`  |
 | `SETPOINT_BOOST_RATE`         | `0.50`  |

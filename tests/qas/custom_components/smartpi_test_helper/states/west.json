@@ -195,6 +195,7 @@
    "episodes": 0,
    "estimates": [],
    "hvac_mode": null,
+   "last_episode_end_wall": null,
    "published": null
   }
  },

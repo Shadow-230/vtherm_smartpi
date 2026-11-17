@@ -105,7 +105,6 @@ def _build_temperature(algo: SmartPI) -> Dict[str, Any]:
         "integral_mode": algo.last_i_mode,
         "integral_hold_mode": algo.ctl.integral_hold_mode,
         "integral_hold_source": algo.ctl.last_integral_hold_source,
-        "integral_guard_source": algo.integral_guard.source.value,
     }
 
 
@@ -205,7 +204,7 @@ def _bootstrap_state(algo: SmartPI) -> str | None:
         lag = algo.learn_win.response_lag
         return (
             f"step2 - waiting response lag: estimates {lag.estimates_count}, "
-            f"episodes {lag.episodes_count}/{RESPONSE_LAG_RESOLVE_EPISODES}"
+            f"heating phases {lag.episodes_count}/{RESPONSE_LAG_RESOLVE_EPISODES}"
         )
     return f"step2 - collecting emeas: A:{nb_a}/{AB_MIN_SAMPLES_A} B:{nb_b}/{AB_MIN_SAMPLES_B}"
 
@@ -507,7 +506,6 @@ def _build_analysis_control(algo: SmartPI) -> Dict[str, Any]:
         "error_p": round(algo.error_p, 4),
         "aw_du": round(algo.aw_du, 6),
         "forced_by_timing": algo.forced_by_timing,
-        "integral_guard_mode": algo._last_integral_guard_mode,
         "in_core_deadband": (
             algo._tau_reliable and abs(algo.error) < max(algo.deadband_c, 0.0)
         ),
