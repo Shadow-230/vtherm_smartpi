@@ -212,6 +212,7 @@
     ]
    ],
    "hvac_mode": "heat",
+   "last_episode_end_wall": null,
    "published": 780.0
   }
  },
