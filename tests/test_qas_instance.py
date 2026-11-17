@@ -578,9 +578,10 @@ async def test_a_relay_room_s_heat_is_held_through_a_short_stop_of_the_boiler(ha
 @pytest.mark.parametrize("expected_lingering_timers", [True])
 async def test_a_short_run_of_the_boiler_leaves_the_paused_rooms_paused(hass: HomeAssistant, freezer: Any, caplog: pytest.LogCaptureFixture) -> None:
     """As BP41 on the bench: boiler-relay with VTherm's threshold at 3 devices, North (relay,
-    learned) and East (valve) calling with the boiler off. North, which did not heat before, waits
-    for the boiler from its call, and its learning pauses 59 s after the call, not at a
-    calculation (the call's own calculation comes between periodic ones). Both rooms paused, the
+    learned) and East (valve) calling with the boiler off. North is turned off and back to heat,
+    which starts SmartPI's periodic calculation again, and calls half a period later: its learning
+    pauses 59 s after the call, by its own check, where a pause at the next periodic calculation
+    would come about 90 s after it. Both rooms paused, the
     threshold at 1 for 2 s runs the boiler for 2 s: neither room resumes, their dead-time
     estimators see no power, and no heat stops (Adnan 2013, 3.3, p. 30: a change counts once it
     has held for a set time)."""
@@ -594,6 +595,10 @@ async def test_a_short_run_of_the_boiler_leaves_the_paused_rooms_paused(hass: Ho
     await _targets(hass, **{WEST: 7.0, EAST: 7.0, NORTH: 7.0})
     await _run_for(hass, freezer, 10 * 60)
     await hass.services.async_call("number", "set_value", {"entity_id": threshold, "value": 3}, blocking=True)
+    await hass.services.async_call("climate", "set_hvac_mode", {"entity_id": NORTH, "hvac_mode": "off"}, blocking=True)
+    await _run_for(hass, freezer, 1.0, 1.0)
+    await hass.services.async_call("climate", "set_hvac_mode", {"entity_id": NORTH, "hvac_mode": "heat"}, blocking=True)
+    await _run_for(hass, freezer, 30.0, 1.0)
     room_c = float(hass.states.get(f"sensor.{ROOMS_DOMAIN}_north_temperature").state)
     await _targets(hass, **{NORTH: round(room_c + 2.0, 1), EAST: 23.0})
 
